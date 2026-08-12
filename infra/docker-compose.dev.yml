@@ -1,59 +1,50 @@
-# ============================================================
-# NutriSmart · entorno de desarrollo (Docker)
-# Corre en local, como Vetline. Reutiliza el Keycloak ya existente
-# en Docker mediante un REALM NUEVO ("nutrismart"), sin tocar el de
-# Vetline. Postgres es una base propia de NutriSmart.
-# ============================================================
 services:
-
-  # --- Base de datos propia de NutriSmart ---
   db:
     image: postgres:16
     container_name: nutrismart-db
     environment:
+      POSTGRES_USER: nutrismart
+      POSTGRES_PASSWORD: changeme
       POSTGRES_DB: nutrismart
-      POSTGRES_USER: ${DB_USER:-nutrismart}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
     ports:
-      - "5433:5432"          # 5433 en host para no chocar con el Postgres de Vetline
+      - "5433:5432"   # 5433 en el host: el 5432 lo ocupa el Postgres de Vetline
     volumes:
       - nutrismart_pgdata:/var/lib/postgresql/data
-    networks: [nutrismart, shared]
+    networks: [nutrismart]
 
-  # --- API (Node + TypeScript) ---
   api:
     build: ../apps/api
     container_name: nutrismart-api
     env_file: ../.env
     depends_on: [db]
     ports:
-      - "4000:4000"
-    networks: [nutrismart, shared]   # 'shared' para alcanzar el Keycloak existente
+      - "4001:4000"   # 4000 lo ocupa vetplatform-backend-1
+    networks: [nutrismart, shared]
 
-  # --- App del nutricionista (React + Vite) ---
   web-professional:
     build: ../apps/web-professional
     container_name: nutrismart-web-pro
+    env_file: ../.env
+    depends_on: [api]
     ports:
       - "5173:5173"
     networks: [nutrismart]
 
-  # --- App del paciente (PWA, React + Vite) ---
-  web-patient:
-    build: ../apps/web-patient
-    container_name: nutrismart-web-pat
-    ports:
-      - "5174:5173"
-    networks: [nutrismart]
-
-volumes:
-  nutrismart_pgdata:
+  # --- App del paciente (PWA) — se activa en la rebanada del paciente ---
+  # Comentada: aún no existe apps/web-patient/Dockerfile y el build rompería
+  # 'docker compose up'. Al reactivar, el 5174 del host lo ocupa vetplatform-frontend-1.
+  # web-patient:
+  #   build: ../apps/web-patient
+  #   container_name: nutrismart-web-pat
+  #   ports:
+  #     - "5174:5173"
+  #   networks: [nutrismart]
 
 networks:
   nutrismart:
-    driver: bridge
-  # 'shared' es la red donde ya corre el contenedor de Keycloak.
-  # Marca la red existente como external para reutilizar el Keycloak.
   shared:
     external: true
-    name: ${KEYCLOAK_NETWORK:-vetline_default}
+    name: ${KEYCLOAK_NETWORK:-postgres_default}
+
+volumes:
+  nutrismart_pgdata:

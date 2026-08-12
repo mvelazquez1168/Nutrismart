@@ -18,3 +18,10 @@ Decisiones tomadas al iniciar el desarrollo (agosto 2026).
 - **Condición clínica inicial** a priorizar (diabetes / obesidad sugeridas).
 - **Mercados/países** de la Fase 1 (marco regulatorio y de privacidad de datos de salud).
 - **Realm de Keycloak:** exportar/versionar su configuración desde el inicio (lección de Vetline: no quedó versionada).
+- **4º nivel clínico (`serious`):** el design system define cuatro colores de estado
+  (`--status-normal` / `alert` / `serious` / `critical`), pero el enum `estado_clinico`
+  de la migración 001 tiene tres valores (`normal`, `alerta`, `critico`). El token
+  `--status-serious` queda **reservado, no se elimina**: sería el nivel intermedio entre
+  alerta y crítico que justificaría el motor de **monitoreo continuo (RPM)**, uno de los
+  dos diferenciadores ancla del producto. Definir junto con el RPM si se añade como
+  cuarto valor del enum o si se deriva de umbrales calculados.

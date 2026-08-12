@@ -3,6 +3,9 @@
 -- Asume base fresca + migraciones 001 y 002 aplicadas.
 -- Una clínica, un profesional y tres pacientes (con motivo, diagnósticos
 -- y alergias) que coinciden con los mockups de diseño.
+--
+-- ${DEV_KEYCLOAK_SUB} lo sustituye el comando de seed leyendo el .env.
+-- Debe ser el 'sub' del usuario del realm "nutrismart" de Keycloak.
 -- ============================================================
 
 insert into clinica (id, nombre_comercial, nombre_fiscal, pais, subdominio)
@@ -11,7 +14,7 @@ on conflict do nothing;
 
 -- keycloak_user_id debe coincidir con el 'sub' del usuario del realm "nutrismart".
 insert into profesional (id, clinica_id, keycloak_user_id, nombre, correo, colegiatura, rol)
-values ('22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','KC_DEV_USER','Dra. Ana Rodríguez','ana@vida.cr','CR-12345','admin_clinica')
+values ('22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','${DEV_KEYCLOAK_SUB}','Dra. Ana Rodríguez','ana@vida.cr','CR-12345','admin_clinica')
 on conflict do nothing;
 
 -- Pacientes (ids fijos para poder enlazar diagnósticos y alergias)
