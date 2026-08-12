@@ -1,0 +1,69 @@
+/* ============================================================
+   NutriSmart · Design Tokens
+   Fuente de verdad del color y la forma. El white-label cambia
+   --primary* (con [data-brand] o inyectando variables desde la
+   config de la clínica); el resto se deriva.
+   Los ESTADOS CLÍNICOS y los COLORES DE GRÁFICA no se re-tematizan.
+   ============================================================ */
+
+:root{
+  /* ---- Marca (paleta por defecto: Verde Nutrición) ---- */
+  --primary:        #0E7C66;
+  --primary-hover:  #0A5C4C;
+  --primary-tint:   #E7F1EE;
+  --on-primary:     #FFFFFF;
+
+  /* ---- Superficies y texto ---- */
+  --background:     #F7FAF9;
+  --surface:        #FFFFFF;
+  --surface-2:      #F4F8F6;
+  --border:         #E6ECEA;
+  --ink:            #141A17;
+  --muted:          #6B7280;
+  --ring:           rgba(14,124,102,.35);
+
+  /* ---- Estados clínicos (FIJOS, no white-label) ---- */
+  --status-normal:  #0CA30C;
+  --status-alert:   #E8930C;
+  --status-serious: #EC835A;
+  --status-critical:#D03B3B;
+  --info:           #2563EB;
+
+  /* ---- Tipografía ---- */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Inter, sans-serif;
+
+  /* ---- Radios ---- */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-pill: 999px;
+
+  /* ---- Sombras ---- */
+  --shadow-sm: 0 1px 2px rgba(16,40,34,.05);
+  --shadow-md: 0 4px 14px rgba(16,40,34,.07);
+  --shadow-lg: 0 12px 34px rgba(16,40,34,.10);
+
+  /* ---- Gráficas (paleta validada, independiente de la marca) ---- */
+  --chart-1: #2a78d6; --chart-2: #eb6834; --chart-3: #1baf7a; --chart-4: #eda100;
+  --chart-grid: #E6ECEA; --chart-axis: #C3C2B7;
+}
+
+/* ============================================================
+   Paletas curadas (white-label). Se activan con:
+   <html data-brand="azul-clinico"> …
+   La clínica también puede definir un color propio inyectando
+   --primary / --primary-hover / --primary-tint en :root.
+   ============================================================ */
+[data-brand="azul-clinico"]{ --primary:#2563EB; --primary-hover:#1E40AF; --primary-tint:#E8EEFC; --ring:rgba(37,99,235,.35); }
+[data-brand="teal-fresco"] { --primary:#0891B2; --primary-hover:#0E7490; --primary-tint:#E0F2F7; --ring:rgba(8,145,178,.35); }
+[data-brand="esmeralda"]   { --primary:#059669; --primary-hover:#047857; --primary-tint:#E6F4EF; --ring:rgba(5,150,105,.35); }
+[data-brand="indigo"]      { --primary:#4F46E5; --primary-hover:#3730A3; --primary-tint:#ECEBFC; --ring:rgba(79,70,229,.35); }
+[data-brand="coral-calido"]{ --primary:#E11D48; --primary-hover:#BE123C; --primary-tint:#FCE8EC; --ring:rgba(225,29,72,.35); }
+[data-brand="ambar"]       { --primary:#D97706; --primary-hover:#B45309; --primary-tint:#FBF0E0; --ring:rgba(217,119,6,.35); }
+[data-brand="grafito"]     { --primary:#334155; --primary-hover:#1E293B; --primary-tint:#EEF1F5; --ring:rgba(51,65,85,.35); }
+
+/* ---- Modo oscuro base (se afina más adelante) ---- */
+:root[data-theme="dark"]{
+  --background:#0E1613; --surface:#141C19; --surface-2:#1A2420; --border:#26302B;
+  --ink:#F3F7F5; --muted:#9AA6A1;
+}

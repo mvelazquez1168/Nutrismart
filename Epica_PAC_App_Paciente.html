@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Épica PAC · App del Paciente — Especificación detallada</title>
+<style>
+  :root{
+    --primary:#0E7C66; --primary-dk:#0A5C4C; --primary-tint:#E7F1EE;
+    --accent:#C2410C; --accent-tint:#FBF0E9;
+    --ink:#1F2937; --muted:#6B7280; --line:#E3EAE8;
+    --bg:#FBFCFC; --card:#FFFFFF;
+    --p0:#B91C1C; --p0b:#FDECEC; --p1:#C2410C; --p1b:#FBF0E9;
+    --shadow:0 1px 2px rgba(16,40,34,.04),0 8px 24px rgba(16,40,34,.06);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:var(--bg);line-height:1.6;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 24px}
+  nav{position:sticky;top:0;z-index:50;background:rgba(251,252,252,.9);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .nav-in{max-width:1000px;margin:0 auto;padding:12px 24px;display:flex;align-items:center;gap:16px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;color:var(--primary-dk);font-size:15px}
+  .logo{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--primary),var(--primary-dk));display:grid;place-items:center;color:#fff;font-size:13px;font-weight:800}
+  .nav-links{margin-left:auto;display:flex;gap:4px}
+  .nav-links a{font-size:13.5px;color:var(--muted);padding:6px 11px;border-radius:8px;transition:.15s}
+  .nav-links a:hover{color:var(--primary-dk);background:var(--primary-tint)}
+  @media(max-width:720px){.nav-links{display:none}}
+  header{padding:52px 0 34px;background:radial-gradient(1100px 380px at 15% -10%,var(--primary-tint),transparent);border-bottom:1px solid var(--line)}
+  .eyebrow{font-size:12.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--primary)}
+  h1{font-size:clamp(27px,4.4vw,40px);line-height:1.12;font-weight:800;color:var(--primary-dk);margin:12px 0 8px;letter-spacing:-.02em}
+  .lede{font-size:17px;color:var(--ink);max-width:720px}
+  .lede b{color:var(--primary-dk)}
+  .hchips{display:flex;flex-wrap:wrap;gap:9px;margin-top:20px}
+  .hchip{font-size:12.5px;font-weight:600;padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:#fff}
+  .hchip.p{color:var(--primary-dk);border-color:#BFE0D7;background:var(--primary-tint)}
+  section{padding:44px 0;border-bottom:1px solid var(--line)}
+  .kicker{font-size:12.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--accent);margin-bottom:8px}
+  h2{font-size:25px;font-weight:800;color:var(--primary-dk);letter-spacing:-.01em;margin-bottom:6px}
+  .sub{color:var(--muted);font-size:15.5px;max-width:740px;margin-bottom:22px}
+  p.body{font-size:15px;margin-bottom:12px}
+  .ov{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:6px}
+  @media(max-width:640px){.ov{grid-template-columns:1fr}}
+  .ovc{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow)}
+  .ovc .t{font-weight:700;color:var(--primary-dk);font-size:14px;margin-bottom:5px}
+  .ovc p{font-size:14px;color:var(--ink)}
+  .ovc ul{list-style:none;display:flex;flex-direction:column;gap:5px;margin-top:4px}
+  .ovc li{font-size:13.5px;padding-left:16px;position:relative}
+  .ovc li::before{content:"";position:absolute;left:0;top:8px;width:6px;height:6px;border-radius:2px;background:var(--primary)}
+  .idx{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}
+  .ichip{font-size:12.5px;border:1px solid var(--line);background:#fff;border-radius:10px;padding:7px 11px;cursor:pointer;transition:.12s;display:flex;gap:7px;align-items:center}
+  .ichip:hover{border-color:var(--primary);background:var(--primary-tint)}
+  .ichip .ii{font-family:ui-monospace,monospace;font-size:11px;color:var(--muted)}
+  .feat{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);margin-bottom:12px;overflow:hidden;scroll-margin-top:70px}
+  .fh{width:100%;text-align:left;background:#fff;border:none;padding:16px 20px;cursor:pointer;display:flex;align-items:center;gap:12px}
+  .fh:hover{background:#F8FAF9}
+  .fh .fid{font-family:ui-monospace,monospace;font-size:12px;color:#fff;background:var(--primary);padding:3px 9px;border-radius:7px}
+  .fh .fn{font-weight:700;color:var(--primary-dk);font-size:16px}
+  .fh .pr{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
+  .pr0{color:var(--p0);background:var(--p0b)} .pr1{color:var(--p1);background:var(--p1b)}
+  .fh .tg{margin-left:auto;color:var(--muted);font-size:20px;transition:.2s;line-height:1}
+  .fh.open .tg{transform:rotate(45deg)}
+  .fb{display:none;padding:4px 20px 20px;border-top:1px solid var(--line)}
+  .fb.open{display:block}
+  .blk{margin-top:14px}
+  .blk .bt{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--accent);margin-bottom:5px}
+  .blk p{font-size:14px;color:var(--ink)}
+  .blk ul{list-style:none;display:flex;flex-direction:column;gap:6px}
+  .blk li{font-size:14px;padding-left:17px;position:relative}
+  .blk li::before{content:"";position:absolute;left:0;top:8px;width:6px;height:6px;border-radius:2px;background:var(--primary)}
+  .story{background:var(--primary-tint);border-radius:9px;padding:9px 13px;margin:5px 0;font-size:13.5px;font-style:italic;color:var(--primary-dk)}
+  .v1{background:var(--accent-tint);border-left:3px solid var(--accent);border-radius:0 9px 9px 0;padding:9px 13px;font-size:13.5px;margin-top:4px}
+  .v1 b{color:var(--accent)}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:640px){.two{grid-template-columns:1fr}}
+  .note{background:var(--primary-tint);border-left:4px solid var(--primary);border-radius:0 10px 10px 0;padding:13px 16px;font-size:14px;margin-top:8px}
+  .note b{color:var(--primary-dk)}
+  .ent{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:6px}
+  @media(max-width:640px){.ent{grid-template-columns:1fr}}
+  .entc{background:#fff;border:1px solid var(--line);border-radius:12px;padding:13px 15px;box-shadow:var(--shadow)}
+  .entc .en{font-weight:700;color:var(--primary-dk);font-size:14px;font-family:ui-monospace,monospace}
+  .entc p{font-size:13px;color:var(--muted);margin-top:3px}
+  .seq{position:relative;padding-left:26px;margin-top:8px}
+  .seq::before{content:"";position:absolute;left:7px;top:6px;bottom:6px;width:2px;background:var(--line)}
+  .sitem{position:relative;padding:0 0 16px}
+  .sitem:last-child{padding-bottom:0}
+  .sdot{position:absolute;left:-26px;top:3px;width:15px;height:15px;border-radius:50%;background:#fff;border:3px solid var(--primary)}
+  .sitem .st{font-weight:700;color:var(--primary-dk);font-size:14.5px}
+  .sitem .sd{font-size:14px;color:var(--ink)}
+  footer{padding:30px 0 60px;color:var(--muted);font-size:13.5px}
+</style>
+</head>
+<body>
+<nav>
+  <div class="nav-in">
+    <div class="brand"><div class="logo">PAC</div>Épica PAC · App del Paciente</div>
+    <div class="nav-links">
+      <a href="#resumen">Resumen</a>
+      <a href="#features">Funcionalidades</a>
+      <a href="#datos">Modelo de datos</a>
+      <a href="#secuencia">Secuencia</a>
+      <a href="#fronteras">Fronteras</a>
+    </div>
+  </div>
+</nav>
+
+<header>
+  <div class="wrap">
+    <div class="eyebrow">Especificación detallada de épica · Fase 1</div>
+    <h1>App del Paciente (PAC)</h1>
+    <p class="lede">El <b>primer puente al paciente</b>: donde vive la experiencia diaria. Más que un portal, un <b>acompañante inteligente</b> — onboarding, dashboard personal, registro de comidas y métricas, y metas con progreso visible.</p>
+    <div class="hchips">
+      <span class="hchip p">5 funcionalidades</span>
+      <span class="hchip">4 × P0 · 1 × P1</span>
+      <span class="hchip">Fase 1 · primer puente</span>
+      <span class="hchip">PWA · offline-first</span>
+    </div>
+  </div>
+</header>
+
+<!-- RESUMEN -->
+<section id="resumen">
+  <div class="wrap">
+    <div class="kicker">Resumen de la épica</div>
+    <h2>El paciente entra en escena</h2>
+    <p class="body">Hasta aquí la plataforma vivía del lado del profesional (épica CLI). PAC es el momento en que el paciente entra: la app donde registra, ve su progreso y se mantiene conectado a su tratamiento entre consultas. El principio de diseño es que se sienta como un <b>acompañante</b>, no como un formulario. En Fase 1 cubre lo esencial y manual; en fases siguientes se le suman los métodos inteligentes (foto, voz, dispositivos) y las capas de coach, educación y gamificación que viven en otras épicas pero se <b>integran dentro de esta app</b>.</p>
+    <div class="ov">
+      <div class="ovc"><div class="t">Objetivo</div><p>Dar al paciente una experiencia diaria simple y motivadora que sostenga la adherencia y alimente al sistema con datos relevantes de su proceso.</p></div>
+      <div class="ovc"><div class="t">Usuarios</div><ul><li>Paciente — actor principal</li><li>Nutricionista — define metas y ve los datos</li></ul></div>
+      <div class="ovc"><div class="t">Dentro del alcance</div><ul><li>Onboarding e invitación</li><li>Dashboard personal</li><li>Registro manual de comidas y métricas</li><li>Metas personales y progreso</li></ul></div>
+      <div class="ovc"><div class="t">Fuera del alcance (se integran aquí)</div><ul><li>Coach IA → INT-02 · Educación → PRED-03</li><li>Mecánicas de gamificación → GAM</li><li>Mensajería → COM-01 · Recordatorios → PRED-04</li><li>Foto/voz/barras → REG · Dispositivos → RPM/DEV</li></ul></div>
+    </div>
+    <div class="note"><b>Transversal:</b> la app es <b>PWA (móvil + web)</b> con capacidad <b>offline</b> para registrar comidas y métricas sin señal, y respeta la configuración de gamificación por paciente (decisión DD-01): si el profesional la desactivó, la app oculta esa capa.</div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features">
+  <div class="wrap">
+    <div class="kicker">Las 5 funcionalidades</div>
+    <h2>Especificación por funcionalidad</h2>
+    <p class="sub">Toca cada tarjeta para ver su mini-spec: objetivo, historias de usuario, alcance, reglas, datos, dependencias, criterios de aceptación y alcance de v1.</p>
+    <div class="idx" id="idx"></div>
+    <div id="feats"></div>
+  </div>
+</section>
+
+<!-- DATA MODEL -->
+<section id="datos">
+  <div class="wrap">
+    <div class="kicker">Cimiento transversal</div>
+    <h2>Modelo de datos de la épica</h2>
+    <p class="body">PAC no inventa el modelo clínico — cuelga del Paciente y el Expediente que define CLI. Agrega las entidades propias de la experiencia del paciente.</p>
+    <div class="ent">
+      <div class="entc"><div class="en">PatientAccount</div><p>Cuenta de acceso del paciente, vinculada a su Paciente clínico, profesional y clínica.</p></div>
+      <div class="entc"><div class="en">Invitation</div><p>Invitación del profesional: token, estado y expiración.</p></div>
+      <div class="entc"><div class="en">ConsentRecord</div><p>Registro de consentimiento informado y aceptación de privacidad.</p></div>
+      <div class="entc"><div class="en">FoodLogEntry</div><p>Registro de comida: tiempo, alimentos, porciones, notas, timestamp.</p></div>
+      <div class="entc"><div class="en">LongitudinalMetric (manual)</div><p>Métrica ingresada por el paciente (fuente = manual); misma entidad que usa el RPM.</p></div>
+      <div class="entc"><div class="en">Goal</div><p>Meta co-definida: tipo, valor objetivo, progreso, horizonte y estado.</p></div>
+    </div>
+    <div class="note"><b>Relación clave:</b> todo lo que el paciente genera (comidas, métricas, avance de metas) se escribe contra su Expediente clínico de CLI, de modo que el profesional lo ve en el timeline y el RPM puede leerlo. La app es una <b>ventana</b> al mismo modelo, no un silo aparte.</div>
+  </div>
+</section>
+
+<!-- SEQUENCE -->
+<section id="secuencia">
+  <div class="wrap">
+    <div class="kicker">Cómo construirla</div>
+    <h2>Secuencia interna recomendada</h2>
+    <p class="sub">Un orden que respeta dependencias y pone al paciente a registrar cuanto antes.</p>
+    <div class="seq">
+      <div class="sitem"><div class="sdot"></div><div class="st">1 · PAC-01 (onboarding e invitación)</div><div class="sd">Sin cuenta activa y consentimiento no hay nada más; es la puerta de entrada.</div></div>
+      <div class="sitem"><div class="sdot"></div><div class="st">2 · PAC-02 (dashboard) + PAC-04 (métricas manuales)</div><div class="sd">El hogar del paciente y su primer dato propio: ver progreso y registrar métricas.</div></div>
+      <div class="sitem"><div class="sdot"></div><div class="st">3 · PAC-03 (registro manual de comidas)</div><div class="sd">El diario alimentario base, sobre el que luego se montan foto y voz (Fase 3).</div></div>
+      <div class="sitem"><div class="sdot"></div><div class="st">4 · PAC-05 (metas y progreso)</div><div class="sd">Cierra el ciclo de motivación; se apoya en gamificación (parametrizable por paciente).</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- FRONTERAS -->
+<section id="fronteras">
+  <div class="wrap">
+    <div class="kicker">Bordes claros</div>
+    <h2>Fronteras con otras épicas</h2>
+    <p class="sub">La app del paciente es el <b>shell</b> donde se integran muchas experiencias que pertenecen a otras épicas. Trazar el borde evita duplicar.</p>
+    <div class="two">
+      <div>
+        <div class="blk"><div class="bt">CLI · Gestión clínica</div><p>PAC cuelga del Paciente y el Expediente de CLI; escribe contra el mismo modelo. La invitación (PAC-01) parte de un paciente ya creado en CLI-02.</p></div>
+        <div class="blk"><div class="bt">REG · Registro inteligente (Fase 3)</div><p>Foto (REG-01), Food Intelligence LatAm (REG-02), voz (REG-03) y código de barras (REG-04) se suman como métodos sobre el registro manual base (PAC-03).</p></div>
+        <div class="blk"><div class="bt">RPM / DEV · Monitoreo y dispositivos</div><p>En Fase 2-3 las métricas llegan automáticamente desde wearables, básculas y CGM; el registro manual (PAC-04) sigue para quien no use dispositivos.</p></div>
+      </div>
+      <div>
+        <div class="blk"><div class="bt">GAM · Gamificación</div><p>Las mecánicas (rachas, retos, insignias) viven en GAM y se muestran en el dashboard (PAC-02) y las metas (PAC-05) según la config por paciente (DD-01).</p></div>
+        <div class="blk"><div class="bt">INT / PRED · Coach y educación</div><p>El coach con IA (INT-02) y la educación personalizada (PRED-03) se experimentan dentro de la app, pero son sus propias épicas.</p></div>
+        <div class="blk"><div class="bt">COM · Comunicación</div><p>La mensajería con el profesional (COM-01) y las notificaciones/recordatorios se integran en la app pero pertenecen a COM.</p></div>
+      </div>
+    </div>
+    <div class="note" style="margin-top:18px">Propuesta para revisar y calibrar. Validada la profundidad, marco estas 5 como <b>Especificadas</b> en el explorador vivo. Siguiente épica natural: <b>COM</b> (comunicación y notificaciones) o <b>EVAL</b> (valoración ABCD), según prefieras.</div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    Especificación detallada · Épica PAC — App del Paciente · v1.0 · Agosto 2026<br>
+    Documento de trabajo, elaborado sobre el prototipo NutriClinica, la visión de Patient App y las decisiones de diseño acordadas.
+  </div>
+</footer>
+
+<script>
+const P = {P0:'pr0',P1:'pr1'};
+const FEATURES = [
+  {id:'PAC-01', name:'Onboarding e invitación del paciente', prio:'P0',
+   obj:'Llevar al paciente desde la invitación del profesional hasta una cuenta activa y lista para usar, con la menor fricción posible. El primer contacto define la adherencia.',
+   stories:['Como nutricionista quiero invitar a mi paciente a la app para que empiece a registrar y darle seguimiento.','Como paciente quiero activar mi cuenta y entender qué hacer en los primeros minutos.'],
+   alcance:['Invitación por el profesional (email / enlace / código).','Registro y activación de la cuenta del paciente.','Consentimiento informado y aceptación de privacidad antes de capturar datos de salud.','Vinculación paciente ↔ profesional ↔ clínica.','Configuración inicial (idioma, unidades, notificaciones) y tour guiado de primeros pasos.'],
+   reglas:['La cuenta del paciente queda ligada a su profesional y clínica (tenancy).','El consentimiento es obligatorio antes de registrar cualquier dato de salud.','Los enlaces de invitación tienen expiración.'],
+   datos:'PatientAccount, Invitation (token, estado, expiración), ConsentRecord.',
+   dep:'Gestión de pacientes (CLI-02) y expediente (CLI-01): el paciente ya existe del lado del profesional. Notificaciones (COM-02) para enviar la invitación.',
+   acept:['El profesional envía la invitación y el paciente activa su cuenta.','El consentimiento queda registrado y el vínculo es correcto.','Los enlaces expiran según lo configurado.'],
+   v1:'Flujo de invitación + activación + consentimiento + onboarding mínimo guiado.'},
+
+  {id:'PAC-02', name:'Dashboard personal del paciente', prio:'P0',
+   obj:'Que al abrir la app el paciente vea su progreso de forma visible y motivadora, y sepa qué hacer hoy. Es la pantalla de aterrizaje diaria.',
+   stories:['Como paciente quiero ver mi progreso y mis pendientes de hoy para mantenerme enfocado y motivado.'],
+   alcance:['Peso actual y evolución; próxima meta; indicadores principales (glucosa / presión si aplican).','Racha de adherencia (si la gamificación está habilitada para el paciente).','Próxima cita y tareas pendientes (registrar comida, tomar agua, medir presión).','Diseño orientado a que el progreso sea visible y motivador.'],
+   reglas:['El contenido se adapta al plan y condición del paciente.','Los elementos de gamificación se muestran solo si el profesional los habilitó para ese paciente (DD-01).'],
+   datos:'Lee de Expediente, LongitudinalMetric, Appointment, Goal (PAC-05) y del estado de gamificación (GAM).',
+   dep:'Expediente (CLI-01), metas (PAC-05), gamificación parametrizable (GAM · DD-01), citas (CLI-03).',
+   acept:['Muestra métricas, meta, próxima cita y tareas.','La racha / gamificación aparece solo si está habilitada; si está apagada, el dashboard se adapta sin huecos.'],
+   v1:'Dashboard con métricas + meta + tareas + próxima cita; racha condicionada a la configuración del paciente.'},
+
+  {id:'PAC-03', name:'Registro manual de comidas', prio:'P0',
+   obj:'Permitir que el paciente registre lo que come de forma manual — la base del diario alimentario, antes de los métodos inteligentes (foto / voz).',
+   stories:['Como paciente quiero registrar mis comidas fácilmente para que mi nutricionista vea lo que como.'],
+   alcance:['Registro por tiempo de comida (desayuno, almuerzo, cena, snacks).','Búsqueda de alimentos, porciones y comentario libre.','Guardar comidas favoritas para reutilizarlas con un toque.'],
+   reglas:['Cada registro se asocia a fecha/hora y al paciente; es editable por el paciente.','Visible para el profesional dentro del expediente.'],
+   datos:'FoodLogEntry (tiempo de comida, alimentos, porciones, notas, timestamp).',
+   dep:'Expediente (CLI-01) para que el profesional lo vea. Frontera: foto (REG-01), voz (REG-03), código de barras (REG-04) y Food Intelligence (REG-02) son métodos de Fase 3 que se apoyan en este registro base.',
+   acept:['El paciente registra una comida con alimentos y porciones y el profesional la ve.','Las comidas favoritas se reutilizan.'],
+   v1:'Registro manual + búsqueda simple de alimentos + favoritos.'},
+
+  {id:'PAC-04', name:'Registro manual de métricas (peso / presión / glucosa)', prio:'P0',
+   obj:'Que el paciente ingrese sus propias mediciones cuando no hay dispositivo conectado — el puente manual antes del RPM automático.',
+   stories:['Como paciente quiero anotar mi peso, presión o glucosa para llevar mi control y que mi nutricionista lo vea.'],
+   alcance:['Ingreso manual de peso, presión arterial, glucosa y otras métricas configurables, con fecha/hora.','Validación de plausibilidad para evitar errores de tecleo.','Alimenta las gráficas de evolución del paciente y del profesional.'],
+   reglas:['Validación de rangos plausibles antes de guardar.','Las métricas manuales conviven con las automáticas del RPM (Fase 2) sin duplicar.'],
+   datos:'LongitudinalMetric (fuente = manual).',
+   dep:'Expediente / métricas (CLI-01). Frontera: en Fase 2 el RPM (RPM-01/02) trae estas métricas automáticamente desde dispositivos; el registro manual permanece para quien no los use.',
+   acept:['El paciente ingresa una métrica válida y aparece en su evolución y en el expediente del profesional.'],
+   v1:'Registro manual de peso / presión / glucosa con validación y gráfica de evolución.'},
+
+  {id:'PAC-05', name:'Metas personales y progreso', prio:'P1',
+   obj:'Dar al paciente metas claras y visibles hacia las cuales avanzar, co-definidas con el profesional — el motor de motivación que conecta con la gamificación.',
+   stories:['Como paciente quiero ver mis metas y mi avance para saber si voy bien.','Como nutricionista quiero definir metas para mi paciente alineadas al tratamiento.'],
+   alcance:['Metas co-definidas por el profesional (peso objetivo, hábitos, indicadores clínicos).','Barras de progreso, porcentaje de avance e hitos.','Conexión con el dashboard (PAC-02) y con la gamificación (GAM).'],
+   reglas:['La meta la define o aprueba el profesional (principio: el juego empuja hacia el tratamiento — DD-01).','Metas medibles y con horizonte temporal.'],
+   datos:'Goal (tipo, valor objetivo, progreso, horizonte, estado), vinculada al paciente.',
+   dep:'Expediente (CLI-01), gamificación (GAM), dashboard (PAC-02).',
+   acept:['El profesional define una meta y el paciente ve su barra de progreso avanzar con sus datos reales.'],
+   v1:'Metas co-definidas + barras de progreso visibles en el dashboard.'},
+];
+
+function renderIdx(){
+  const el=document.getElementById('idx');
+  el.innerHTML=FEATURES.map((f,i)=>`<button class="ichip" data-i="${i}"><span class="ii">${f.id}</span>${f.name}</button>`).join('');
+  el.querySelectorAll('.ichip').forEach(c=>c.onclick=()=>{
+    const i=c.dataset.i;
+    const card=document.querySelector(`.feat[data-i="${i}"]`);
+    openFeat(i);
+    card.scrollIntoView({behavior:'smooth',block:'start'});
+  });
+}
+function block(t,inner){return `<div class="blk"><div class="bt">${t}</div>${inner}</div>`;}
+function ul(arr){return '<ul>'+arr.map(x=>`<li>${x}</li>`).join('')+'</ul>';}
+function renderFeats(){
+  const el=document.getElementById('feats');
+  el.innerHTML=FEATURES.map((f,i)=>`
+    <div class="feat" data-i="${i}">
+      <button class="fh ${i===0?'open':''}" data-i="${i}">
+        <span class="fid">${f.id}</span><span class="fn">${f.name}</span>
+        <span class="pr ${P[f.prio]}">${f.prio}</span><span class="tg">+</span>
+      </button>
+      <div class="fb ${i===0?'open':''}" data-i="${i}">
+        ${block('Objetivo',`<p>${f.obj}</p>`)}
+        ${block('Historias de usuario', f.stories.map(s=>`<div class="story">${s}</div>`).join(''))}
+        <div class="two">
+          <div>${block('Alcance funcional', ul(f.alcance))}${block('Reglas clave', ul(f.reglas))}</div>
+          <div>${block('Datos', `<p>${f.datos}</p>`)}${block('Dependencias y fronteras', `<p>${f.dep}</p>`)}${block('Criterios de aceptación', ul(f.acept))}</div>
+        </div>
+        ${block('Alcance de v1', `<div class="v1"><b>v1 · </b>${f.v1}</div>`)}
+      </div>
+    </div>`).join('');
+  el.querySelectorAll('.fh').forEach(h=>h.onclick=()=>toggleFeat(h.dataset.i));
+}
+function toggleFeat(i){
+  document.querySelector(`.fh[data-i="${i}"]`).classList.toggle('open');
+  document.querySelector(`.fb[data-i="${i}"]`).classList.toggle('open');
+}
+function openFeat(i){
+  document.querySelector(`.fh[data-i="${i}"]`).classList.add('open');
+  document.querySelector(`.fb[data-i="${i}"]`).classList.add('open');
+}
+renderIdx();renderFeats();
+</script>
+</body>
+</html>

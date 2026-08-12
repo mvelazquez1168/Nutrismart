@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+.env
+.env.local
+*.log
+.DS_Store
+coverage/
+.vite/
+.turbo/
+
+# respaldo local, no versionar
+nutrismartscaffold.zip
+*.zip

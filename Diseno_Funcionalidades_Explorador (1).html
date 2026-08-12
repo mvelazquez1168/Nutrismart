@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Diseño de Funcionalidades · Explorador Vivo</title>
+<style>
+  :root{
+    --primary:#0E7C66; --primary-dk:#0A5C4C; --primary-tint:#E7F1EE;
+    --accent:#C2410C; --accent-tint:#FBF0E9;
+    --ink:#1F2937; --muted:#6B7280; --line:#E3EAE8;
+    --bg:#FBFCFC; --card:#FFFFFF;
+    --f1:#0E7C66; --f2:#C2410C; --f3:#2563EB; --f4:#7C3AED;
+    --p0:#B91C1C; --p0b:#FDECEC; --p1:#C2410C; --p1b:#FBF0E9;
+    --p2:#0E7C66; --p2b:#E7F1EE; --p3:#6B7280; --p3b:#F1F3F4;
+    --shadow:0 1px 2px rgba(16,40,34,.04),0 8px 24px rgba(16,40,34,.06);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink);background:var(--bg);line-height:1.6;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+
+  nav{position:sticky;top:0;z-index:50;background:rgba(251,252,252,.9);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .nav-in{max-width:1120px;margin:0 auto;padding:12px 24px;display:flex;align-items:center;gap:16px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;color:var(--primary-dk);font-size:15px}
+  .logo{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--primary),var(--primary-dk));display:grid;place-items:center;color:#fff;font-size:14px;font-weight:800}
+  .nav-links{margin-left:auto;display:flex;gap:4px}
+  .nav-links a{font-size:13.5px;color:var(--muted);padding:6px 12px;border-radius:8px;transition:.15s}
+  .nav-links a:hover{color:var(--primary-dk);background:var(--primary-tint)}
+  @media(max-width:680px){.nav-links{display:none}}
+
+  header{padding:56px 0 34px;background:radial-gradient(1200px 400px at 15% -10%,var(--primary-tint),transparent);border-bottom:1px solid var(--line)}
+  .eyebrow{font-size:12.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--primary)}
+  h1{font-size:clamp(28px,4.5vw,42px);line-height:1.1;font-weight:800;color:var(--primary-dk);margin:12px 0 8px;letter-spacing:-.02em}
+  .lede{font-size:17.5px;color:var(--ink);max-width:740px}
+  .lede b{color:var(--primary-dk)}
+
+  section{padding:48px 0;border-bottom:1px solid var(--line)}
+  .kicker{font-size:12.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--accent);margin-bottom:8px}
+  h2{font-size:26px;font-weight:800;color:var(--primary-dk);letter-spacing:-.01em;margin-bottom:6px}
+  .sub{color:var(--muted);font-size:16px;max-width:780px;margin-bottom:24px}
+
+  /* METHOD */
+  .moves{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:22px}
+  @media(max-width:760px){.moves{grid-template-columns:1fr}}
+  .move{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:var(--shadow)}
+  .move .mn{width:30px;height:30px;border-radius:9px;background:var(--primary-tint);color:var(--primary-dk);font-weight:800;display:grid;place-items:center;font-size:14px;margin-bottom:10px}
+  .move h3{font-size:16px;color:var(--primary-dk);margin-bottom:4px}
+  .move p{font-size:14px;color:var(--ink)}
+  .tpl{background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px 24px;box-shadow:var(--shadow)}
+  .tpl h3{font-size:15px;color:var(--primary-dk);margin-bottom:12px}
+  .tpl-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px 26px}
+  @media(max-width:640px){.tpl-grid{grid-template-columns:1fr}}
+  .tpl-grid div{font-size:14px;padding-left:20px;position:relative}
+  .tpl-grid div::before{content:"✓";position:absolute;left:0;color:var(--primary);font-weight:800;font-size:12px}
+  .tpl-grid b{color:var(--ink)}
+
+  /* CATALOG */
+  .stats{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:20px}
+  @media(max-width:760px){.stats{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:440px){.stats{grid-template-columns:repeat(2,1fr)}}
+  .st{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;box-shadow:var(--shadow)}
+  .st .n{font-size:26px;font-weight:800;color:var(--primary-dk);line-height:1}
+  .st .l{font-size:12px;color:var(--muted);margin-top:4px}
+  .st.acc .n{color:var(--accent)}
+
+  .prog{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 18px;margin-bottom:20px;box-shadow:var(--shadow)}
+  .prog .pt{display:flex;justify-content:space-between;font-size:13.5px;font-weight:600;margin-bottom:8px}
+  .prog .pt b{color:var(--primary-dk)}
+  .bar{height:8px;background:var(--primary-tint);border-radius:99px;overflow:hidden}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--primary),var(--primary-dk));border-radius:99px}
+
+  .filters{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
+  .fgroup{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .fgroup .fl{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-right:2px}
+  .fbtn{font-size:12.5px;border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:99px;padding:5px 11px;cursor:pointer;transition:.12s}
+  .fbtn:hover{border-color:#BFE0D7}
+  .fbtn.on{background:var(--primary-dk);color:#fff;border-color:var(--primary-dk)}
+  #search{margin-left:auto;font-size:13.5px;border:1px solid var(--line);border-radius:10px;padding:8px 12px;min-width:200px;outline:none}
+  #search:focus{border-color:var(--primary)}
+
+  .tblwrap{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow)}
+  table{width:100%;border-collapse:collapse}
+  thead th{text-align:left;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700;padding:11px 14px;background:#F6F9F8;border-bottom:1px solid var(--line)}
+  tbody td{padding:11px 14px;font-size:13.5px;border-bottom:1px solid #EFF3F2;vertical-align:middle}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr.spec{cursor:pointer}
+  tbody tr.spec:hover{background:var(--primary-tint)}
+  .fid{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--muted);white-space:nowrap}
+  .fname{font-weight:600;color:var(--ink)}
+  .badge{font-size:11px;font-weight:700;padding:3px 8px;border-radius:99px;white-space:nowrap;display:inline-block}
+  .star{color:var(--accent);font-weight:800;margin-left:5px}
+  .est-spec{color:#fff;background:var(--primary)}
+  .est-pend{color:var(--muted);background:#F1F3F4;border:1px solid var(--line)}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:14px;font-size:12.5px;color:var(--muted)}
+  .legend b{color:var(--ink)}
+  .empty{padding:26px;text-align:center;color:var(--muted);font-size:14px}
+
+  /* SPEC */
+  #spec{background:linear-gradient(180deg,var(--accent-tint),transparent 120px)}
+  .spec-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:4px}
+  .spec-head .id{font-family:ui-monospace,monospace;font-size:13px;color:#fff;background:var(--accent);padding:4px 10px;border-radius:8px}
+  .spec-card{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);overflow:hidden;margin-top:18px}
+  .sc-sec{border-bottom:1px solid var(--line)}
+  .sc-sec:last-child{border-bottom:none}
+  .sc-h{width:100%;text-align:left;background:#fff;border:none;padding:16px 22px;cursor:pointer;display:flex;align-items:center;gap:12px;font-size:15.5px;font-weight:700;color:var(--primary-dk)}
+  .sc-h:hover{background:#F8FAF9}
+  .sc-h .tg{margin-left:auto;color:var(--muted);font-size:18px;transition:.2s}
+  .sc-h.open .tg{transform:rotate(45deg)}
+  .sc-num{width:26px;height:26px;border-radius:8px;background:var(--accent-tint);color:var(--accent);font-weight:800;font-size:12px;display:grid;place-items:center}
+  .sc-b{padding:2px 22px 20px 60px;font-size:14.5px;color:var(--ink);display:none}
+  .sc-b.open{display:block;animation:fade .2s ease}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+  .sc-b p{margin-bottom:10px}
+  .sc-b ul{list-style:none;display:flex;flex-direction:column;gap:7px;margin:4px 0 10px}
+  .sc-b li{padding-left:18px;position:relative}
+  .sc-b li::before{content:"";position:absolute;left:0;top:9px;width:7px;height:7px;border-radius:2px;background:var(--accent)}
+  .sc-b b{color:var(--primary-dk)}
+  .story{background:var(--primary-tint);border-radius:10px;padding:12px 16px;margin:6px 0;font-size:14px;font-style:italic;color:var(--primary-dk)}
+  .flow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:6px 0 12px}
+  .fstep{background:#fff;border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:12.5px;font-weight:600;box-shadow:var(--shadow)}
+  .far{color:var(--accent);font-weight:800}
+  .sigtbl{width:100%;border-collapse:collapse;margin:6px 0 4px;font-size:13px}
+  .sigtbl th{background:#F6F9F8;text-align:left;padding:8px 10px;font-size:11px;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line)}
+  .sigtbl td{padding:8px 10px;border-bottom:1px solid #EFF3F2;vertical-align:top}
+  .sev{font-size:11px;font-weight:700;padding:2px 7px;border-radius:99px;white-space:nowrap}
+  .sev-u{color:#fff;background:var(--p0)}
+  .sev-a{color:#fff;background:var(--accent)}
+  .sev-i{color:var(--primary-dk);background:var(--primary-tint)}
+  .vtag{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;margin-right:6px}
+  .v1{background:var(--primary);color:#fff}
+  .vl{background:#F1F3F4;color:var(--muted);border:1px solid var(--line)}
+  .note{background:var(--primary-tint);border-left:4px solid var(--primary);border-radius:0 10px 10px 0;padding:12px 16px;font-size:14px;margin:8px 0}
+  footer{padding:30px 0 60px;color:var(--muted);font-size:13.5px}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(120px);background:var(--ink);color:#fff;padding:12px 20px;border-radius:12px;font-size:14px;box-shadow:0 10px 30px rgba(0,0,0,.25);transition:.3s;z-index:99}
+  .toast.show{transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-in">
+    <div class="brand"><div class="logo">N</div>Diseño de Funcionalidades</div>
+    <div class="nav-links">
+      <a href="#metodo">Método</a>
+      <a href="#catalogo">Catálogo</a>
+      <a href="#spec">Spec faro · RPM</a>
+    </div>
+  </div>
+</nav>
+
+<header>
+  <div class="wrap">
+    <div class="eyebrow">Explorador vivo · Diseño detallado</div>
+    <h1>Del alcance al diseño, funcionalidad por funcionalidad</h1>
+    <p class="lede">Un repositorio vivo: el <b>catálogo priorizado</b> de todas las funcionalidades y, como plantilla de calibración, el <b>spec a fondo del motor RPM</b>. Cada feature se irá especificando con la misma estructura y sumándose aquí.</p>
+  </div>
+</header>
+
+<!-- METHOD -->
+<section id="metodo">
+  <div class="wrap">
+    <div class="kicker">El método</div>
+    <h2>Cimientos antes que features · rebanadas verticales · plantilla única</h2>
+    <p class="sub">Tres movimientos para diseñar sin caer en la parálisis de especificar 46 funcionalidades a la vez.</p>
+    <div class="moves">
+      <div class="move"><div class="mn">1</div><h3>Cerrar el mapa</h3><p>Descomponer las fases en épicas y features con prioridad y dependencias. Es el backbone que ves en el catálogo.</p></div>
+      <div class="move"><div class="mn">2</div><h3>Cimientos transversales</h3><p>Modelo de datos, roles/permisos, design system, motor de señales y notificaciones — de ellos dependen casi todas las features.</p></div>
+      <div class="move"><div class="mn">3</div><h3>Spec por rebanadas</h3><p>Un flujo end-to-end a la vez, priorizando los anclajes (RPM + gamificación) y la ruta crítica de Fase 1.</p></div>
+    </div>
+    <div class="tpl">
+      <h3>Plantilla estándar de especificación — toda feature se diseña con estos campos</h3>
+      <div class="tpl-grid">
+        <div><b>Objetivo</b> — qué métrica clínica o de negocio mueve</div>
+        <div><b>Roles y user stories</b> — quién y para qué</div>
+        <div><b>Flujo principal + alternos</b> — happy path y casos borde</div>
+        <div><b>Reglas de negocio</b> — la lógica dura y los umbrales</div>
+        <div><b>Datos</b> — qué se captura, de dónde, cómo se modela</div>
+        <div><b>IA</b> — inputs/outputs, límites, control humano</div>
+        <div><b>UI/UX</b> — pantallas, componentes y estados</div>
+        <div><b>Dependencias</b> — qué necesita ya construido</div>
+        <div><b>No funcionales</b> — privacidad, permisos, rendimiento</div>
+        <div><b>Aceptación y métricas</b> — cómo sabemos que quedó bien</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CATALOG -->
+<section id="catalogo">
+  <div class="wrap">
+    <div class="kicker">Move 1 · El mapa</div>
+    <h2>Catálogo priorizado de funcionalidades</h2>
+    <p class="sub">Filtra por fase, prioridad o épica. Las filas marcadas como <b>Especificado</b> abren su diseño detallado.</p>
+    <div class="stats" id="stats"></div>
+    <div class="prog">
+      <div class="pt"><span>Avance de especificación</span><b id="progtxt"></b></div>
+      <div class="bar"><i id="progbar" style="width:2%"></i></div>
+    </div>
+    <div class="filters">
+      <div class="fgroup"><span class="fl">Fase</span><span id="ffase"></span></div>
+      <div class="fgroup"><span class="fl">Prioridad</span><span id="fprio"></span></div>
+      <input id="search" placeholder="Buscar funcionalidad…">
+    </div>
+    <div class="fgroup" style="margin-bottom:14px"><span class="fl">Épica</span><span id="fepic"></span></div>
+    <div class="tblwrap">
+      <table>
+        <thead><tr><th>ID</th><th>Funcionalidad</th><th>Épica</th><th>Fase</th><th>Prioridad</th><th>Estado</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="legend">
+      <span><b>Prioridad:</b></span>
+      <span><span class="badge" style="color:var(--p0);background:var(--p0b)">P0</span> Crítico / ruta</span>
+      <span><span class="badge" style="color:var(--p1);background:var(--p1b)">P1</span> Alto</span>
+      <span><span class="badge" style="color:var(--p2);background:var(--p2b)">P2</span> Medio</span>
+      <span><span class="badge" style="color:var(--p3);background:var(--p3b)">P3</span> Visión</span>
+    </div>
+  </div>
+</section>
+
+<!-- SPEC FARO -->
+<section id="spec">
+  <div class="wrap">
+    <div class="kicker">Move 3 · Spec faro</div>
+    <div class="spec-head">
+      <span class="id">RPM-03</span>
+      <h2 style="margin:0">Motor de señales, alertas y triage clínico</h2>
+    </div>
+    <p class="sub" style="margin-top:10px">La funcionalidad de mayor riesgo técnico y la que define la arquitectura: convierte el flujo continuo de datos en un ranking de "a quién revisar hoy y por qué". Especificada con la plantilla completa como calibración.</p>
+    <div class="spec-card" id="speccard"></div>
+    <div class="note" style="margin-top:18px">Esta es la profundidad objetivo por feature. Con este patrón validado, las siguientes especificaciones se producen rápido y consistentes. La próxima tanda natural: <b>RPM-01</b> (ingesta de wearables, del que este motor depende) y <b>GAM-02</b> (metas + progreso, el otro anclaje).</div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    Explorador vivo de diseño · Plataforma Inteligente de Gestión Nutricional · v1.0 · Agosto 2026<br>
+    Documento de trabajo. El catálogo y las specs se actualizan a medida que se diseña cada funcionalidad.
+  </div>
+</footer>
+<div class="toast" id="toast"></div>
+
+<script>
+const EPICS = {
+  CLI:{n:'Gestión clínica'}, PAC:{n:'App del paciente'}, COM:{n:'Comunicación'},
+  IA:{n:'IA clínica'}, RPM:{n:'Motor RPM'}, GAM:{n:'Gamificación'}, INT:{n:'Interacción'},
+  REG:{n:'Registro inteligente'}, DEV:{n:'Dispositivos'}, PRED:{n:'IA predictiva'},
+  ANL:{n:'Analítica'}, PLT:{n:'Plataforma'}, MKT:{n:'Marketplace y programas'}
+};
+// full catalog
+const DATA = [
+  ['CLI-01','Expediente y timeline clínico','CLI',1,'P0','pend'],
+  ['CLI-02','Gestión de pacientes (CRUD, búsqueda, filtros)','CLI',1,'P0','pend'],
+  ['CLI-03','Agenda y gestión de citas','CLI',1,'P0','pend'],
+  ['CLI-04','Carga y análisis de laboratorios','CLI',1,'P0','pend'],
+  ['CLI-05','Generación de estrategia + export PDF','CLI',1,'P1','pend'],
+  ['CLI-06','White-label / configuración de marca','CLI',1,'P1','pend'],
+  ['PAC-01','Onboarding e invitación del paciente','PAC',1,'P0','pend'],
+  ['PAC-02','Dashboard personal del paciente','PAC',1,'P0','pend'],
+  ['PAC-03','Registro manual de comidas','PAC',1,'P0','pend'],
+  ['PAC-04','Registro manual de métricas (peso/presión/glucosa)','PAC',1,'P0','pend'],
+  ['PAC-05','Metas personales y progreso','PAC',1,'P1','pend'],
+  ['COM-01','Mensajería profesional–paciente','COM',1,'P0','pend'],
+  ['COM-02','Motor de notificaciones','COM',1,'P0','pend'],
+  ['IA-01','Interpretación inteligente de laboratorios','IA',1,'P1','pend'],
+  ['IA-02','Generación de notas y resúmenes (SOAP)','IA',1,'P1','pend'],
+  ['RPM-01','Integración con wearables (Apple Health / Google Health Connect)','RPM',2,'P0','pend'],
+  ['RPM-02','Integración con básculas inteligentes','RPM',2,'P1','pend'],
+  ['RPM-03','Motor de señales, alertas y triage clínico','RPM',2,'P0','spec'],
+  ['GAM-01','Rachas de adherencia','GAM',2,'P1','pend'],
+  ['GAM-02','Metas co-definidas + barras de progreso','GAM',2,'P1','pend'],
+  ['GAM-03','Retos / challenges','GAM',2,'P1','pend'],
+  ['GAM-04','Insignias y niveles','GAM',2,'P2','pend'],
+  ['GAM-05','Recompensas y beneficios canjeables','GAM',2,'P2','pend'],
+  ['INT-01','Teleconsulta / videoconsulta','INT',2,'P1','pend'],
+  ['INT-02','Chat con IA (coach con contexto)','INT',2,'P0','pend'],
+  ['IA-03','Entrevista clínica conversacional pre-consulta','IA',2,'P1','pend'],
+  ['REG-01','Registro por foto (niveles de madurez)','REG',3,'P1','pend'],
+  ['REG-02','Food Intelligence LatAm','REG',3,'P1','pend'],
+  ['REG-03','Registro por voz','REG',3,'P2','pend'],
+  ['REG-04','Escaneo de código de barras','REG',3,'P2','pend'],
+  ['REG-05','Comidas favoritas / hábitos aprendidos','REG',3,'P2','pend'],
+  ['DEV-01','Integración CGM (glucosa continua)','DEV',3,'P1','pend'],
+  ['DEV-02','Integración tensiómetros Bluetooth','DEV',3,'P2','pend'],
+  ['PRED-01','Predicción de abandono','PRED',3,'P1','pend'],
+  ['PRED-02','Predicción de riesgo clínico','PRED',3,'P2','pend'],
+  ['PRED-03','Educación personalizada por señales','PRED',3,'P2','pend'],
+  ['PRED-04','Recordatorios adaptativos','PRED',3,'P2','pend'],
+  ['ANL-01','Dashboards poblacionales (cohortes, adherencia, resultados)','ANL',4,'P2','pend'],
+  ['ANL-02','Benchmarking entre profesionales / cohortes','ANL',4,'P3','pend'],
+  ['PLT-01','APIs públicas','PLT',4,'P3','pend'],
+  ['PLT-02','Integración EMR/EHR','PLT',4,'P3','pend'],
+  ['PLT-03','Integración con laboratorios (import automático)','PLT',4,'P2','pend'],
+  ['MKT-01','Marketplace de profesionales / programas / contenido','MKT',4,'P3','pend'],
+  ['MKT-02','Programas clínicos empaquetados (diabetes, obesidad…)','MKT',4,'P2','pend'],
+  ['MKT-03','Programas corporativos / gubernamentales','MKT',4,'P3','pend'],
+  ['IA-04','Nutrition Digital Twin','IA',4,'P3','pend'],
+];
+
+const PCOL = {P0:['var(--p0)','var(--p0b)'],P1:['var(--p1)','var(--p1b)'],P2:['var(--p2)','var(--p2b)'],P3:['var(--p3)','var(--p3b)']};
+const FCOL = {1:'var(--f1)',2:'var(--f2)',3:'var(--f3)',4:'var(--f4)'};
+let flt = {fase:'all', prio:'all', epic:'all', q:''};
+
+// stats
+function renderStats(){
+  const byF=[1,2,3,4].map(f=>DATA.filter(d=>d[3]===f).length);
+  const spec=DATA.filter(d=>d[5]==='spec').length;
+  const s=document.getElementById('stats');
+  s.innerHTML =
+    `<div class="st"><div class="n">${DATA.length}</div><div class="l">Funcionalidades</div></div>`+
+    byF.map((c,i)=>`<div class="st"><div class="n" style="color:${FCOL[i+1]}">${c}</div><div class="l">Fase ${i+1}</div></div>`).join('')+
+    `<div class="st acc"><div class="n">${spec}</div><div class="l">Especificadas</div></div>`;
+  const pct=Math.round(spec/DATA.length*100);
+  document.getElementById('progtxt').innerHTML=`<b>${spec}</b> de ${DATA.length} · ${pct}%`;
+  document.getElementById('progbar').style.width=Math.max(pct,2)+'%';
+}
+// filter chips
+function chips(id,items,key,allLabel){
+  const el=document.getElementById(id);
+  const list=[['all',allLabel]].concat(items);
+  el.innerHTML=list.map(([v,l])=>`<button class="fbtn ${flt[key]===v?'on':''}" data-k="${key}" data-v="${v}">${l}</button>`).join('');
+}
+function renderFilters(){
+  chips('ffase',[['1','F1'],['2','F2'],['3','F3'],['4','F4']],'fase','Todas');
+  chips('fprio',[['P0','P0'],['P1','P1'],['P2','P2'],['P3','P3']],'prio','Todas');
+  chips('fepic',Object.keys(EPICS).map(k=>[k,EPICS[k].n]),'epic','Todas');
+  document.querySelectorAll('.fbtn').forEach(b=>b.onclick=()=>{flt[b.dataset.k]=b.dataset.v;renderFilters();renderRows();});
+}
+function renderRows(){
+  const tb=document.getElementById('rows');
+  const q=flt.q.toLowerCase();
+  const rows=DATA.filter(d=>
+    (flt.fase==='all'||d[3]==(flt.fase))&&
+    (flt.prio==='all'||d[4]===flt.prio)&&
+    (flt.epic==='all'||d[2]===flt.epic)&&
+    (!q||d[1].toLowerCase().includes(q)||d[0].toLowerCase().includes(q))
+  );
+  if(!rows.length){tb.innerHTML='<tr><td colspan="6" class="empty">Sin funcionalidades con esos filtros.</td></tr>';return;}
+  tb.innerHTML=rows.map(d=>{
+    const [pc,pb]=PCOL[d[4]];
+    const isSpec=d[5]==='spec';
+    return `<tr class="${isSpec?'spec':''}" data-id="${d[0]}" data-spec="${isSpec}">
+      <td class="fid">${d[0]}</td>
+      <td class="fname">${d[1]}${isSpec?'<span class="star">★</span>':''}</td>
+      <td style="color:var(--muted)">${EPICS[d[2]].n}</td>
+      <td><span class="badge" style="color:#fff;background:${FCOL[d[3]]}">F${d[3]}</span></td>
+      <td><span class="badge" style="color:${pc};background:${pb}">${d[4]}</span></td>
+      <td>${isSpec?'<span class="badge est-spec">Especificado</span>':'<span class="badge est-pend">Pendiente</span>'}</td>
+    </tr>`;
+  }).join('');
+  tb.querySelectorAll('tr').forEach(tr=>tr.onclick=()=>{
+    if(tr.dataset.spec==='true'){document.getElementById('spec').scrollIntoView({behavior:'smooth'});}
+    else{showToast('Especificación pendiente — próxima tanda de diseño.');}
+  });
+}
+let tmr;
+function showToast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tmr);tmr=setTimeout(()=>t.classList.remove('show'),2600);}
+document.getElementById('search').oninput=e=>{flt.q=e.target.value;renderRows();};
+
+// ---------- SPEC CONTENT ----------
+const SPEC = [
+  ['Objetivo y valor',`
+    <p>Convertir el flujo continuo de datos del paciente (peso, actividad, sueño, glucosa, presión, registros, ánimo) en un <b>ranking priorizado de a quién revisar hoy y por qué</b>, para que el profesional intervenga donde importa —antes de que el paciente abandone o su condición empeore— sin revisar a los 300 pacientes uno por uno.</p>
+    <p><b>Métricas que mueve:</b> reducción de la tasa de abandono, % de pacientes en riesgo detectados a tiempo, tiempo medio de revisión por profesional, % de alertas accionadas.</p>`],
+  ['Roles y user stories',`
+    <div class="story">"Como nutricionista con 200 pacientes, quiero que el sistema me diga a quiénes revisar hoy y por qué, para intervenir donde importa sin revisarlos a todos."</div>
+    <div class="story">"Como administrador de clínica, quiero configurar umbrales por defecto según nuestros protocolos, para que las alertas se ajusten a cómo trabajamos."</div>
+    <p><b>Roles:</b> nutricionista (consume el triage y actúa), administrador de clínica (configura umbrales base), paciente (receptor indirecto de la intervención oportuna).</p>`],
+  ['Flujo principal + alternos',`
+    <p><b>Flujo principal:</b></p>
+    <div class="flow">
+      <span class="fstep">Ingesta de datos</span><span class="far">→</span>
+      <span class="fstep">Normalización</span><span class="far">→</span>
+      <span class="fstep">Evaluación de reglas/señales</span><span class="far">→</span>
+      <span class="fstep">Evento + severidad</span><span class="far">→</span>
+      <span class="fstep">Score de atención por paciente</span><span class="far">→</span>
+      <span class="fstep">Ranking en el panel</span><span class="far">→</span>
+      <span class="fstep">Profesional actúa o descarta</span>
+    </div>
+    <p><b>Flujos alternos:</b></p>
+    <ul>
+      <li><b>Datos insuficientes</b> — paciente nuevo o que dejó de sincronizar: se genera una señal de "sin datos" en vez de silencio.</li>
+      <li><b>Datos anómalos</b> — outliers de dispositivo (báscula mal calibrada): filtro de plausibilidad antes de disparar alerta.</li>
+      <li><b>Múltiples señales del mismo paciente</b> — consolidación/dedup en un solo ítem de triage, no cinco alertas separadas.</li>
+      <li><b>Falso positivo</b> — el profesional marca "no relevante": se registra como feedback para afinar umbrales.</li>
+    </ul>`],
+  ['Reglas de negocio · catálogo de señales',`
+    <p>Motor <b>determinístico primero</b> (umbrales transparentes), con severidad por señal. Los umbrales son configurables a tres niveles: <b>sistema → clínica → paciente</b> (un paciente diabético y uno bariátrico no comparten los mismos límites).</p>
+    <table class="sigtbl">
+      <thead><tr><th>Señal</th><th>Disparador (ejemplo, configurable)</th><th>Severidad</th></tr></thead>
+      <tbody>
+        <tr><td>Riesgo de abandono</td><td>Sin registro ni sync ≥ 4–6 días; no abre la app; no responde mensajes</td><td><span class="sev sev-u">Urgente</span></td></tr>
+        <tr><td>Cambio de peso brusco</td><td>Δ &gt; 2 kg en 48 h (posible retención)</td><td><span class="sev sev-a">Atención</span></td></tr>
+        <tr><td>Tendencia de peso adversa</td><td>Alza sostenida contra la meta durante 2+ semanas</td><td><span class="sev sev-a">Atención</span></td></tr>
+        <tr><td>Control glucémico (CGM)</td><td>Tiempo en rango &lt; umbral; hipoglucemias nocturnas; media al alza</td><td><span class="sev sev-u">Urgente</span></td></tr>
+        <tr><td>Presión arterial</td><td>Lecturas &gt; umbral sostenidas</td><td><span class="sev sev-a">Atención</span></td></tr>
+        <tr><td>Sueño</td><td>&lt; 5 h sostenido durante una semana</td><td><span class="sev sev-i">Info</span></td></tr>
+        <tr><td>Caída de actividad</td><td>Descenso brusco de pasos vs. baseline del paciente</td><td><span class="sev sev-i">Info</span></td></tr>
+        <tr><td>Adherencia</td><td>Racha rota; registros incompletos recurrentes</td><td><span class="sev sev-i">Info</span></td></tr>
+      </tbody>
+    </table>
+    <p><b>Score de atención</b> = función ponderada de las señales activas × severidad × recencia. Es <b>explicable</b>: el profesional siempre ve las señales concretas que lo elevaron, nunca un número opaco.</p>`],
+  ['Datos',`
+    <p><b>Entidades clave:</b></p>
+    <ul>
+      <li><b>Observation / Metric</b> — serie temporal de cada medida (valor, unidad, fuente, timestamp).</li>
+      <li><b>Signal / Event</b> — señal disparada (tipo, severidad, evidencia, estado: activa/atendida/descartada).</li>
+      <li><b>AttentionScore</b> — score agregado por paciente, recalculado ante nuevos datos.</li>
+      <li><b>ThresholdConfig</b> — umbrales por nivel (sistema / clínica / paciente).</li>
+      <li><b>Intervention log</b> — qué hizo el profesional ante cada señal (auditoría y aprendizaje).</li>
+    </ul>
+    <p><b>Origen:</b> ingesta RPM (wearables, básculas, CGM, tensiómetros) y registros de la app del paciente.</p>`],
+  ['IA · rol acotado',`
+    <p>La IA <b>no reemplaza</b> el motor de reglas: lo complementa en tres puntos concretos.</p>
+    <ul>
+      <li><b>Detección de anomalías/tendencias</b> que un umbral fijo no captura (p. ej. patrones sutiles multi-variable).</li>
+      <li><b>Redacción del "por qué"</b> en lenguaje natural para el profesional ("Ana no registra hace 5 días y sus pasos cayeron 60%").</li>
+      <li><b>Sugerencia de acción</b> (enviar mensaje, adelantar cita, ajustar plan) — siempre como propuesta.</li>
+    </ul>
+    <div class="note"><b>Límites innegociables:</b> no diagnostica; explicabilidad obligatoria en cada alerta; disclaimer clínico visible; <b>human-in-the-loop</b> — la señal sugiere, el profesional decide. El modelo predictivo de abandono (PRED-01) se apoya en este motor pero llega en Fase 3.</div>`],
+  ['UI/UX',`
+    <p><b>Panel de triage</b> — lista rankeada de pacientes: cada ítem muestra chip de severidad, señales resumidas, última actividad y acciones rápidas (mensaje, agendar, ajustar plan, descartar).</p>
+    <ul>
+      <li><b>Estado vacío</b> — "Hoy no hay pacientes que requieran atención" (buen síntoma, no error).</li>
+      <li><b>Carga</b> — skeleton mientras se recalculan scores.</li>
+      <li><b>Error de sync</b> — aviso claro si una fuente dejó de reportar.</li>
+      <li><b>Detalle del paciente</b> — timeline de señales con su evidencia (la gráfica que la disparó).</li>
+      <li><b>Configuración de umbrales</b> — panel para clínica y por paciente.</li>
+    </ul>`],
+  ['Dependencias e integraciones',`
+    <ul>
+      <li><b>Requiere:</b> modelo de datos de métricas, ingesta RPM (RPM-01 wearables, RPM-02 básculas), motor de notificaciones (COM-02), roles/permisos.</li>
+      <li><b>Habilita / bloquea:</b> alertas al paciente, predicción de abandono (PRED-01) y educación por señales (PRED-03) se construyen encima de este motor.</li>
+    </ul>`],
+  ['No funcionales',`
+    <ul>
+      <li><b>Privacidad</b> — datos clínicos sensibles: cifrado, consentimiento, minimización.</li>
+      <li><b>Permisos</b> — cada profesional ve solo a sus pacientes; aislamiento multi-tenant.</li>
+      <li><b>Procesamiento</b> — evaluación casi en tiempo real ante nuevos datos + barrido nocturno de respaldo.</li>
+      <li><b>Auditoría</b> — trazabilidad de por qué se disparó cada alerta.</li>
+      <li><b>Escalabilidad</b> — evaluar señales de miles de pacientes; umbrales configurables sin redeploy.</li>
+    </ul>`],
+  ['Criterios de aceptación y métricas',`
+    <p><b>Aceptación (ejemplos):</b></p>
+    <ul>
+      <li>Dado un paciente que deja de registrar ≥ N días, se genera la señal de abandono con la severidad correcta y aparece en el triage rankeado.</li>
+      <li>El profesional puede descartar una señal y queda registrada como feedback.</li>
+      <li>Los umbrales se ajustan por clínica y por paciente sin desplegar código.</li>
+      <li>Cada alerta muestra su justificación (las señales y la evidencia que la elevaron).</li>
+    </ul>
+    <p><b>Métricas de la feature:</b> % de alertas accionadas, tasa de descarte (proxy de falsos positivos / alert fatigue), reducción de abandono, tiempo medio de revisión.</p>
+    <p><b>Alcance por versión:</b> <span class="vtag v1">v1</span> reglas determinísticas + score explicable + panel de triage + configuración por clínica. <span class="vtag vl">Después</span> modelo predictivo de abandono, personalización automática de umbrales, redacción generativa del "por qué".</p>
+    <div class="note"><b>Riesgos / decisiones abiertas:</b> evitar el <b>alert fatigue</b> (calibrar sensibilidad); ¿tiempo real vs. batch en v1?; ¿qué umbrales por defecto según condición?; ¿cuánta IA vs. reglas en la primera versión?</div>`],
+];
+function renderSpec(){
+  const c=document.getElementById('speccard');
+  c.innerHTML=SPEC.map((s,i)=>`
+    <div class="sc-sec">
+      <button class="sc-h ${i===0?'open':''}" data-i="${i}">
+        <span class="sc-num">${i+1}</span>${s[0]}<span class="tg">+</span>
+      </button>
+      <div class="sc-b ${i===0?'open':''}" data-i="${i}">${s[1]}</div>
+    </div>`).join('');
+  c.querySelectorAll('.sc-h').forEach(h=>h.onclick=()=>{
+    const b=c.querySelector(`.sc-b[data-i="${h.dataset.i}"]`);
+    h.classList.toggle('open');b.classList.toggle('open');
+  });
+}
+
+renderStats();renderFilters();renderRows();renderSpec();
+</script>
+</body>
+</html>

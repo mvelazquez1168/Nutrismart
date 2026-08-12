@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Épica CLI · Gestión Clínica — Especificación detallada</title>
+<style>
+  :root{
+    --primary:#0E7C66; --primary-dk:#0A5C4C; --primary-tint:#E7F1EE;
+    --accent:#C2410C; --accent-tint:#FBF0E9;
+    --ink:#1F2937; --muted:#6B7280; --line:#E3EAE8;
+    --bg:#FBFCFC; --card:#FFFFFF;
+    --p0:#B91C1C; --p0b:#FDECEC; --p1:#C2410C; --p1b:#FBF0E9;
+    --shadow:0 1px 2px rgba(16,40,34,.04),0 8px 24px rgba(16,40,34,.06);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:var(--bg);line-height:1.6;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 24px}
+  nav{position:sticky;top:0;z-index:50;background:rgba(251,252,252,.9);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .nav-in{max-width:1000px;margin:0 auto;padding:12px 24px;display:flex;align-items:center;gap:16px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;color:var(--primary-dk);font-size:15px}
+  .logo{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--primary),var(--primary-dk));display:grid;place-items:center;color:#fff;font-size:13px;font-weight:800}
+  .nav-links{margin-left:auto;display:flex;gap:4px}
+  .nav-links a{font-size:13.5px;color:var(--muted);padding:6px 11px;border-radius:8px;transition:.15s}
+  .nav-links a:hover{color:var(--primary-dk);background:var(--primary-tint)}
+  @media(max-width:720px){.nav-links{display:none}}
+  header{padding:52px 0 34px;background:radial-gradient(1100px 380px at 15% -10%,var(--primary-tint),transparent);border-bottom:1px solid var(--line)}
+  .eyebrow{font-size:12.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--primary)}
+  h1{font-size:clamp(27px,4.4vw,40px);line-height:1.12;font-weight:800;color:var(--primary-dk);margin:12px 0 8px;letter-spacing:-.02em}
+  .lede{font-size:17px;color:var(--ink);max-width:720px}
+  .lede b{color:var(--primary-dk)}
+  .hchips{display:flex;flex-wrap:wrap;gap:9px;margin-top:20px}
+  .hchip{font-size:12.5px;font-weight:600;padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:#fff}
+  .hchip.p{color:var(--primary-dk);border-color:#BFE0D7;background:var(--primary-tint)}
+  section{padding:44px 0;border-bottom:1px solid var(--line)}
+  .kicker{font-size:12.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--accent);margin-bottom:8px}
+  h2{font-size:25px;font-weight:800;color:var(--primary-dk);letter-spacing:-.01em;margin-bottom:6px}
+  .sub{color:var(--muted);font-size:15.5px;max-width:740px;margin-bottom:22px}
+  p.body{font-size:15px;margin-bottom:12px}
+  .ov{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:6px}
+  @media(max-width:640px){.ov{grid-template-columns:1fr}}
+  .ovc{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow)}
+  .ovc .t{font-weight:700;color:var(--primary-dk);font-size:14px;margin-bottom:5px}
+  .ovc p{font-size:14px;color:var(--ink)}
+  .ovc ul{list-style:none;display:flex;flex-direction:column;gap:5px;margin-top:4px}
+  .ovc li{font-size:13.5px;padding-left:16px;position:relative}
+  .ovc li::before{content:"";position:absolute;left:0;top:8px;width:6px;height:6px;border-radius:2px;background:var(--primary)}
+  /* index chips */
+  .idx{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}
+  .ichip{font-size:12.5px;border:1px solid var(--line);background:#fff;border-radius:10px;padding:7px 11px;cursor:pointer;transition:.12s;display:flex;gap:7px;align-items:center}
+  .ichip:hover{border-color:var(--primary);background:var(--primary-tint)}
+  .ichip .ii{font-family:ui-monospace,monospace;font-size:11px;color:var(--muted)}
+  /* feature accordion */
+  .feat{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);margin-bottom:12px;overflow:hidden;scroll-margin-top:70px}
+  .fh{width:100%;text-align:left;background:#fff;border:none;padding:16px 20px;cursor:pointer;display:flex;align-items:center;gap:12px}
+  .fh:hover{background:#F8FAF9}
+  .fh .fid{font-family:ui-monospace,monospace;font-size:12px;color:#fff;background:var(--primary);padding:3px 9px;border-radius:7px}
+  .fh .fn{font-weight:700;color:var(--primary-dk);font-size:16px}
+  .fh .pr{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
+  .pr0{color:var(--p0);background:var(--p0b)} .pr1{color:var(--p1);background:var(--p1b)}
+  .fh .tg{margin-left:auto;color:var(--muted);font-size:20px;transition:.2s;line-height:1}
+  .fh.open .tg{transform:rotate(45deg)}
+  .fb{display:none;padding:4px 20px 20px;border-top:1px solid var(--line)}
+  .fb.open{display:block}
+  .blk{margin-top:14px}
+  .blk .bt{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--accent);margin-bottom:5px}
+  .blk p{font-size:14px;color:var(--ink)}
+  .blk ul{list-style:none;display:flex;flex-direction:column;gap:6px}
+  .blk li{font-size:14px;padding-left:17px;position:relative}
+  .blk li::before{content:"";position:absolute;left:0;top:8px;width:6px;height:6px;border-radius:2px;background:var(--primary)}
+  .story{background:var(--primary-tint);border-radius:9px;padding:9px 13px;margin:5px 0;font-size:13.5px;font-style:italic;color:var(--primary-dk)}
+  .v1{background:var(--accent-tint);border-left:3px solid var(--accent);border-radius:0 9px 9px 0;padding:9px 13px;font-size:13.5px;margin-top:4px}
+  .v1 b{color:var(--accent)}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:640px){.two{grid-template-columns:1fr}}
+  .note{background:var(--primary-tint);border-left:4px solid var(--primary);border-radius:0 10px 10px 0;padding:13px 16px;font-size:14px;margin-top:8px}
+  .note b{color:var(--primary-dk)}
+  /* data model */
+  .ent{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:6px}
+  @media(max-width:640px){.ent{grid-template-columns:1fr}}
+  .entc{background:#fff;border:1px solid var(--line);border-radius:12px;padding:13px 15px;box-shadow:var(--shadow)}
+  .entc .en{font-weight:700;color:var(--primary-dk);font-size:14px;font-family:ui-monospace,monospace}
+  .entc p{font-size:13px;color:var(--muted);margin-top:3px}
+  .seq{position:relative;padding-left:26px;margin-top:8px}
+  .seq::before{content:"";position:absolute;left:7px;top:6px;bottom:6px;width:2px;background:var(--line)}
+  .sitem{position:relative;padding:0 0 16px}
+  .sitem:last-child{padding-bottom:0}
+  .sdot{position:absolute;left:-26px;top:3px;width:15px;height:15px;border-radius:50%;background:#fff;border:3px solid var(--primary)}
+  .sitem .st{font-weight:700;color:var(--primary-dk);font-size:14.5px}
+  .sitem .sd{font-size:14px;color:var(--ink)}
+  footer{padding:30px 0 60px;color:var(--muted);font-size:13.5px}
+</style>
+</head>
+<body>
+<nav>
+  <div class="nav-in">
+    <div class="brand"><div class="logo">CLI</div>Épica CLI · Gestión Clínica</div>
+    <div class="nav-links">
+      <a href="#resumen">Resumen</a>
+      <a href="#features">Funcionalidades</a>
+      <a href="#datos">Modelo de datos</a>
+      <a href="#secuencia">Secuencia</a>
+      <a href="#fronteras">Fronteras</a>
+    </div>
+  </div>
+</nav>
+
+<header>
+  <div class="wrap">
+    <div class="eyebrow">Especificación detallada de épica · Fase 1</div>
+    <h1>Gestión Clínica (CLI)</h1>
+    <p class="lede">La <b>fundación del lado profesional</b>: el expediente y el timeline, los pacientes, la agenda, los laboratorios, la estrategia y el white-label. Aquí se define el <b>modelo de datos clínico central</b> del que dependen casi todas las demás épicas.</p>
+    <div class="hchips">
+      <span class="hchip p">7 funcionalidades</span>
+      <span class="hchip">5 × P0 · 2 × P1</span>
+      <span class="hchip">Fase 1 (núcleo)</span>
+      <span class="hchip">Base: prototipo NutriClinica</span>
+    </div>
+  </div>
+</header>
+
+<!-- RESUMEN -->
+<section id="resumen">
+  <div class="wrap">
+    <div class="kicker">Resumen de la épica</div>
+    <h2>Qué resuelve y por qué es la fundación</h2>
+    <p class="body">La épica CLI cubre todo lo que el nutricionista necesita para gestionar su práctica clínica: registrar y encontrar pacientes, llevar su historia y evolución en el tiempo, agendar consultas, incorporar laboratorios, producir la estrategia y personalizar la marca. Es <b>Fase 1</b> porque es el sustrato sobre el que se montan la valoración ABCD (épica EVAL), el monitoreo remoto (RPM), la IA clínica y las gráficas. Si esta capa queda bien modelada, todo lo demás se apoya con solidez.</p>
+    <div class="ov">
+      <div class="ovc"><div class="t">Objetivo</div><p>Dar al profesional el registro clínico completo y su evolución longitudinal, con las herramientas operativas (pacientes, agenda, labs, estrategia) para trabajar sin fricción.</p></div>
+      <div class="ovc"><div class="t">Usuarios</div><ul><li>Nutricionista — actor principal</li><li>Administrador de clínica — marca, multi-profesional</li><li>Paciente — receptor de estrategia y citas (indirecto)</li></ul></div>
+      <div class="ovc"><div class="t">Dentro del alcance</div><ul><li>Expediente + timeline de snapshots</li><li>Pacientes, agenda, laboratorios</li><li>Estrategia + PDF, white-label, sociodemografía</li></ul></div>
+      <div class="ovc"><div class="t">Fuera del alcance (otras épicas)</div><ul><li>Valoración ABCD y calculadora → EVAL</li><li>Interpretación IA de labs / SOAP → IA</li><li>Señales y monitoreo → RPM</li></ul></div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features">
+  <div class="wrap">
+    <div class="kicker">Las 7 funcionalidades</div>
+    <h2>Especificación por funcionalidad</h2>
+    <p class="sub">Toca cada tarjeta para ver su mini-spec: objetivo, historias de usuario, alcance, reglas, datos, dependencias, criterios de aceptación y alcance de v1.</p>
+    <div class="idx" id="idx"></div>
+    <div id="feats"></div>
+  </div>
+</section>
+
+<!-- DATA MODEL -->
+<section id="datos">
+  <div class="wrap">
+    <div class="kicker">Cimiento transversal</div>
+    <h2>Modelo de datos de la épica</h2>
+    <p class="body">Estas son las entidades centrales que define CLI. Su diseño limpio y compatible con estándares de salud (FHIR-friendly) es lo que abarata todo lo que viene después.</p>
+    <div class="ent">
+      <div class="entc"><div class="en">Paciente</div><p>Demografía + bloque sociodemográfico (CLI-07); pertenece a una Clínica y a un Profesional.</p></div>
+      <div class="entc"><div class="en">Expediente</div><p>Estado clínico actual: métricas vitales, diagnósticos activos, antecedentes.</p></div>
+      <div class="entc"><div class="en">ClinicalSnapshot</div><p>Unidad temporal del timeline; agrupa métricas, labs, notas y versión de estrategia de esa fecha.</p></div>
+      <div class="entc"><div class="en">LongitudinalMetric</div><p>Serie temporal de una medida (peso, IMC, glucosa…) para tendencias y gráficas.</p></div>
+      <div class="entc"><div class="en">LabExam</div><p>Biomarcador con valor, unidad, rango de referencia, estado y fuente.</p></div>
+      <div class="entc"><div class="en">ClinicalNote</div><p>Nota narrativa del profesional, versionada, no borrable.</p></div>
+      <div class="entc"><div class="en">StrategyVersion</div><p>Versión de la estrategia/plan vigente, vinculada a un snapshot.</p></div>
+      <div class="entc"><div class="en">Appointment</div><p>Cita con paciente, fecha, tipo, estado y notas; puede generar un snapshot.</p></div>
+      <div class="entc"><div class="en">BrandConfig</div><p>Identidad visual por clínica (logo, colores, imágenes); afecta UI y PDFs.</p></div>
+      <div class="entc"><div class="en">Clínica / Profesional / Rol</div><p>Entidades de tenancy que gobiernan permisos y aislamiento de datos.</p></div>
+    </div>
+    <div class="note"><b>Relación clave:</b> un Paciente tiene muchos Snapshots; cada Snapshot es la foto de un momento (métricas + labs + notas + estrategia). Las Citas se vinculan al Paciente y suelen generar un Snapshot. Sobre este modelo leen EVAL, RPM, la IA y las gráficas.</div>
+  </div>
+</section>
+
+<!-- SEQUENCE -->
+<section id="secuencia">
+  <div class="wrap">
+    <div class="kicker">Cómo construirla</div>
+    <h2>Secuencia interna recomendada</h2>
+    <p class="sub">Dentro de la propia épica, un orden que respeta dependencias y entrega valor pronto.</p>
+    <div class="seq">
+      <div class="sitem"><div class="sdot"></div><div class="st">1 · Modelo de datos + CLI-02 (pacientes) + CLI-01 (expediente/timeline)</div><div class="sd">El corazón: define las entidades y permite registrar y ver pacientes con su evolución.</div></div>
+      <div class="sitem"><div class="sdot"></div><div class="st">2 · CLI-03 (agenda) + CLI-04 (laboratorios)</div><div class="sd">Cuelgan del expediente: citas que generan snapshots y labs que los enriquecen.</div></div>
+      <div class="sitem"><div class="sdot"></div><div class="st">3 · CLI-07 (sociodemografía)</div><div class="sd">Extensión del expediente; se puede incorporar en paralelo con lo anterior.</div></div>
+      <div class="sitem"><div class="sdot"></div><div class="st">4 · CLI-05 (estrategia/PDF) + CLI-06 (white-label)</div><div class="sd">Dan salida y marca. CLI-06 conviene adelantarlo si vas a mostrar el prototipo white-label a la nutricionista.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- FRONTERAS -->
+<section id="fronteras">
+  <div class="wrap">
+    <div class="kicker">Bordes claros</div>
+    <h2>Fronteras con otras épicas</h2>
+    <p class="sub">Trazar qué es CLI y qué pertenece a las épicas vecinas evita que se pisen al especificar.</p>
+    <div class="two">
+      <div>
+        <div class="blk"><div class="bt">EVAL · Valoración y plan (ABCD)</div><p>Se apoya en el expediente (CLI-01) pero es su propia épica: valoración ABCD, calculadora nutricional y plan de alimentación prescrito. CLI-05 produce el <i>informe de estrategia</i>; EVAL-07 produce el <i>plan detallado</i>.</p></div>
+        <div class="blk"><div class="bt">IA · IA clínica</div><p>CLI-04 captura y muestra los labs estructurados; la <i>interpretación</i> (hallazgos, patrones) es IA-01, y las notas SOAP son IA-02. CLI provee el dato; IA lo interpreta.</p></div>
+      </div>
+      <div>
+        <div class="blk"><div class="bt">RPM · Motor de monitoreo</div><p>Lee las métricas longitudinales del expediente para detectar señales, pero no las define — solo las consume.</p></div>
+        <div class="blk"><div class="bt">COM · Comunicación</div><p>Los recordatorios de citas y las notificaciones paramétricas (cumpleaños, check-ups) se disparan desde la agenda (CLI-03) pero viven en la épica COM.</p></div>
+      </div>
+    </div>
+    <div class="note" style="margin-top:18px">Propuesta para revisar y calibrar. Una vez validada la profundidad, marco estas 7 funcionalidades como <b>Especificadas</b> en el explorador vivo y seguimos con la siguiente épica (EVAL sería la continuación natural).</div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    Especificación detallada · Épica CLI — Gestión Clínica · v1.0 · Agosto 2026<br>
+    Documento de trabajo, elaborado sobre el prototipo NutriClinica y las decisiones de diseño acordadas.
+  </div>
+</footer>
+
+<script>
+const P = {P0:'pr0',P1:'pr1'};
+const FEATURES = [
+  {id:'CLI-01', name:'Expediente y timeline clínico', prio:'P0',
+   obj:'Ser la columna vertebral del lado profesional: consolidar el estado clínico actual del paciente (expediente) y su evolución en el tiempo (timeline de snapshots). Define el modelo de datos clínico central del proyecto.',
+   stories:['Como nutricionista quiero ver de un vistazo el estado actual y la evolución del paciente para decidir con información.','Como nutricionista quiero registrar un nuevo punto de control (snapshot) para dejar constancia de cada consulta.'],
+   alcance:['Ficha de expediente: demografía, métricas vitales, diagnósticos activos, antecedentes.','Timeline vertical cronológico de snapshots clínicos.','Cada snapshot: métricas, labs vigentes, notas y versión de estrategia de esa fecha.','Indicadores de tendencia entre snapshots consecutivos.','Secciones colapsables (labs, notas, estrategia) e ingreso de nuevo snapshot.'],
+   reglas:['No hay borrado real de snapshots ni notas: se archivan o marcan, por trazabilidad clínica.','Un snapshot cerrado es inmutable; las correcciones se versionan.'],
+   datos:'Paciente, Expediente, ClinicalSnapshot, LongitudinalMetric, ClinicalNote, StrategyVersion, LabExam (referencia).',
+   dep:'Es la base del modelo de datos. Habilita EVAL, RPM, estrategia y gráficas. Depende de tenancy/roles.',
+   acept:['Se crea un snapshot con fecha y el timeline muestra tendencias correctas.','El expediente refleja el estado actual del paciente.','Ningún registro clínico se elimina físicamente.'],
+   v1:'Productizar el timeline/expediente del prototipo NutriClinica sobre un backend real, con el modelo limpio y compatible con estándares de salud (FHIR-friendly), en vez de datos mock.'},
+
+  {id:'CLI-02', name:'Gestión de pacientes (CRUD, búsqueda, filtros)', prio:'P0',
+   obj:'Administrar el ciclo de vida completo de los pacientes del nutricionista con la menor fricción posible.',
+   stories:['Como nutricionista quiero registrar, buscar, filtrar y editar pacientes rápidamente para trabajar con agilidad.'],
+   alcance:['Tabla de pacientes: nombre, edad, última visita, estado clínico, acciones.','Búsqueda en tiempo real por nombre o ID.','Filtrado por estado de salud (normal / alerta / crítico).','Modal para agregar paciente (demográficos + datos clínicos iniciales) y para editar.','Navegación directa al perfil y al timeline del paciente.'],
+   reglas:['"Eliminar" es baja lógica / inactivación, nunca borrado físico.','Identificador único por paciente dentro de la clínica.','Estados clínicos con código de color.'],
+   datos:'Paciente (demografía, estado clínico, relación con profesional y clínica).',
+   dep:'Expediente (CLI-01), tenancy/roles, sociodemografía (CLI-07).',
+   acept:['CRUD completo con búsqueda y filtro en tiempo real.','La baja es lógica y reversible.','Cada profesional ve únicamente a sus pacientes.'],
+   v1:'Base NutriClinica (PatientsPage) productizada sobre backend con aislamiento multi-tenant.'},
+
+  {id:'CLI-03', name:'Agenda y gestión de citas', prio:'P0',
+   obj:'Gestionar la agenda clínica del nutricionista y el ciclo de vida de cada cita.',
+   stories:['Como nutricionista quiero ver y gestionar mi agenda y el estado de cada cita para organizar mi día.'],
+   alcance:['Vista de lista de citas con filtrado por fecha y estado.','Crear cita: paciente, fecha, hora, tipo de consulta, notas previas.','Detalle de cita con edición de notas y cambio de estado (programada / completada / cancelada).','Tarjeta compacta por cita.'],
+   reglas:['Estados de cita bien definidos; evitar solapes.','Vínculo cita ↔ snapshot: una cita completada suele generar un snapshot o una consulta de seguimiento (EVAL-08).'],
+   datos:'Appointment (paciente, fecha, tipo, estado, notas).',
+   dep:'Pacientes (CLI-02). Dispara recordatorios vía notificaciones (COM-02 / COM-03). Alimenta la consulta de seguimiento (EVAL-08).',
+   acept:['Crear, editar y cambiar el estado de una cita; filtrar por fecha/estado.','Los recordatorios pueden dispararse desde la cita.'],
+   v1:'Base NutriClinica (AppointmentsPage) productizada.'},
+
+  {id:'CLI-04', name:'Carga y análisis de laboratorios', prio:'P0',
+   obj:'Ingresar resultados de laboratorio y mostrarlos estructurados para su lectura clínica.',
+   stories:['Como nutricionista quiero subir un PDF o CSV de laboratorios y ver los biomarcadores con sus rangos y estado.'],
+   alcance:['Zona de carga drag-and-drop (CSV, PDF) con lista de archivos.','Tabla de biomarcadores: valor, rango de referencia y estado (normal / alterado / crítico).','Indicadores de tendencia respecto al análisis anterior.','Almacenamiento de los resultados dentro del snapshot.'],
+   reglas:['Rangos de referencia configurables; estado marcado por umbral.','Se conserva el histórico completo de laboratorios.'],
+   datos:'LabExam (biomarcador, valor, unidad, rango, estado, fecha, fuente).',
+   dep:'Expediente / snapshot (CLI-01). Frontera: la interpretación inteligente (hallazgos, patrones) es IA-01; el uso en la valoración es EVAL-02. CLI-04 es captura + visualización.',
+   acept:['Carga de archivo y registro de valores.','Tabla con estados por umbral y tendencias vs. anterior.'],
+   v1:'Base NutriClinica (UploadPage / AnalysisPage) sin la capa de interpretación IA (que es IA-01).'},
+
+  {id:'CLI-05', name:'Generación de estrategia + exportación PDF', prio:'P1',
+   obj:'Producir el informe de estrategia clínica del paciente y exportarlo en un PDF de grado profesional.',
+   stories:['Como nutricionista quiero generar y exportar la estrategia del paciente para compartirla y respaldarla.'],
+   alcance:['Informe con resumen ejecutivo, plan, suplementación con justificación, seguimiento y próximas metas.','Exportación PDF robusta: validación previa, reintentos con backoff, manejo de imágenes (CORS).'],
+   reglas:['La estrategia se versiona y se vincula al snapshot vigente.','El PDF es reproducible y respeta el branding de la clínica.'],
+   datos:'StrategyVersion; documento PDF generado.',
+   dep:'Expediente/snapshot (CLI-01), plan de alimentación prescrito (EVAL-07), white-label (CLI-06) para el branding del PDF.',
+   acept:['Genera el informe y exporta un PDF con la marca de la clínica.','Maneja los errores de exportación con reintentos.'],
+   v1:'Base NutriClinica (StrategyPage + PDFExportService). Frontera: el plan detallado es EVAL-07; CLI-05 es el informe y su exportación.'},
+
+  {id:'CLI-06', name:'White-label / configuración de marca', prio:'P1',
+   obj:'Permitir que cada clínica personalice la identidad visual de la plataforma (multi-tenant white-label).',
+   stories:['Como administrador de clínica quiero configurar logo, colores e imágenes para que la plataforma refleje mi marca.'],
+   alcance:['Identidad: nombre de clínica, subdominio, descripción.','Logo con preview; colores primario/secundario con actualización inmediata de la UI.','Imagen del panel de login y banner del dashboard.','Guardar y restaurar valores por defecto.'],
+   reglas:['Aislamiento por tenant; los colores se inyectan como variables CSS en tiempo real.','El branding aplica tanto a la UI como a los documentos (PDF).'],
+   datos:'BrandConfig por clínica (nombre, colores, logo, imágenes).',
+   dep:'Tenancy/roles. Es consumido por el PDF (CLI-05) y por la app del paciente.',
+   acept:['Los cambios de marca se reflejan en tiempo real.','La configuración persiste por clínica y se puede restaurar.'],
+   v1:'Base NutriClinica (BrandContext / BrandSettingsPage) migrada de localStorage a backend por tenant.'},
+
+  {id:'CLI-07', name:'Sociodemografía completa en el expediente', prio:'P1',
+   obj:'Capturar el contexto sociodemográfico completo del paciente como parte del expediente, para personalizar el abordaje y permitir segmentación.',
+   stories:['Como nutricionista quiero registrar el contexto sociodemográfico del paciente para adaptar el tratamiento a su realidad.'],
+   alcance:['Bloque sociodemográfico completo integrado al expediente y editable.','Set de campos a precisar con criterio del nutricionista (p. ej. ocupación, escolaridad, composición del hogar, ubicación, contexto socioeconómico).'],
+   reglas:['Privacidad: minimización de datos y consentimiento; campos opcionales según sensibilidad.','Solo se guarda lo que aporte valor clínico o de segmentación.'],
+   datos:'Extiende Paciente / Expediente con un bloque sociodemográfico.',
+   dep:'Expediente (CLI-01), gestión de pacientes (CLI-02).',
+   acept:['Captura y edición de los campos; se reflejan en el expediente.','Respeta las reglas de privacidad y consentimiento.'],
+   v1:'Definir el set de campos exacto con el nutricionista y su tratamiento de privacidad antes de construir.'},
+];
+
+function renderIdx(){
+  const el=document.getElementById('idx');
+  el.innerHTML=FEATURES.map((f,i)=>`<button class="ichip" data-i="${i}"><span class="ii">${f.id}</span>${f.name}</button>`).join('');
+  el.querySelectorAll('.ichip').forEach(c=>c.onclick=()=>{
+    const i=c.dataset.i;
+    const card=document.querySelector(`.feat[data-i="${i}"]`);
+    openFeat(i,true);
+    card.scrollIntoView({behavior:'smooth',block:'start'});
+  });
+}
+function block(t,inner){return `<div class="blk"><div class="bt">${t}</div>${inner}</div>`;}
+function ul(arr){return '<ul>'+arr.map(x=>`<li>${x}</li>`).join('')+'</ul>';}
+function renderFeats(){
+  const el=document.getElementById('feats');
+  el.innerHTML=FEATURES.map((f,i)=>`
+    <div class="feat" data-i="${i}">
+      <button class="fh ${i===0?'open':''}" data-i="${i}">
+        <span class="fid">${f.id}</span><span class="fn">${f.name}</span>
+        <span class="pr ${P[f.prio]}">${f.prio}</span><span class="tg">+</span>
+      </button>
+      <div class="fb ${i===0?'open':''}" data-i="${i}">
+        ${block('Objetivo',`<p>${f.obj}</p>`)}
+        ${block('Historias de usuario', f.stories.map(s=>`<div class="story">${s}</div>`).join(''))}
+        <div class="two">
+          <div>${block('Alcance funcional', ul(f.alcance))}${block('Reglas clave', ul(f.reglas))}</div>
+          <div>${block('Datos', `<p>${f.datos}</p>`)}${block('Dependencias y fronteras', `<p>${f.dep}</p>`)}${block('Criterios de aceptación', ul(f.acept))}</div>
+        </div>
+        ${block('Alcance de v1', `<div class="v1"><b>v1 · </b>${f.v1}</div>`)}
+      </div>
+    </div>`).join('');
+  el.querySelectorAll('.fh').forEach(h=>h.onclick=()=>toggleFeat(h.dataset.i));
+}
+function toggleFeat(i){
+  const h=document.querySelector(`.fh[data-i="${i}"]`);
+  const b=document.querySelector(`.fb[data-i="${i}"]`);
+  h.classList.toggle('open');b.classList.toggle('open');
+}
+function openFeat(i){
+  const h=document.querySelector(`.fh[data-i="${i}"]`);
+  const b=document.querySelector(`.fb[data-i="${i}"]`);
+  h.classList.add('open');b.classList.add('open');
+}
+renderIdx();renderFeats();
+</script>
+</body>
+</html>
