@@ -10,5 +10,7 @@ coverage/
 .turbo/
 
 # respaldo local, no versionar
-nutrismartscaffold.zip
 *.zip
+
+# configuracion local de Claude Code
+.claude/settings.local.json
