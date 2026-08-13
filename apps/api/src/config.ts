@@ -50,6 +50,9 @@ const audience = required('KEYCLOAK_AUDIENCE')
 const apiPort = optionalPort('API_PORT', 4000)
 const nodeEnv = process.env['NODE_ENV']?.trim() || 'development'
 const frontendProUrl = optional('FRONTEND_PRO_URL') ?? 'http://localhost:5173'
+// Los binarios no viven en Postgres: guardarlos como bytea infla cada
+// copia de seguridad y cada replica. En Docker es un volumen montado.
+const archivosDir = optional('ARCHIVOS_DIR') ?? resolve(here, '../../../datos/archivos')
 
 // Se acumulan TODAS las que faltan y se reportan juntas: descubrirlas de
 // una en una, reiniciando el proceso cada vez, es tiempo perdido.
@@ -72,6 +75,8 @@ export const config = {
    * datos clinicos con credenciales.
    */
   frontendProUrl,
+  /** Raíz del almacén de archivos clínicos. */
+  archivosDir,
   keycloak: {
     /**
      * Issuer LITERAL esperado en el claim 'iss'. NO cambia entre ejecutar

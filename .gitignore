@@ -12,6 +12,9 @@ coverage/
 # artefacto de compilacion incremental de TypeScript
 *.tsbuildinfo
 
+# almacen local de archivos clinicos: datos, no codigo
+datos/
+
 # respaldo local, no versionar
 *.zip
 

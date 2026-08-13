@@ -5,7 +5,9 @@
  */
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
+import multipart from '@fastify/multipart'
 import { createRequire } from 'node:module'
+import { TAMANO_MAXIMO_BYTES } from './almacen/deteccion.js'
 import { config } from './config.js'
 import { pingDb, closeDb } from './db.js'
 import { registerAuth } from './auth.js'
@@ -13,6 +15,8 @@ import { registerMeRoutes } from './routes/me.js'
 import { registerPacientesRoutes } from './routes/pacientes.js'
 import { registerExpedienteRoutes } from './routes/expediente.js'
 import { registerAgendaRoutes } from './routes/agenda.js'
+import { registerArchivosRoutes } from './routes/archivos.js'
+import { registerLaboratoriosRoutes } from './routes/laboratorios.js'
 
 /**
  * pino-pretty es una devDependency: en la imagen de produccion no
@@ -75,12 +79,22 @@ async function start(): Promise<void> {
       allowedHeaders: ['Authorization', 'Content-Type'],
     })
 
+    // El límite se aplica DURANTE la lectura: la petición se aborta al
+    // superarlo, en vez de cargar cientos de megas en memoria para
+    // luego rechazarlos. `files: 1` evita que una sola petición suba
+    // cien archivos y esquive el límite por acumulación.
+    await app.register(multipart, {
+      limits: { fileSize: TAMANO_MAXIMO_BYTES, files: 1, fields: 10 },
+    })
+
     registerAuth(app)
 
     await registerMeRoutes(app)
     await registerPacientesRoutes(app)
     await registerExpedienteRoutes(app)
     await registerAgendaRoutes(app)
+    await registerArchivosRoutes(app)
+    await registerLaboratoriosRoutes(app)
 
     // host 0.0.0.0: dentro de Docker, escuchar solo en localhost dejaria
     // el puerto publicado inalcanzable desde fuera del contenedor.

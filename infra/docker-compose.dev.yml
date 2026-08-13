@@ -37,6 +37,12 @@ services:
       # que pisaría el ENV de la imagen. Dentro del contenedor corre el
       # build de producción, sin devDependencies.
       NODE_ENV: production
+      # Ruta DENTRO del contenedor; el volumen de abajo la respalda.
+      ARCHIVOS_DIR: /datos/archivos
+    volumes:
+      # Sin este volumen, los informes de laboratorio desaparecerían al
+      # recrear el contenedor. Son documentos clínicos.
+      - nutrismart_archivos:/datos/archivos
     depends_on: [db]
     ports:
       - "4001:4000"   # 4000 lo ocupa vetplatform-backend-1
@@ -78,3 +84,4 @@ networks:
 
 volumes:
   nutrismart_pgdata:
+  nutrismart_archivos:
