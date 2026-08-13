@@ -34,6 +34,8 @@ function mensajeSegunEstado(status: number, delServidor?: string): string {
   if (status === 403) return delServidor ?? 'No tienes permiso para hacer esto.'
   if (status === 404) return delServidor ?? 'No se encontro lo solicitado.'
   if (status === 409) return delServidor ?? 'Ese dato ya existe.'
+  if (status === 413) return delServidor ?? 'El archivo es demasiado grande.'
+  if (status === 415) return delServidor ?? 'Ese tipo de archivo no se admite.'
   if (status >= 500) return delServidor ?? 'El servidor tuvo un problema. Intentalo de nuevo.'
   return delServidor ?? `Error ${status}`
 }
@@ -107,4 +109,79 @@ export function apiPost<T>(ruta: string, cuerpo: unknown, signal?: AbortSignal):
 
 export function apiPut<T>(ruta: string, cuerpo: unknown, signal?: AbortSignal): Promise<T> {
   return peticion<T>(ruta, { metodo: 'PUT', cuerpo, ...(signal ? { signal } : {}) })
+}
+
+/**
+ * Descarga un archivo protegido y dispara el guardado en el navegador.
+ *
+ * No se puede usar un <a href> normal: la API exige la cabecera
+ * Authorization y un enlace no la envía — respondería 401. Hay que
+ * pedir el blob y crear una URL temporal, que se revoca enseguida para
+ * no retener el archivo en memoria.
+ */
+export async function apiDescargar(ruta: string, nombreSugerido: string): Promise<void> {
+  const token = await tokenVigente()
+  const respuesta = await fetch(`${BASE}${ruta}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!respuesta.ok) {
+    throw new ApiError(respuesta.status, mensajeSegunEstado(respuesta.status))
+  }
+
+  const blob = await respuesta.blob()
+  const url = URL.createObjectURL(blob)
+  try {
+    const enlace = document.createElement('a')
+    enlace.href = url
+    enlace.download = nombreSugerido
+    document.body.appendChild(enlace)
+    enlace.click()
+    enlace.remove()
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
+/**
+ * Subida multipart.
+ *
+ * NO se fija Content-Type a mano: el navegador tiene que añadirlo con
+ * el `boundary` que él genera. Escribirlo rompe la petición de una
+ * forma que el servidor reporta como "no multipart".
+ */
+export async function apiUpload<T>(ruta: string, archivo: File): Promise<T> {
+  const token = await tokenVigente()
+  const datos = new FormData()
+  datos.append('archivo', archivo)
+
+  let respuesta: Response
+  try {
+    respuesta = await fetch(`${BASE}${ruta}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      body: datos,
+    })
+  } catch {
+    throw new ApiError(0, `No se pudo contactar con la API en ${BASE}. ¿Esta levantada?`)
+  }
+
+  if (!respuesta.ok) {
+    let codigo: string | undefined
+    let mensaje: string | undefined
+    try {
+      const cuerpo = (await respuesta.json()) as { error?: string; message?: string }
+      codigo = cuerpo.error
+      mensaje = cuerpo.message
+    } catch {
+      /* cuerpo no JSON */
+    }
+    throw new ApiError(
+      respuesta.status,
+      mensajeSegunEstado(respuesta.status, mensaje),
+      codigo,
+    )
+  }
+
+  return (await respuesta.json()) as T
 }

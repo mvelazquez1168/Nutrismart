@@ -21,15 +21,19 @@ import type {
   PacienteDetalle,
   SnapshotResumen,
 } from '../api/tipos'
+import { getLaboratorios } from '../api/laboratorios'
+import type { EstudioLab } from '../api/tipos'
 import { EstadoBadge } from '../components/EstadoBadge'
 import { Avatar } from '../components/Avatar'
+import { LaboratorioModal } from '../components/LaboratorioModal'
+import { ListaLaboratorios, UltimosLaboratorios } from '../components/ListaLaboratorios'
 import { PacienteModal } from '../components/PacienteModal'
 import { BajaModal } from '../components/BajaModal'
 import { SnapshotModal } from '../components/SnapshotModal'
 import { Timeline } from '../components/Timeline'
 import { MetricasVitales } from '../components/MetricasVitales'
 
-type Pestana = 'resumen' | 'historial'
+type Pestana = 'resumen' | 'historial' | 'laboratorios'
 
 type Estado =
   | { tipo: 'cargando' }
@@ -69,7 +73,9 @@ export function PacienteFicha() {
   const [estado, setEstado] = useState<Estado>({ tipo: 'cargando' })
   const [expediente, setExpediente] = useState<Expediente | null>(null)
   const [timeline, setTimeline] = useState<SnapshotResumen[]>([])
+  const [laboratorios, setLaboratorios] = useState<EstudioLab[]>([])
   const [catalogo, setCatalogo] = useState<MetricaCatalogo[]>([])
+  const [labModal, setLabModal] = useState(false)
 
   const [pestana, setPestana] = useState<Pestana>('resumen')
   const [editando, setEditando] = useState(false)
@@ -90,12 +96,14 @@ export function PacienteFicha() {
         getPaciente(id, signal),
         getExpediente(id, signal),
         getTimeline(id, signal),
+        getLaboratorios(id, signal),
       ])
-        .then(([paciente, exp, tl]) => {
+        .then(([paciente, exp, tl, labs]) => {
           if (signal?.aborted) return
           setEstado({ tipo: 'listo', paciente })
           setExpediente(exp)
           setTimeline(tl)
+          setLaboratorios(labs)
         })
         .catch((e: unknown) => {
           if (signal?.aborted) return
@@ -274,6 +282,9 @@ export function PacienteFicha() {
         <Tab activa={pestana === 'historial'} onClick={() => setPestana('historial')}>
           Historial ({timeline.length})
         </Tab>
+        <Tab activa={pestana === 'laboratorios'} onClick={() => setPestana('laboratorios')}>
+          Laboratorios ({laboratorios.length})
+        </Tab>
         <TabApagada>Citas</TabApagada>
         <TabApagada>Sociodemografía</TabApagada>
       </div>
@@ -349,6 +360,8 @@ export function PacienteFicha() {
                 )}
               </section>
 
+              <UltimosLaboratorios estudios={laboratorios} />
+
               <section className="rounded-lg border border-border bg-surface p-5 shadow-sm">
                 <h2 className="mb-3 font-semibold text-ink">Antecedentes</h2>
                 {(expediente?.antecedentes.length ?? 0) === 0 ? (
@@ -369,6 +382,19 @@ export function PacienteFicha() {
               </section>
             </div>
           </div>
+        </div>
+      ) : pestana === 'laboratorios' ? (
+        <div className="space-y-4">
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setLabModal(true)}
+              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
+            >
+              + Registrar laboratorio
+            </button>
+          </div>
+          <ListaLaboratorios estudios={laboratorios} />
         </div>
       ) : (
         <Timeline
@@ -405,6 +431,18 @@ export function PacienteFicha() {
         onConfirmado={() => {
           setDandoBaja(false)
           navigate('/pacientes')
+        }}
+      />
+
+      <LaboratorioModal
+        abierto={labModal}
+        pacienteId={p.id}
+        sexoPaciente={p.sexoBiologico}
+        onCerrar={() => setLabModal(false)}
+        onGuardado={() => {
+          setLabModal(false)
+          setPestana('laboratorios')
+          cargar()
         }}
       />
 

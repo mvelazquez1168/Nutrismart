@@ -170,3 +170,76 @@ export interface Profesional {
   nombre: string
   rol: string
 }
+
+/* ------------------ Rebanada 5 · laboratorios ------------------ */
+
+/**
+ * `sin_referencia` NO es un nivel de gravedad entre normal y alterado:
+ * es la ausencia de criterio. Ocurre cuando la clínica no ha definido
+ * rango para ese analito, o cuando el paciente no tiene sexo biológico
+ * registrado y el rango solo existe segmentado.
+ */
+export type EstadoResultado = 'normal' | 'alterado' | 'sin_referencia'
+
+export interface Biomarcador {
+  codigo: string
+  nombre: string
+  unidad: string
+  decimales: number
+  grupo: string
+  minimo: number | null
+  maximo: number | null
+  origenRango: 'por_sexo' | 'general' | 'ninguno'
+}
+
+export interface ResultadoLab {
+  codigo: string
+  nombre: string
+  unidad: string
+  valor: number
+  rango: { minimo: number | null; maximo: number | null } | null
+  estado: EstadoResultado
+  anterior: number | null
+  delta: number | null
+  tendencia: Tendencia
+}
+
+export interface ArchivoAdjunto {
+  id: string
+  nombreOriginal: string
+  mime: string
+}
+
+export interface EstudioLab {
+  id: string
+  fecha: string
+  laboratorio: string | null
+  notas: string | null
+  snapshotId: string | null
+  profesional: string | null
+  archivo: ArchivoAdjunto | null
+  resultados: ResultadoLab[]
+}
+
+export interface ArchivoSubido {
+  id: string
+  nombreOriginal: string
+  mime: string
+  tamanoBytes: number
+  sha256: string
+}
+
+export interface PrevisualizacionCsv {
+  reconocidos: { codigo: string; nombre: string; unidad: string; valor: number }[]
+  noReconocidos: { etiqueta: string; valor: string }[]
+  avisos: string[]
+}
+
+export interface DatosEstudioEnvio {
+  fecha: string
+  laboratorio: string | null
+  notas: string | null
+  archivoId: string | null
+  snapshotId: string | null
+  resultados: { codigo: string; valor: number }[]
+}
