@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './auth/AuthProvider'
 import { Shell } from './components/Shell'
 import { Pacientes } from './pages/Pacientes'
+import { PacienteFicha } from './pages/PacienteFicha'
 import { getMe } from './api/pacientes'
 import type { Me } from './api/tipos'
 
-function Centrado({ children }: { children: React.ReactNode }) {
+function Centrado({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-full items-center justify-center p-8">
       <div className="max-w-md text-center">{children}</div>
@@ -60,15 +62,24 @@ function Contenido() {
           No se pudo cargar el perfil: {errorMe}
         </p>
       )}
-      <Pacientes />
+
+      <Routes>
+        <Route path="/pacientes" element={<Pacientes />} />
+        <Route path="/pacientes/:id" element={<PacienteFicha />} />
+        {/* Cualquier otra ruta cae en Pacientes: es la unica seccion
+            construida, y una pantalla de 404 aqui seria ruido. */}
+        <Route path="*" element={<Navigate to="/pacientes" replace />} />
+      </Routes>
     </Shell>
   )
 }
 
 export default function App() {
   return (
-    <AuthProvider>
-      <Contenido />
-    </AuthProvider>
+    <BrowserRouter>
+      <AuthProvider>
+        <Contenido />
+      </AuthProvider>
+    </BrowserRouter>
   )
 }

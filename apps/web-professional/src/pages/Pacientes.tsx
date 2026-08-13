@@ -1,16 +1,18 @@
 /**
- * Pantalla "Pacientes" — Rebanada 1.
+ * Pantalla "Pacientes".
  *
  * Layout de disenos/CLI/pacientes-lista-nutrismart.png. Se muestran solo
- * las columnas que la API entrega hoy; "Proxima cita" y la nota bajo el
+ * las columnas que la API entrega hoy; "Próxima cita" y la nota bajo el
  * badge (adherencia, biomarcadores) llegan en rebanadas posteriores y no
  * se maquetan en falso.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { getPacientes } from '../api/pacientes'
 import type { EstadoClinico, Paciente } from '../api/tipos'
 import { EstadoBadge } from '../components/EstadoBadge'
 import { Avatar } from '../components/Avatar'
+import { PacienteModal } from '../components/PacienteModal'
 
 const FILTROS: { clave: EstadoClinico | null; etiqueta: string }[] = [
   { clave: null, etiqueta: 'Todos' },
@@ -35,10 +37,13 @@ function formatearFecha(iso: string | null): string {
 }
 
 export function Pacientes() {
+  const navigate = useNavigate()
+
   const [busqueda, setBusqueda] = useState('')
   const [filtro, setFiltro] = useState<EstadoClinico | null>(null)
   const [estado, setEstado] = useState<Estado>({ tipo: 'cargando' })
   const [recarga, setRecarga] = useState(0)
+  const [creando, setCreando] = useState(false)
 
   const abortRef = useRef<AbortController | null>(null)
 
@@ -70,11 +75,20 @@ export function Pacientes() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-5">
-      <header>
-        <h1 className="text-2xl font-bold text-ink">Pacientes</h1>
-        <p className="text-sm text-muted">
-          Gestiona el catálogo clínico de tu clínica y revisa el estado de cada paciente.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-ink">Pacientes</h1>
+          <p className="text-sm text-muted">
+            Gestiona el catálogo clínico de tu clínica y revisa el estado de cada paciente.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setCreando(true)}
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-hover"
+        >
+          + Agregar paciente
+        </button>
       </header>
 
       <section className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface p-4 shadow-sm">
@@ -87,7 +101,11 @@ export function Pacientes() {
           className="min-w-64 flex-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-ink outline-none placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-[color:var(--ring)]"
         />
 
-        <div className="flex gap-1 rounded-md bg-surface-2 p-1" role="group" aria-label="Filtrar por estado clínico">
+        <div
+          className="flex gap-1 rounded-md bg-surface-2 p-1"
+          role="group"
+          aria-label="Filtrar por estado clínico"
+        >
           {FILTROS.map((f) => {
             const activo = f.clave === filtro
             return (
@@ -153,11 +171,30 @@ export function Pacientes() {
               </thead>
               <tbody>
                 {estado.pacientes.map((p) => (
-                  <tr key={p.id} className="border-b border-border last:border-0 hover:bg-surface-2">
+                  <tr
+                    key={p.id}
+                    onClick={() => navigate(`/pacientes/${p.id}`)}
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') navigate(`/pacientes/${p.id}`)
+                    }}
+                    className="cursor-pointer border-b border-border last:border-0 hover:bg-surface-2 focus:bg-surface-2 focus:outline-none"
+                  >
                     <td className="px-5 py-3">
                       <div className="flex items-center gap-3">
                         <Avatar nombre={p.nombre} />
                         <span className="font-semibold text-ink">{p.nombre}</span>
+                        {/*
+                          Un inactivo sigue en la lista (puede volver), pero no
+                          debe leerse igual que uno en seguimiento. Se marca
+                          explicitamente en vez de solo atenuar el color: un
+                          gris mas claro se confunde con un estilo decorativo.
+                        */}
+                        {p.estado === 'inactivo' && (
+                          <span className="rounded-pill bg-surface-2 px-2 py-0.5 text-xs font-medium text-muted">
+                            Inactivo
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="px-5 py-3 text-ink">
@@ -180,6 +217,16 @@ export function Pacientes() {
           </>
         )}
       </section>
+
+      <PacienteModal
+        abierto={creando}
+        paciente={null}
+        onCerrar={() => setCreando(false)}
+        onGuardado={() => {
+          setCreando(false)
+          setRecarga((n) => n + 1)
+        }}
+      />
     </div>
   )
 }
