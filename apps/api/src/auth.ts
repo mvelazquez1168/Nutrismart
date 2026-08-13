@@ -112,5 +112,14 @@ export async function requireAuth(request: FastifyRequest, reply: FastifyReply):
  * sobre la instancia raiz, antes de registrar rutas.
  */
 export function registerAuth(app: FastifyInstance): void {
-  app.decorateRequest('auth', null)
+  // Fastify quiere que el decorador exista antes de la primera peticion
+  // para no cambiar la forma del objeto request en caliente (lo que
+  // penaliza el rendimiento). Pero `auth` esta declarado como
+  // AuthContext, no como AuthContext|null, porque dentro de un handler
+  // protegido por requireAuth SIEMPRE existe: declararlo opcional
+  // obligaria a comprobarlo en cada ruta para nada.
+  //
+  // La conversion salva justo ese hueco entre el valor inicial y el
+  // tipo que se garantiza en tiempo de ejecucion.
+  app.decorateRequest('auth', null as unknown as AuthContext)
 }
