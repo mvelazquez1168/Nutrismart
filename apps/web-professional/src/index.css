@@ -9,6 +9,23 @@
  */
 @import '@nutrismart/design-system/tokens.css';
 
+/*
+ * Color de acento del white-label (CLI-06).
+ *
+ * --primary* y --ring NO se declaran aqui: ya vienen de tokens.css y
+ * BrandContext los sobreescribe en :root al cargar la configuracion de
+ * la clinica. Duplicarlos crearia dos fuentes de verdad para el mismo
+ * color.
+ *
+ * El acento si vive aqui: hoy solo lo usa la pantalla de marca, y no
+ * merece entrar en el paquete compartido hasta que el PDF (CLI-05) o la
+ * app del paciente lo necesiten.
+ */
+:root {
+  --accent: #0ea5e9;
+  --accent-hover: #0284c7;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

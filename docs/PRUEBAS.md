@@ -353,6 +353,93 @@ El último caso es el más interesante: es la restricción de la Rebanada 3 apli
 
 ---
 
+# Rebanada 6 · White-label por clínica
+
+**Requiere los dos usuarios**: `ana@vida.cr` (`admin_clinica`) y `luis@vida.cr` (`nutricionista`).
+
+La clínica de referencia es `11111111-1111-1111-1111-111111111111` (Nutrición Vida); la de control, `99999999-9999-9999-9999-999999999999` (Control Nutricional).
+
+### T6-01 · Clínica sin configurar → valores por defecto
+`GET /api/brand?clinica=<vida>` **sin cabecera `Authorization`**, con `brand_config` vacía.
+
+**Esperado:** **200** con `#0E7C66` / `#0EA5E9`, `nombreApp: "NutriSmart"`, `tieneLogo: false`, `version: "defaults"`. Sin fila creada en la base.
+
+Sin `?clinica`, la misma respuesta. Es deliberado: quien pinta la pantalla todavía puede no saber a qué clínica pertenece el visitante, y un 400 la dejaría sin tema en vez de con el genérico.
+
+### T6-02 · Guardar como administradora
+`PUT /api/brand` con token de Ana y `{"nombreApp":"Clinica Vida","colorPrimario":"#7c3aed","colorAcento":"#f59e0b"}`.
+
+**Esperado:** **200** con los valores guardados y una `version` con marca de tiempo real.
+
+### T6-03 · La lectura refleja lo guardado
+`GET /api/brand?clinica=<vida>` sin token.
+
+**Esperado:** los valores de T6-02. Una sola fila en `brand_config` por muchos `PUT` que se hagan — lo garantiza `UNIQUE (clinica_id)`.
+
+**Actualización parcial:** `PUT` con solo `{"colorPrimario":"#123456"}` **no borra** `nombreApp` ni `colorAcento`.
+
+### T6-04 · Un nutricionista no configura la clínica
+`PUT /api/brand` con token de Luis.
+
+**Esperado:** **403 `solo_admin_clinica`**. Sin token: **401**.
+
+Es la primera puerta por rol del proyecto. El rol se comprueba contra el profesional activo de la clínica, no solo contra el claim del token.
+
+### T6-05 · Validación
+| Prueba | Esperado |
+|---|---|
+| `colorPrimario: "rojo"` | **400** |
+| `nombreApp: "   "` | **400** |
+| Color con 3 dígitos (`#abc`) | **400** |
+
+La base repite la comprobación con un `CHECK`: un hexadecimal mal formado no rompe un campo, rompe el tema entero.
+
+### T6-06 · Subir el logo
+`PUT /api/brand/logo` con token de Ana, `multipart/form-data`, campo `logo`, un PNG.
+
+**Esperado:** **200** con `tieneLogo: true` y `logoUrl` apuntando a `/api/brand/logo?clinica=…`.
+
+### T6-07 · El logo se sirve inline y sin alterar
+`GET /api/brand/logo?clinica=<vida>` **sin token**.
+
+**Esperado:** **200**, `Content-Type: image/png`, `X-Content-Type-Options: nosniff`, `Cache-Control: public, max-age=300` y `ETag`. El `sha256` del cuerpo coincide con el del archivo original.
+
+Va público a propósito: un `<img>` no puede enviar `Authorization`, así que un logo con token no se podría pintar. Y va **inline**, al revés que los archivos clínicos de la Rebanada 5, que salen siempre como descarga.
+
+### T6-08 · Lo que no se acepta como logo
+| Archivo | Esperado |
+|---|---|
+| SVG con `<script>` dentro | **415 `tipo_no_permitido`** |
+| Texto plano renombrado a `.png` | **415** |
+| PNG válido de 600 KB | **413 `logo_demasiado_grande`** |
+
+**SVG se rechaza aunque sea una imagen**, y aunque sea el formato natural de un logotipo. El logo se sirve inline desde el origen de la API: un SVG con `<script>` sería XSS almacenado ejecutándose con la sesión del profesional ya abierta.
+
+El tipo se decide por el **contenido**, no por la extensión ni por el `Content-Type` que declara el cliente: los dos los controla quien sube el archivo.
+
+### T6-09 · Reemplazo, borrado y aislamiento
+| Prueba | Esperado |
+|---|---|
+| Subir un segundo logo | **200**; queda **un solo archivo** en el almacén — el anterior se borra |
+| `DELETE /api/brand/logo` como Luis | **403** |
+| `DELETE` como Ana | **204**; el archivo desaparece del disco |
+| `GET /api/brand/logo` después de borrar | **404** |
+| `DELETE` otra vez, sin logo | **204** (borrar lo que ya no está no es un error) |
+| Colores y nombre tras borrar el logo | **intactos** |
+| `GET /api/brand?clinica=<control>` | valores por defecto, no los de Vida |
+| `GET /api/brand/logo?clinica=<control>` | **404** |
+
+### T6-10 · El color tiñe la aplicación sin recargar
+En `/ajustes/marca` con Ana: cambiar el color primario y guardar.
+
+**Esperado:** la barra lateral, los botones, el elemento activo del menú y los badges tintados cambian **sin recargar la página**.
+
+Es la prueba que distingue esta funcionalidad de una que solo lo aparenta: `BrandContext` escribe `--primary` y derivados en `:root`, que es lo que el preset de Tailwind ya mapea a `bg-primary`, `text-primary` y `border-primary` en toda la aplicación. Si en su lugar se hubieran inventado variables nuevas, la vista previa de la pantalla de ajustes cambiaría y el resto de la aplicación se quedaría igual.
+
+**Control negativo:** el badge de estado clínico "alerta" **no cambia**. Los estados clínicos y los colores de gráfica se leen como un semáforo y no se re-tematizan.
+
+---
+
 # Recorrido manual del frontend
 
 Con `npm run dev:web`, en **http://localhost:5173**:

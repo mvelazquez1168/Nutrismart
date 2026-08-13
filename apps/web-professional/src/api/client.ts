@@ -11,6 +11,13 @@ import type { ErrorCampo } from './tipos'
 
 const BASE = import.meta.env.VITE_API_URL
 
+/**
+ * Origen de la API. Lo necesita cualquier recurso que el navegador
+ * cargue por si mismo —un <img src>, por ejemplo—, donde no hay
+ * peticion que interceptar y la ruta relativa apuntaria al front.
+ */
+export const API_BASE: string = BASE
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -41,7 +48,7 @@ function mensajeSegunEstado(status: number, delServidor?: string): string {
 }
 
 interface Opciones {
-  metodo?: 'GET' | 'POST' | 'PUT'
+  metodo?: 'GET' | 'POST' | 'PUT' | 'DELETE'
   cuerpo?: unknown
   signal?: AbortSignal
 }
@@ -111,6 +118,10 @@ export function apiPut<T>(ruta: string, cuerpo: unknown, signal?: AbortSignal): 
   return peticion<T>(ruta, { metodo: 'PUT', cuerpo, ...(signal ? { signal } : {}) })
 }
 
+export function apiDelete<T = void>(ruta: string, signal?: AbortSignal): Promise<T> {
+  return peticion<T>(ruta, { metodo: 'DELETE', ...(signal ? { signal } : {}) })
+}
+
 /**
  * Descarga un archivo protegido y dispara el guardado en el navegador.
  *
@@ -150,15 +161,20 @@ export async function apiDescargar(ruta: string, nombreSugerido: string): Promis
  * el `boundary` que él genera. Escribirlo rompe la petición de una
  * forma que el servidor reporta como "no multipart".
  */
-export async function apiUpload<T>(ruta: string, archivo: File): Promise<T> {
+export async function apiUpload<T>(
+  ruta: string,
+  archivo: File,
+  opciones: { metodo?: 'POST' | 'PUT'; campo?: string } = {},
+): Promise<T> {
+  const { metodo = 'POST', campo = 'archivo' } = opciones
   const token = await tokenVigente()
   const datos = new FormData()
-  datos.append('archivo', archivo)
+  datos.append(campo, archivo)
 
   let respuesta: Response
   try {
     respuesta = await fetch(`${BASE}${ruta}`, {
-      method: 'POST',
+      method: metodo,
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
       body: datos,
     })

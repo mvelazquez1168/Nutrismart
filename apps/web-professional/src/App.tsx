@@ -1,11 +1,14 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './auth/AuthProvider'
+import { BrandProvider } from './contexts/BrandContext'
 import { Shell } from './components/Shell'
 import { Pacientes } from './pages/Pacientes'
 import { PacienteFicha } from './pages/PacienteFicha'
 import { Agenda } from './pages/Agenda'
+import { MarcaPage } from './pages/ajustes/MarcaPage'
 import { getMe } from './api/pacientes'
+import { ROL_ADMIN_CLINICA } from './api/tipos'
 import type { Me } from './api/tipos'
 
 function Centrado({ children }: { children: ReactNode }) {
@@ -19,11 +22,12 @@ function Centrado({ children }: { children: ReactNode }) {
 /** Sección de la barra lateral que corresponde a la ruta actual. */
 function seccionDe(pathname: string): string {
   if (pathname.startsWith('/agenda')) return 'agenda'
+  if (pathname.startsWith('/ajustes')) return 'configuracion'
   return 'pacientes'
 }
 
 function Contenido() {
-  const { estado, error } = useAuth()
+  const { estado, error, perfil } = useAuth()
   const location = useLocation()
   const [me, setMe] = useState<Me | null>(null)
   const [errorMe, setErrorMe] = useState<string | null>(null)
@@ -58,28 +62,41 @@ function Contenido() {
     )
   }
 
-  return (
-    <Shell seccionActiva={seccionDe(location.pathname)} nombreClinica={me?.clinica.nombre ?? null}>
-      {/*
-        El fallo de /api/me no bloquea la pantalla: solo deja el nombre de
-        la clinica sin mostrar. La lista de pacientes tiene su propio
-        manejo de error, y son dos peticiones independientes.
-      */}
-      {errorMe && (
-        <p className="mb-4 rounded-md border border-border bg-surface p-3 text-sm text-muted">
-          No se pudo cargar el perfil: {errorMe}
-        </p>
-      )}
+  // El rol sale del token, igual que en la API. Esto solo decide QUE se
+  // pinta: quien manda es el 403 del servidor, que no depende de nada
+  // que el navegador pueda alterar.
+  const esAdmin = perfil?.roles.includes(ROL_ADMIN_CLINICA) ?? false
 
-      <Routes>
-        <Route path="/pacientes" element={<Pacientes />} />
-        <Route path="/pacientes/:id" element={<PacienteFicha />} />
-        <Route path="/agenda" element={<Agenda />} />
-        {/* Cualquier otra ruta cae en Pacientes: es la unica seccion
-            construida, y una pantalla de 404 aqui seria ruido. */}
-        <Route path="*" element={<Navigate to="/pacientes" replace />} />
-      </Routes>
-    </Shell>
+  return (
+    <BrandProvider clinicaId={perfil?.tenantId}>
+      <Shell seccionActiva={seccionDe(location.pathname)} nombreClinica={me?.clinica.nombre ?? null}>
+        {/*
+          El fallo de /api/me no bloquea la pantalla: solo deja el nombre de
+          la clinica sin mostrar. La lista de pacientes tiene su propio
+          manejo de error, y son dos peticiones independientes.
+        */}
+        {errorMe && (
+          <p className="mb-4 rounded-md border border-border bg-surface p-3 text-sm text-muted">
+            No se pudo cargar el perfil: {errorMe}
+          </p>
+        )}
+
+        <Routes>
+          <Route path="/pacientes" element={<Pacientes />} />
+          <Route path="/pacientes/:id" element={<PacienteFicha />} />
+          <Route path="/agenda" element={<Agenda />} />
+          {/* Un nutricionista que teclee la URL a mano vuelve a
+              Pacientes. No es la defensa: la API responde 403 igual. */}
+          <Route
+            path="/ajustes/marca"
+            element={esAdmin ? <MarcaPage /> : <Navigate to="/pacientes" replace />}
+          />
+          {/* Cualquier otra ruta cae en Pacientes: es la unica seccion
+              construida, y una pantalla de 404 aqui seria ruido. */}
+          <Route path="*" element={<Navigate to="/pacientes" replace />} />
+        </Routes>
+      </Shell>
+    </BrandProvider>
   )
 }
 

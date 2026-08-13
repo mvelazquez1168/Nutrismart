@@ -243,3 +243,15 @@ export interface DatosEstudioEnvio {
   snapshotId: string | null
   resultados: { codigo: string; valor: number }[]
 }
+
+/* ------------------------------------------------------------------ */
+/* Roles (CLI-06)                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Rol de realm que autoriza la configuración de la clínica. Mismo valor
+ * que ROL_ADMIN_CLINICA en la API (apps/api/src/pacientes/acceso.ts):
+ * es una cadena que viaja en el token, así que tiene que coincidir
+ * literalmente en ambos lados.
+ */
+export const ROL_ADMIN_CLINICA = 'admin_clinica'

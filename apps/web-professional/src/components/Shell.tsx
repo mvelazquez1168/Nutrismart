@@ -6,6 +6,9 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
+import { useBrand, urlLogo } from '../contexts/BrandContext'
+import { API_BASE } from '../api/client'
+import { ROL_ADMIN_CLINICA } from '../api/tipos'
 
 interface ItemNav {
   clave: string
@@ -14,14 +17,26 @@ interface ItemNav {
   ruta?: string
 }
 
-const NAV: ItemNav[] = [
-  { clave: 'dashboard', etiqueta: 'Dashboard' },
-  { clave: 'pacientes', etiqueta: 'Pacientes', ruta: '/pacientes' },
-  { clave: 'agenda', etiqueta: 'Agenda', ruta: '/agenda' },
-  { clave: 'laboratorios', etiqueta: 'Laboratorios' },
-  { clave: 'estrategias', etiqueta: 'Estrategias' },
-  { clave: 'configuracion', etiqueta: 'Configuración' },
-]
+/**
+ * Configuración solo lleva a algún sitio si quien mira es
+ * administrador de la clínica. Para un nutricionista sigue apagada,
+ * como las secciones que aún no existen: mostrarle un enlace que la
+ * API va a rechazar con 403 sería prometer algo que no puede hacer.
+ */
+function navDe(esAdmin: boolean): ItemNav[] {
+  return [
+    { clave: 'dashboard', etiqueta: 'Dashboard' },
+    { clave: 'pacientes', etiqueta: 'Pacientes', ruta: '/pacientes' },
+    { clave: 'agenda', etiqueta: 'Agenda', ruta: '/agenda' },
+    { clave: 'laboratorios', etiqueta: 'Laboratorios' },
+    { clave: 'estrategias', etiqueta: 'Estrategias' },
+    {
+      clave: 'configuracion',
+      etiqueta: 'Configuración',
+      ...(esAdmin ? { ruta: '/ajustes/marca' } : {}),
+    },
+  ]
+}
 
 function inicialesDe(nombre: string): string {
   const p = nombre.trim().split(/\s+/).filter(Boolean)
@@ -40,20 +55,35 @@ export function Shell({
   children: ReactNode
 }) {
   const { perfil, logout } = useAuth()
+  const { brand } = useBrand()
+
+  const esAdmin = perfil?.roles.includes(ROL_ADMIN_CLINICA) ?? false
+  const logo = urlLogo(brand, API_BASE)
 
   return (
     <div className="flex min-h-full">
       <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface">
         <div className="flex items-center gap-2 px-5 py-5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-lg font-bold text-white">
-            N
-          </span>
-          <span className="text-lg font-bold text-ink">NutriSmart</span>
+          {logo ? (
+            // object-contain y altura fija: un logo apaisado y uno
+            // cuadrado tienen que convivir en la misma barra sin
+            // deformarse ni empujar el nombre fuera.
+            <img
+              src={logo}
+              alt={brand.nombreApp}
+              className="h-9 w-auto max-w-[7rem] object-contain"
+            />
+          ) : (
+            <span className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-lg font-bold text-white">
+              {brand.nombreApp.trim().charAt(0).toUpperCase() || 'N'}
+            </span>
+          )}
+          <span className="truncate text-lg font-bold text-ink">{brand.nombreApp}</span>
         </div>
 
         <nav className="flex-1 px-3">
           <ul className="space-y-1">
-            {NAV.map((item) => {
+            {navDe(esAdmin).map((item) => {
               const activo = item.clave === seccionActiva
 
               if (activo) {

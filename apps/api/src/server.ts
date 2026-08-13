@@ -17,6 +17,7 @@ import { registerExpedienteRoutes } from './routes/expediente.js'
 import { registerAgendaRoutes } from './routes/agenda.js'
 import { registerArchivosRoutes } from './routes/archivos.js'
 import { registerLaboratoriosRoutes } from './routes/laboratorios.js'
+import { registerBrandRoutes } from './routes/brand.js'
 
 /**
  * pino-pretty es una devDependency: en la imagen de produccion no
@@ -95,6 +96,11 @@ async function start(): Promise<void> {
     await registerAgendaRoutes(app)
     await registerArchivosRoutes(app)
     await registerLaboratoriosRoutes(app)
+    // Las lecturas de marca van SIN requireAuth a proposito: la
+    // pantalla de acceso las necesita antes de que exista un token.
+    // Aqui no hay hook global de auth —cada ruta declara el suyo— asi
+    // que basta con no ponerlo; no hay que reordenar nada.
+    await registerBrandRoutes(app)
 
     // host 0.0.0.0: dentro de Docker, escuchar solo en localhost dejaria
     // el puerto publicado inalcanzable desde fuera del contenedor.

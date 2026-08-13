@@ -9,4 +9,20 @@
 module.exports = {
   presets: [require('@nutrismart/design-system/tailwind.preset')],
   content: ['./index.html', './src/**/*.{ts,tsx}'],
+  theme: {
+    extend: {
+      colors: {
+        /*
+         * Solo el acento. `primary` NO se redefine: lo declara el preset
+         * del design system contra var(--primary), y volver a mapearlo
+         * aqui contra una variable distinta dejaria bg-primary apuntando
+         * a un color que nadie escribe.
+         */
+        accent: {
+          DEFAULT: 'var(--accent)',
+          hover: 'var(--accent-hover)',
+        },
+      },
+    },
+  },
 }
