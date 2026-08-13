@@ -205,6 +205,31 @@ export async function obtenerDetalle(
 /* Profesional autenticado                                             */
 /* ------------------------------------------------------------------ */
 
+export interface ProfesionalResumen {
+  id: string
+  nombre: string
+  rol: string
+}
+
+/**
+ * Profesionales activos de la clinica. Alimenta el filtro por
+ * profesional de la agenda, que solo tiene sentido para un
+ * admin_clinica: un nutricionista solo puede verse a si mismo.
+ *
+ * No lleva `restringirA`: son los compañeros de la clinica, no datos
+ * clinicos, y el nombre de un colega no es informacion protegida.
+ */
+export async function listarProfesionales(tenantId: string): Promise<ProfesionalResumen[]> {
+  const { rows } = await pool.query<ProfesionalResumen>(
+    `select id, nombre, rol::text as rol
+     from profesional
+     where clinica_id = $1 and estado <> 'inactivo'
+     order by nombre asc`,
+    [tenantId],
+  )
+  return rows
+}
+
 /** Resuelve el profesional del token DENTRO de esta clinica. null si no lo hay. */
 export async function resolverProfesional(
   tenantId: string,

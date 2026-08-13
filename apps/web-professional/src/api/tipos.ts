@@ -133,3 +133,40 @@ export interface DatosSnapshotEnvio {
   metricas: Record<string, number>
   nota: string | null
 }
+
+/* ---------------------- Rebanada 4 · agenda ---------------------- */
+
+export const CITA_TIPOS = ['primera_vez', 'seguimiento', 'control'] as const
+export type CitaTipo = (typeof CITA_TIPOS)[number]
+
+export const CITA_ESTADOS = ['programada', 'completada', 'cancelada'] as const
+export type CitaEstado = (typeof CITA_ESTADOS)[number]
+
+export interface Cita {
+  id: string
+  /** Instante en UTC; se formatea en el huso del navegador. */
+  inicio: string
+  fin: string
+  duracionMinutos: number
+  tipo: CitaTipo
+  estado: CitaEstado
+  notas: string | null
+  /** Control clínico generado por esta cita, si lo hay. */
+  snapshotId: string | null
+  paciente: { id: string; nombre: string }
+  profesional: string | null
+}
+
+export interface DatosCitaEnvio {
+  pacienteId?: string
+  inicio: string
+  duracionMinutos: number
+  tipo: CitaTipo
+  notas: string | null
+}
+
+export interface Profesional {
+  id: string
+  nombre: string
+  rol: string
+}

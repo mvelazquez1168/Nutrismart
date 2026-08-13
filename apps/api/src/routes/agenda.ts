@@ -9,6 +9,7 @@ import type { FastifyInstance } from 'fastify'
 import { requireAuth } from '../auth.js'
 import { esUuid } from '../pacientes/validacion.js'
 import { resolverAlcance } from '../pacientes/acceso.js'
+import { listarProfesionales } from '../pacientes/repositorio.js'
 import { validarCita, validarEstado, CITA_ESTADOS, type CitaEstado } from '../agenda/validacion.js'
 import {
   listarCitas,
@@ -35,6 +36,7 @@ interface QueryAgenda {
   hasta?: string
   estado?: string
   pacienteId?: string
+  profesionalId?: string
 }
 
 function noEncontrada() {
@@ -77,6 +79,21 @@ function rangoPorDefecto(): { desde: string; hasta: string } {
 
 export async function registerAgendaRoutes(app: FastifyInstance): Promise<void> {
   /* ---------------------------------------------------------------- */
+  /* GET /api/profesionales                                            */
+  /* ---------------------------------------------------------------- */
+  app.get('/api/profesionales', { preHandler: requireAuth }, async (request, reply) => {
+    const { tenantId, sub, roles } = request.auth
+    const alcance = await resolverAlcance(tenantId, sub, roles)
+    if (!alcance) return reply.code(403).send(sinProfesional())
+
+    // Alimenta el filtro por profesional de la agenda. Se devuelve la
+    // lista completa de la clínica: para un nutricionista el filtro no
+    // amplía nada, porque su alcance sigue acotándolo a lo suyo.
+    return listarProfesionales(tenantId)
+  })
+
+
+  /* ---------------------------------------------------------------- */
   /* GET /api/citas                                                    */
   /* ---------------------------------------------------------------- */
   app.get<{ Querystring: QueryAgenda }>(
@@ -118,11 +135,19 @@ export async function registerAgendaRoutes(app: FastifyInstance): Promise<void> 
         return reply.code(400).send({ error: 'paciente_invalido', message: 'pacienteId inválido' })
       }
 
+      const profesionalId = request.query.profesionalId?.trim()
+      if (profesionalId && !esUuid(profesionalId)) {
+        return reply
+          .code(400)
+          .send({ error: 'profesional_invalido', message: 'profesionalId inválido' })
+      }
+
       return listarCitas(tenantId, alcance.restringirA, {
         desde: desde.toISOString(),
         hasta: hasta.toISOString(),
         estado: (estadoRaw as CitaEstado | undefined) ?? null,
         pacienteId: pacienteId ?? null,
+        profesionalId: profesionalId ?? null,
       })
     },
   )

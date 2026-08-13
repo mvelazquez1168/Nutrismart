@@ -373,6 +373,27 @@ Con `npm run dev:web`, en **http://localhost:5173**:
 | María Fernández | Versión corregida plegada bajo la vigente |
 | Cerrar control | **Pide confirmación**: la acción es irreversible |
 
+### Agenda (Rebanada 4)
+
+Con **`ana@vida.cr`** (administradora):
+
+| Paso | Qué comprobar |
+|---|---|
+| Barra lateral | **Agenda** ya navega; sigue apagado lo no construido |
+| Agrupación | Por día, con "Hoy" y "Mañana" en vez de la fecha |
+| **Horas** | Una cita guardada a las `21:00Z` debe verse a las **15:00** en Costa Rica |
+| Filtro Profesional | Visible solo para el administrador; al filtrar por Luis quedan solo sus citas |
+| Nueva cita | El desplegable ofrece **solo pacientes visibles** |
+| Solape | El error sale **bajo el campo de fecha y hora**, no como mensaje general |
+| Cita programada | Detalle con Editar, Marcar completada y Cancelar; **cancelar pide confirmación** |
+| Tras completar | Aparece "Registrar control" → crea el snapshot y abre su modal con la fecha de la cita |
+| Cita completada o cancelada | **No ofrece Editar** y explica por qué |
+| Con control ya registrado | El botón pasa a "Ver control clínico" y la tarjeta muestra "Control registrado" |
+
+Con **`luis@vida.cr`** (nutricionista): **no aparece el filtro Profesional** —solo se vería a sí mismo— y no ve ninguna cita de María.
+
+**El huso horario es lo más frágil de esta pantalla**: un desfase de seis horas se ve plausible y pasa desapercibido. Es la única vista que muestra instantes con hora; el resto de la app usa fechas sin hora.
+
 ---
 
 # Tropiezos de entorno

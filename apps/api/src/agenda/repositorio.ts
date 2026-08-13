@@ -117,6 +117,8 @@ export interface FiltrosAgenda {
   hasta: string
   estado: CitaEstado | null
   pacienteId: string | null
+  /** Filtro elegido por el usuario; se aplica ADEMÁS de `restringirA`. */
+  profesionalId: string | null
 }
 
 export async function listarCitas(
@@ -135,8 +137,20 @@ export async function listarCitas(
        and c.inicio <  $4::timestamptz
        and ($5::text is null or c.estado::text = $5)
        and ($6::uuid is null or c.paciente_id = $6)
+       and ($7::uuid is null or c.profesional_id = $7)
      order by c.inicio asc`,
-    [tenantId, restringirA, filtros.desde, filtros.hasta, filtros.estado, filtros.pacienteId],
+    [
+      tenantId,
+      // El alcance ($2) y el filtro elegido ($7) son condiciones
+      // SEPARADAS y ambas se aplican: un nutricionista que pidiera
+      // ?profesionalId=<otro> seguiría viendo solo lo suyo, no lo ajeno.
+      restringirA,
+      filtros.desde,
+      filtros.hasta,
+      filtros.estado,
+      filtros.pacienteId,
+      filtros.profesionalId,
+    ],
   )
   return rows.map(aCita)
 }

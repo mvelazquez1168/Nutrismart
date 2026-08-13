@@ -21,6 +21,10 @@ export function getTimeline(
   return apiGet<SnapshotResumen[]>(`/api/pacientes/${pacienteId}/snapshots`, signal)
 }
 
+export function getSnapshot(id: string, signal?: AbortSignal): Promise<SnapshotResumen> {
+  return apiGet<SnapshotResumen>(`/api/snapshots/${id}`, signal)
+}
+
 export interface SnapshotCreado {
   id: string
   estado: string

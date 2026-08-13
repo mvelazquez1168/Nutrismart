@@ -4,22 +4,23 @@
  * visuales salen de los tokens, no de los pixeles del PNG.
  */
 import type { ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 
 interface ItemNav {
   clave: string
   etiqueta: string
-  /** Solo "Pacientes" existe en la Rebanada 1. */
-  disponible: boolean
+  /** Ruta destino; solo las secciones construidas la tienen. */
+  ruta?: string
 }
 
 const NAV: ItemNav[] = [
-  { clave: 'dashboard', etiqueta: 'Dashboard', disponible: false },
-  { clave: 'pacientes', etiqueta: 'Pacientes', disponible: true },
-  { clave: 'agenda', etiqueta: 'Agenda', disponible: false },
-  { clave: 'laboratorios', etiqueta: 'Laboratorios', disponible: false },
-  { clave: 'estrategias', etiqueta: 'Estrategias', disponible: false },
-  { clave: 'configuracion', etiqueta: 'Configuración', disponible: false },
+  { clave: 'dashboard', etiqueta: 'Dashboard' },
+  { clave: 'pacientes', etiqueta: 'Pacientes', ruta: '/pacientes' },
+  { clave: 'agenda', etiqueta: 'Agenda', ruta: '/agenda' },
+  { clave: 'laboratorios', etiqueta: 'Laboratorios' },
+  { clave: 'estrategias', etiqueta: 'Estrategias' },
+  { clave: 'configuracion', etiqueta: 'Configuración' },
 ]
 
 function inicialesDe(nombre: string): string {
@@ -64,6 +65,19 @@ export function Shell({
                     >
                       {item.etiqueta}
                     </span>
+                  </li>
+                )
+              }
+
+              if (item.ruta) {
+                return (
+                  <li key={item.clave}>
+                    <Link
+                      to={item.ruta}
+                      className="flex items-center gap-2 rounded-md px-3 py-2 pl-4 text-sm text-ink transition-colors hover:bg-surface-2"
+                    >
+                      {item.etiqueta}
+                    </Link>
                   </li>
                 )
               }

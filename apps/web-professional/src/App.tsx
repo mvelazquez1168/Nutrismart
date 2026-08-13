@@ -1,9 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './auth/AuthProvider'
 import { Shell } from './components/Shell'
 import { Pacientes } from './pages/Pacientes'
 import { PacienteFicha } from './pages/PacienteFicha'
+import { Agenda } from './pages/Agenda'
 import { getMe } from './api/pacientes'
 import type { Me } from './api/tipos'
 
@@ -15,8 +16,15 @@ function Centrado({ children }: { children: ReactNode }) {
   )
 }
 
+/** Sección de la barra lateral que corresponde a la ruta actual. */
+function seccionDe(pathname: string): string {
+  if (pathname.startsWith('/agenda')) return 'agenda'
+  return 'pacientes'
+}
+
 function Contenido() {
   const { estado, error } = useAuth()
+  const location = useLocation()
   const [me, setMe] = useState<Me | null>(null)
   const [errorMe, setErrorMe] = useState<string | null>(null)
 
@@ -51,7 +59,7 @@ function Contenido() {
   }
 
   return (
-    <Shell seccionActiva="pacientes" nombreClinica={me?.clinica.nombre ?? null}>
+    <Shell seccionActiva={seccionDe(location.pathname)} nombreClinica={me?.clinica.nombre ?? null}>
       {/*
         El fallo de /api/me no bloquea la pantalla: solo deja el nombre de
         la clinica sin mostrar. La lista de pacientes tiene su propio
@@ -66,6 +74,7 @@ function Contenido() {
       <Routes>
         <Route path="/pacientes" element={<Pacientes />} />
         <Route path="/pacientes/:id" element={<PacienteFicha />} />
+        <Route path="/agenda" element={<Agenda />} />
         {/* Cualquier otra ruta cae en Pacientes: es la unica seccion
             construida, y una pantalla de 404 aqui seria ruido. */}
         <Route path="*" element={<Navigate to="/pacientes" replace />} />
