@@ -95,6 +95,8 @@ export const config = {
    * obligatoria porque la API no la necesita para funcionar.
    */
   devKeycloakSub: optional('DEV_KEYCLOAK_SUB'),
+  /** Segundo usuario de prueba, con rol 'nutricionista'. */
+  devKeycloakSubNutri: optional('DEV_KEYCLOAK_SUB_NUTRI'),
 } as const
 
 export type Config = typeof config

@@ -31,6 +31,83 @@ POST http://localhost:8080/realms/nutrismart/protocol/openid-connect/token
 
 ---
 
+## Recrear usuarios de desarrollo
+
+**`infra/keycloak/realm-nutrismart.json` NO contiene los usuarios.** El endpoint `partial-export` de Keycloak exporta realm, clientes, roles y mappers, pero **nunca usuarios ni credenciales**. Importar ese JSON deja el realm funcional y sin nadie con quien iniciar sesión.
+
+Por eso los comandos de abajo son la única fuente para recrearlos. Si se pierden, hay que deducir la configuración del realm a mano.
+
+### 1 · Autenticar el CLI de administración
+
+La sesión dura pocos minutos: conviene ejecutar el resto seguido.
+
+```
+docker exec -it keycloak /opt/keycloak/bin/kcadm.sh config credentials \
+  --server http://localhost:8080 --realm master --user admin
+```
+
+### 2 · Usuario administrador de clínica
+
+Crear `/tmp/user-ana.json` dentro del contenedor con:
+
+```json
+{ "username": "ana@vida.cr", "enabled": true, "emailVerified": true,
+  "email": "ana@vida.cr", "firstName": "Ana", "lastName": "Rodriguez",
+  "attributes": { "tenant_id": ["11111111-1111-1111-1111-111111111111"] } }
+```
+
+```
+kcadm.sh create users -r nutrismart -f /tmp/user-ana.json
+kcadm.sh set-password -r nutrismart --username ana@vida.cr --new-password nutrismart-dev
+kcadm.sh add-roles   -r nutrismart --uusername ana@vida.cr --rolename admin_clinica
+```
+
+### 3 · Usuario nutricionista
+
+Igual, con `luis@vida.cr` / Luis Peralta, **el mismo `tenant_id`** y:
+
+```
+kcadm.sh add-roles -r nutrismart --uusername luis@vida.cr --rolename nutricionista
+```
+
+Sin este segundo usuario **la visibilidad por profesional no se puede probar**: Ana es administradora y ve toda la clínica igualmente, así que la regla resultaría indistinguible de no tener regla.
+
+### 4 · Capturar los `sub` y llevarlos al `.env`
+
+Keycloak 26 **genera el id del usuario e ignora uno fijado**, así que el `sub` cambia en cada recreación. Pedir un token y decodificar el payload:
+
+```
+POST http://localhost:8080/realms/nutrismart/protocol/openid-connect/token
+  client_id=nutrismart-web  grant_type=password
+  username=<usuario>        password=nutrismart-dev
+```
+
+Copiar cada `sub` al `.env` de la raíz:
+
+```
+DEV_KEYCLOAK_SUB=<sub de ana>          # admin_clinica
+DEV_KEYCLOAK_SUB_NUTRI=<sub de luis>   # nutricionista
+```
+
+El seed los sustituye en `${DEV_KEYCLOAK_SUB}` y `${DEV_KEYCLOAK_SUB_NUTRI}`, así que **basta con volver a correr `npm run seed`**: el SQL no se toca.
+
+### 5 · Comprobación
+
+Token de `luis@vida.cr` → el payload debe traer `tenant_id`, el rol `nutricionista` y **no** `admin_clinica`.
+
+### Si añades más configuración al realm
+
+Reexportar y versionar:
+
+```
+kcadm.sh create realms/nutrismart/partial-export \
+  -q exportClients=true -q exportGroupsAndRoles=true -o
+```
+
+Los flags van con **`-q`** (parámetros de query), no con `-s`: con `-s` viajan en el cuerpo, Keycloak los ignora y el export sale **sin clientes ni roles** sin dar ningún error.
+
+---
+
 ## Datos de referencia del seed
 
 | Clínica | Paciente | Exp. | Estado clínico | Sirve para probar |
@@ -211,6 +288,71 @@ Con token de la clínica A: expediente, timeline y creación de control sobre un
 
 ---
 
+# Rebanada 4 · Agenda y visibilidad por profesional
+
+**Requiere los dos usuarios**: `ana@vida.cr` (`admin_clinica`) y `luis@vida.cr` (`nutricionista`). Reparto del seed: María es de Ana; Juan y Ana Castro, de Luis.
+
+### 4.1 · Restricciones de la migración 006
+En transacción revertida:
+
+| Prueba | Esperado |
+|---|---|
+| Crear cita, `fin` derivado del inicio y la duración | OK |
+| **Solape del mismo profesional** | bloqueado |
+| **Misma franja, otro profesional** | permitido |
+| Cita que empieza justo al terminar la anterior | permitida (rango semiabierto) |
+| **Solapar con una cancelada** | permitido |
+| Duración de 600 minutos | rechazada |
+| `fin` se recalcula al cambiar la duración | OK |
+
+### 4.2 · Visibilidad en el listado
+`GET /api/pacientes` con cada usuario.
+**Esperado:** Ana ve **3**; Luis ve **2**. Si ambos vieran lo mismo, la regla no estaría aplicándose.
+
+### 4.3 · Visibilidad en los endpoints con `:id` de paciente
+Luis pidiendo a María (paciente de Ana): detalle, expediente y timeline.
+**Esperado:** **404** en los tres. Con sus propios pacientes, **200**. Ana, por ser administradora, **200** en los de Luis.
+
+### 4.4 · Visibilidad en las rutas de snapshot
+Luis contra un snapshot de María: `GET`, `PUT`, `/cerrar`, `/corregir`.
+**Esperado:** **404** en los cuatro.
+
+Es la prueba clave del retrofit: esas rutas **no reciben el paciente en la URL**, así que la regla se resuelve atando el snapshot al nutricionista de su paciente. Sin eso quedaría un agujero por el que pasa todo el historial clínico.
+
+### 4.5 · Alta de cita y solapes
+| Prueba | Esperado |
+|---|---|
+| Crear cita para paciente propio | **201** |
+| Solaparse consigo mismo | **409 `cita_solapada`** con el `choque` |
+| Misma franja, otro profesional | **201** |
+| Agendar a un paciente ajeno | **404** |
+| Duración de 600 minutos | **400** |
+
+### 4.6 · Estados
+`programada → completada` y `programada → cancelada` → **200**.
+`completada → programada` → **409 `transicion_invalida`**. Reabrir una cita cerrada falsearía el registro.
+
+### 4.7 · Edición solo de citas programadas
+Editar una `completada` o una `cancelada` → **409 `cita_no_editable`**, con `estadoActual` para distinguirlas. Una `programada` sigue editándose con **200**.
+
+### 4.8 · Ida y vuelta de fechas
+Leer una cita y **reenviar su propio `inicio` sin tocarlo** en un `PUT`.
+**Esperado:** **200**, no un 400 de validación.
+
+Parece trivial y no lo es: es exactamente lo que hace el formulario de edición al cargar y guardar. Ver el tropiezo del formato `OF` más abajo.
+
+### 4.9 · Control clínico desde la cita
+| Prueba | Esperado |
+|---|---|
+| `POST /api/citas/:id/control` sobre una completada | **201**, snapshot en borrador con la **fecha de la cita** y enlazado en `snapshot_id` |
+| Repetir | **409 `control_ya_registrado`** |
+| Sobre una no completada | **409 `cita_no_completada`** |
+| Con el paciente ya con un borrador abierto | **409 `borrador_abierto`** |
+
+El último caso es el más interesante: es la restricción de la Rebanada 3 aplicándose **a través** de la agenda. Que una regla escrita para otra funcionalidad frene esta es lo que debe pasar.
+
+---
+
 # Recorrido manual del frontend
 
 Con `npm run dev:web`, en **http://localhost:5173**:
@@ -263,6 +405,32 @@ PowerShell manda `Content-Type: application/x-www-form-urlencoded` por defecto y
 
 ### `now()` es constante dentro de una transacción
 Verificar un disparador de `updated_at` dentro de una sola transacción **siempre falla**: ambas lecturas devuelven la hora de inicio. Hay que medir en transacciones separadas.
+
+### `to_char(..., 'OF')` produce fechas que la propia API no sabe leer
+
+El patrón `OF` de Postgres emite el offset en **dos dígitos** cuando son horas enteras: `2026-08-15T21:00:00+00`. Eso **no es ISO 8601 válido** —el offset debe ser `+00:00`, `+0000` o `Z`— y `new Date()` lo rechaza.
+
+El síntoma es desconcertante: cargar un registro y reenviarlo **sin tocar nada** falla con "fecha inválida". Es justo lo que hace un formulario de edición.
+
+**Solución:** no formatear los `timestamptz` con `to_char`. Dejarlos pasar: `pg` devuelve un `Date` y el serializador emite ISO completo (`2026-08-15T21:00:00.000Z`).
+
+Para fechas **sin hora** (`date`) sí conviene `to_char(..., 'YYYY-MM-DD')`: evita que un `Date` a medianoche UTC se muestre como el día anterior en husos al oeste.
+
+### Formatear horas en el servidor miente sobre el huso
+
+Un mensaje de error construido en la API con la hora del choque decía *"Ya tienes una cita de 21:00 a 22:00"* para una cita que en la agenda del profesional son **las 15:00**: la base trabaja en UTC. El servidor no conoce el huso del usuario. La API devuelve los timestamps en crudo y el navegador los formatea.
+
+### `$tl` y `$TL` son la MISMA variable en PowerShell
+
+Los nombres de variable no distinguen mayúsculas. Guardar un resultado en `$tl` teniendo un token en `$TL` lo sobrescribe, y todas las peticiones siguientes fallan con **401** y el mensaje *"La cabecera Authorization debe ser Bearer"* — que apunta a un problema de autenticación inexistente.
+
+### Diagnosticar una migración fallida con `psql -f` deja restos
+
+El runner envuelve cada migración en una transacción; `psql -f` **no**. Ejecutar el `.sql` a mano para ver el error real aplica todo lo que va antes del fallo —extensiones, tipos, tablas— y el siguiente intento choca con "ya existe". Envolver a mano en `begin; ... rollback;` o limpiar antes de reintentar.
+
+### Columnas generadas y expresiones STABLE
+
+`timestamptz + interval` está marcado **STABLE**, no inmutable, porque el resultado depende del huso cuando el intervalo lleva días o meses. Postgres rechaza usarlo en una columna generada con *"generation expression is not immutable"*. La alternativa es un disparador `BEFORE`, que además permite recalcular al editar.
 
 ### Vite y las dependencias nuevas
 Añadir un paquete con el servidor levantado exige reiniciarlo: Vite pre-empaqueta dependencias al arrancar. Avisa con *"Re-optimizing dependencies because lockfile has changed"*.

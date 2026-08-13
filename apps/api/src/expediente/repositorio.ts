@@ -161,14 +161,18 @@ interface FilaVigente {
 export async function obtenerExpediente(
   tenantId: string,
   pacienteId: string,
+  restringirA: string | null,
   catalogo: MetricaCatalogo[],
 ): Promise<Expediente | null> {
   const { rows: pac } = await pool.query<{ id: string; nombre: string; edad: number | null }>(
     `select id, nombre,
             case when fecha_nacimiento is null then null
                  else extract(year from age(fecha_nacimiento))::int end as edad
-     from paciente where id = $1 and clinica_id = $2 limit 1`,
-    [pacienteId, tenantId],
+     from paciente
+     where id = $1 and clinica_id = $2
+       and ($3::uuid is null or nutricionista_id = $3)
+     limit 1`,
+    [pacienteId, tenantId, restringirA],
   )
   const p = pac[0]
   if (!p) return null
@@ -425,6 +429,7 @@ async function escribirContenido(
 export async function crearSnapshot(
   tenantId: string,
   pacienteId: string,
+  restringirA: string | null,
   profesionalId: string | null,
   datos: DatosSnapshot,
 ): Promise<string | null> {
@@ -433,8 +438,10 @@ export async function crearSnapshot(
     await cliente.query('begin')
 
     const { rows: pac } = await cliente.query<{ id: string }>(
-      `select id from paciente where id = $1 and clinica_id = $2`,
-      [pacienteId, tenantId],
+      `select id from paciente
+       where id = $1 and clinica_id = $2
+         and ($3::uuid is null or nutricionista_id = $3)`,
+      [pacienteId, tenantId, restringirA],
     )
     if (!pac[0]) {
       await cliente.query('rollback')
@@ -461,10 +468,23 @@ export async function crearSnapshot(
   }
 }
 
-/** Devuelve el snapshot con su paciente, o null si no existe en esta clinica. */
+/**
+ * Fragmento que ata un snapshot a la visibilidad de su PACIENTE. Las
+ * rutas /api/snapshots/:id no reciben el paciente, asi que la regla de
+ * CLI-02 tiene que resolverse aqui o se saltaria por completo.
+ */
+const VISIBLE_POR_PACIENTE = `
+  and ($3::uuid is null or exists (
+        select 1 from paciente p
+        where p.id = clinical_snapshot.paciente_id
+          and p.nutricionista_id = $3))
+`
+
+/** Devuelve el snapshot con su paciente, o null si no existe o no es visible. */
 export async function obtenerSnapshotBase(
   tenantId: string,
   snapshotId: string,
+  restringirA: string | null,
 ): Promise<{ id: string; pacienteId: string; estado: string; fecha: string } | null> {
   const { rows } = await pool.query<{
     id: string
@@ -473,8 +493,10 @@ export async function obtenerSnapshotBase(
     fecha: string
   }>(
     `select id, paciente_id, estado::text as estado, to_char(fecha,'YYYY-MM-DD') as fecha
-     from clinical_snapshot where id = $1 and clinica_id = $2 limit 1`,
-    [snapshotId, tenantId],
+     from clinical_snapshot
+     where id = $1 and clinica_id = $2 ${VISIBLE_POR_PACIENTE}
+     limit 1`,
+    [snapshotId, tenantId, restringirA],
   )
   const r = rows[0]
   return r ? { id: r.id, pacienteId: r.paciente_id, estado: r.estado, fecha: r.fecha } : null
@@ -483,6 +505,7 @@ export async function obtenerSnapshotBase(
 export async function actualizarSnapshot(
   tenantId: string,
   snapshotId: string,
+  restringirA: string | null,
   profesionalId: string | null,
   datos: DatosSnapshot,
 ): Promise<void> {
@@ -494,8 +517,9 @@ export async function actualizarSnapshot(
     // leyendo antes: entre el read y el write podria haberse cerrado.
     const { rows } = await cliente.query<{ estado: string }>(
       `select estado::text as estado from clinical_snapshot
-       where id = $1 and clinica_id = $2 for update`,
-      [snapshotId, tenantId],
+       where id = $1 and clinica_id = $2 ${VISIBLE_POR_PACIENTE}
+       for update`,
+      [snapshotId, tenantId, restringirA],
     )
     const estado = rows[0]?.estado
     if (!estado) {
@@ -529,6 +553,7 @@ export async function actualizarSnapshot(
 export async function cerrarSnapshot(
   tenantId: string,
   snapshotId: string,
+  restringirA: string | null,
 ): Promise<{ estado: string; fecha: string } | null> {
   const cliente = await pool.connect()
   try {
@@ -543,8 +568,12 @@ export async function cerrarSnapshot(
          estado     = 'cerrado',
          cerrado_at = case when estado = 'borrador' then now() else cerrado_at end
        where id = $1 and clinica_id = $2 and estado <> 'corregido'
+         and ($3::uuid is null or exists (
+               select 1 from paciente p
+               where p.id = clinical_snapshot.paciente_id
+                 and p.nutricionista_id = $3))
        returning estado::text as estado, to_char(fecha,'YYYY-MM-DD') as fecha, paciente_id`,
-      [snapshotId, tenantId],
+      [snapshotId, tenantId, restringirA],
     )
     const r = rows[0]
     if (!r) {
@@ -578,6 +607,7 @@ export async function cerrarSnapshot(
 export async function corregirSnapshot(
   tenantId: string,
   snapshotId: string,
+  restringirA: string | null,
   profesionalId: string | null,
 ): Promise<string> {
   const cliente = await pool.connect()
@@ -590,8 +620,10 @@ export async function corregirSnapshot(
       fecha: string
     }>(
       `select estado::text as estado, paciente_id, to_char(fecha,'YYYY-MM-DD') as fecha
-       from clinical_snapshot where id = $1 and clinica_id = $2 for update`,
-      [snapshotId, tenantId],
+       from clinical_snapshot
+       where id = $1 and clinica_id = $2 ${VISIBLE_POR_PACIENTE}
+       for update`,
+      [snapshotId, tenantId, restringirA],
     )
     const original = rows[0]
     if (!original) {

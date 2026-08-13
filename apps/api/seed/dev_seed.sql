@@ -17,6 +17,14 @@ insert into profesional (id, clinica_id, keycloak_user_id, nombre, correo, coleg
 values ('22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','${DEV_KEYCLOAK_SUB}','Dra. Ana Rodríguez','ana@vida.cr','CR-12345','admin_clinica')
 on conflict do nothing;
 
+-- Segundo profesional, con rol NUTRICIONISTA. Existe para que la
+-- visibilidad de CLI-02 sea comprobable: Ana es administradora y ve toda
+-- la clínica, así que con ella sola la regla no se puede distinguir de
+-- no tener regla.
+insert into profesional (id, clinica_id, keycloak_user_id, nombre, correo, colegiatura, rol)
+values ('44444444-4444-4444-4444-444444444444','11111111-1111-1111-1111-111111111111','${DEV_KEYCLOAK_SUB_NUTRI}','Dr. Luis Peralta','luis@vida.cr','CR-67890','nutricionista')
+on conflict do nothing;
+
 -- Pacientes (ids fijos para poder enlazar diagnósticos y alergias)
 insert into paciente (id, clinica_id, nutricionista_id, numero_expediente, nombre, documento_numero, fecha_nacimiento, sexo_biologico, estado_clinico, ultima_visita, motivo_consulta)
 values
@@ -24,6 +32,21 @@ values
  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222',2,'Juan Ramírez',  '2-2222-2222','1968-06-02','masculino','alerta',  now() - interval '20 days','Control de diabetes'),
  ('cccccccc-cccc-cccc-cccc-cccccccccccc','11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222',3,'Ana Castro',    '3-3333-3333','1991-11-20','femenino','critico', now() - interval '1 day','Control glucémico')
 on conflict do nothing;
+
+-- Reparto de pacientes entre los dos profesionales.
+--
+-- Va como UPDATE y no en el insert de arriba porque los pacientes usan
+-- "on conflict do nothing": en una base ya sembrada, el insert no haría
+-- nada y el reparto no llegaría a aplicarse nunca.
+--
+-- Resultado esperado:
+--   Dra. Ana Rodríguez (admin_clinica) ve los 3 — por ser administradora
+--   Dr. Luis Peralta   (nutricionista) ve 2      — solo los suyos
+update paciente set nutricionista_id = '22222222-2222-2222-2222-222222222222'
+where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+
+update paciente set nutricionista_id = '44444444-4444-4444-4444-444444444444'
+where id in ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','cccccccc-cccc-cccc-cccc-cccccccccccc');
 
 -- Diagnósticos activos.
 -- Se borran antes de insertar, acotado por clinica_id: estas tablas no

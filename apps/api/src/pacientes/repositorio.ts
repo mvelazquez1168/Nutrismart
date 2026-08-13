@@ -67,15 +67,22 @@ const SQL_LISTA = `
       or p.documento_numero ilike '%' || $2 || '%'
     )
     and ($3::text is null or p.estado_clinico::text = $3)
+    and ($4::uuid is null or p.nutricionista_id = $4)
   order by p.nombre asc
 `
 
 export async function listar(
   tenantId: string,
+  restringirA: string | null,
   search: string | null,
   estadoClinico: string | null,
 ): Promise<PacienteLista[]> {
-  const { rows } = await pool.query<PacienteLista>(SQL_LISTA, [tenantId, search, estadoClinico])
+  const { rows } = await pool.query<PacienteLista>(SQL_LISTA, [
+    tenantId,
+    search,
+    estadoClinico,
+    restringirA,
+  ])
   return rows
 }
 
@@ -110,6 +117,7 @@ const SQL_DETALLE = `
    and prof.clinica_id = p.clinica_id
   where p.id = $1
     and p.clinica_id = $2
+    and ($3::uuid is null or p.nutricionista_id = $3)
   limit 1
 `
 
@@ -146,15 +154,24 @@ interface FilaDetalle {
   nutricionista: string | null
 }
 
-/** Devuelve null si no existe O si pertenece a otra clinica: quien llama responde 404 en ambos casos. */
+/**
+ * Devuelve null si no existe, si pertenece a otra clinica O si no es
+ * visible para el solicitante. Quien llama responde 404 en los tres
+ * casos: distinguirlos revelaria la existencia de pacientes ajenos.
+ */
 export async function obtenerDetalle(
   tenantId: string,
   pacienteId: string,
+  restringirA: string | null,
   cliente?: PoolClient,
 ): Promise<PacienteDetalle | null> {
   const ejecutor = cliente ?? pool
 
-  const { rows } = await ejecutor.query<FilaDetalle>(SQL_DETALLE, [pacienteId, tenantId])
+  const { rows } = await ejecutor.query<FilaDetalle>(SQL_DETALLE, [
+    pacienteId,
+    tenantId,
+    restringirA,
+  ])
   const p = rows[0]
   if (!p) return null
 
@@ -365,6 +382,7 @@ export async function crear(
 export async function actualizar(
   tenantId: string,
   pacienteId: string,
+  restringirA: string | null,
   datos: DatosPaciente,
 ): Promise<PacienteDetalle | null> {
   const cliente = await pool.connect()
@@ -381,7 +399,8 @@ export async function actualizar(
          telefono         = $8,
          correo           = $9,
          motivo_consulta  = $10
-       where id = $1 and clinica_id = $2`,
+       where id = $1 and clinica_id = $2
+         and ($11::uuid is null or nutricionista_id = $11)`,
       [
         pacienteId,
         tenantId,
@@ -393,6 +412,7 @@ export async function actualizar(
         datos.telefono,
         datos.correo,
         datos.motivoConsulta,
+        restringirA,
       ],
     )
 
@@ -404,7 +424,7 @@ export async function actualizar(
     await reconciliarLista(cliente, 'paciente_diagnostico', tenantId, pacienteId, datos.diagnosticos)
     await reconciliarLista(cliente, 'paciente_alergia', tenantId, pacienteId, datos.alergias)
 
-    const detalle = await obtenerDetalle(tenantId, pacienteId, cliente)
+    const detalle = await obtenerDetalle(tenantId, pacienteId, restringirA, cliente)
     await cliente.query('commit')
     return detalle
   } catch (error) {
@@ -433,6 +453,7 @@ export async function actualizar(
 export async function darDeBaja(
   tenantId: string,
   pacienteId: string,
+  restringirA: string | null,
   motivo: string | null,
 ): Promise<{ estado: string; bajaFecha: string; bajaMotivo: string | null } | null> {
   const { rows } = await pool.query<{
@@ -445,11 +466,12 @@ export async function darDeBaja(
        baja_fecha  = case when estado = 'baja' then baja_fecha  else now() end,
        baja_motivo = case when estado = 'baja' then baja_motivo else $3   end
      where id = $1 and clinica_id = $2
+       and ($4::uuid is null or nutricionista_id = $4)
      returning
        estado::text as estado,
        to_char(baja_fecha, 'YYYY-MM-DD"T"HH24:MI:SSOF') as "bajaFecha",
        baja_motivo as "bajaMotivo"`,
-    [pacienteId, tenantId, motivo],
+    [pacienteId, tenantId, motivo, restringirA],
   )
   return rows[0] ?? null
 }

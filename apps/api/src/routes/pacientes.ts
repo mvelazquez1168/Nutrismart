@@ -1,21 +1,24 @@
 /**
- * Rutas de pacientes — Rebanada 2.
+ * Rutas de pacientes.
  *
- * Aislamiento entre inquilinos: clinica_id sale SIEMPRE de request.auth,
- * nunca de la query string ni del cuerpo. Un :id de otra clinica
- * responde 404, no 403: un 403 confirmaria que ese paciente existe en
- * otro sitio, y eso ya es informacion clinica filtrada.
+ * Doble acotación: por `clinica_id` del token y por el alcance del
+ * solicitante (CLI-02). Un `nutricionista` solo ve a SUS pacientes; un
+ * `admin_clinica`, a los de toda la clínica.
+ *
+ * Un paciente fuera del alcance responde 404, igual que uno de otra
+ * clínica: un 403 confirmaría que existe, y a quién pertenece un
+ * paciente ya es información clínica.
  */
 import type { FastifyInstance } from 'fastify'
 import { requireAuth } from '../auth.js'
 import { validarPaciente, esUuid } from '../pacientes/validacion.js'
+import { resolverAlcance } from '../pacientes/acceso.js'
 import {
   listar,
   obtenerDetalle,
   crear,
   actualizar,
   darDeBaja,
-  resolverProfesional,
   DocumentoDuplicadoError,
   ExpedienteEnCarreraError,
 } from '../pacientes/repositorio.js'
@@ -35,6 +38,17 @@ interface CuerpoBaja {
   motivo?: string
 }
 
+function noEncontrado() {
+  return { error: 'paciente_no_encontrado', message: 'No se encontró el paciente' }
+}
+
+function sinProfesional() {
+  return {
+    error: 'profesional_no_encontrado',
+    message: 'Tu usuario no tiene un profesional asociado en esta clínica',
+  }
+}
+
 export async function registerPacientesRoutes(app: FastifyInstance): Promise<void> {
   /* ---------------------------------------------------------------- */
   /* GET /api/pacientes                                                */
@@ -43,7 +57,9 @@ export async function registerPacientesRoutes(app: FastifyInstance): Promise<voi
     '/api/pacientes',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const { tenantId } = request.auth
+      const { tenantId, sub, roles } = request.auth
+      const alcance = await resolverAlcance(tenantId, sub, roles)
+      if (!alcance) return reply.code(403).send(sinProfesional())
 
       const searchRaw = request.query.search?.trim()
       const search = searchRaw ? searchRaw : null
@@ -63,7 +79,7 @@ export async function registerPacientesRoutes(app: FastifyInstance): Promise<voi
         estadoClinico = estadoRaw
       }
 
-      return listar(tenantId, search, estadoClinico)
+      return listar(tenantId, alcance.restringirA, search, estadoClinico)
     },
   )
 
@@ -71,26 +87,24 @@ export async function registerPacientesRoutes(app: FastifyInstance): Promise<voi
   /* POST /api/pacientes                                               */
   /* ---------------------------------------------------------------- */
   app.post('/api/pacientes', { preHandler: requireAuth }, async (request, reply) => {
-    const { tenantId, sub } = request.auth
+    const { tenantId, sub, roles } = request.auth
 
     const validacion = validarPaciente(request.body)
     if (!validacion.ok) {
       return reply.code(400).send({ error: 'validacion', errores: validacion.errores })
     }
 
-    // El nutricionista asignado es quien da de alta. Sin esto todo
-    // paciente nuevo apareceria como "Sin asignar" en la lista.
-    const profesionalId = await resolverProfesional(tenantId, sub)
-    if (!profesionalId) {
+    const alcance = await resolverAlcance(tenantId, sub, roles)
+    if (!alcance) {
       request.log.warn({ sub, tenantId }, 'POST pacientes: sin profesional en esta clinica')
-      return reply.code(403).send({
-        error: 'profesional_no_encontrado',
-        message: 'Tu usuario no tiene un profesional asociado en esta clínica',
-      })
+      return reply.code(403).send(sinProfesional())
     }
 
     try {
-      const creado = await crear(tenantId, profesionalId, validacion.datos)
+      // El nutricionista asignado es quien da de alta. Sin esto todo
+      // paciente nuevo apareceria como "Sin asignar" en la lista —  y
+      // ahora, ademas, seria invisible para todos salvo el administrador.
+      const creado = await crear(tenantId, alcance.profesionalId, validacion.datos)
       return reply.code(201).send({ ...creado, estado: 'activo' })
     } catch (error) {
       if (error instanceof DocumentoDuplicadoError) {
@@ -120,12 +134,14 @@ export async function registerPacientesRoutes(app: FastifyInstance): Promise<voi
     '/api/pacientes/:id',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const { tenantId } = request.auth
+      const { tenantId, sub, roles } = request.auth
       const { id } = request.params
-
       if (!esUuid(id)) return reply.code(404).send(noEncontrado())
 
-      const detalle = await obtenerDetalle(tenantId, id)
+      const alcance = await resolverAlcance(tenantId, sub, roles)
+      if (!alcance) return reply.code(403).send(sinProfesional())
+
+      const detalle = await obtenerDetalle(tenantId, id, alcance.restringirA)
       if (!detalle) return reply.code(404).send(noEncontrado())
 
       return detalle
@@ -139,10 +155,12 @@ export async function registerPacientesRoutes(app: FastifyInstance): Promise<voi
     '/api/pacientes/:id',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const { tenantId } = request.auth
+      const { tenantId, sub, roles } = request.auth
       const { id } = request.params
-
       if (!esUuid(id)) return reply.code(404).send(noEncontrado())
+
+      const alcance = await resolverAlcance(tenantId, sub, roles)
+      if (!alcance) return reply.code(403).send(sinProfesional())
 
       const validacion = validarPaciente(request.body)
       if (!validacion.ok) {
@@ -150,7 +168,7 @@ export async function registerPacientesRoutes(app: FastifyInstance): Promise<voi
       }
 
       try {
-        const detalle = await actualizar(tenantId, id, validacion.datos)
+        const detalle = await actualizar(tenantId, id, alcance.restringirA, validacion.datos)
         if (!detalle) return reply.code(404).send(noEncontrado())
         return detalle
       } catch (error) {
@@ -172,22 +190,21 @@ export async function registerPacientesRoutes(app: FastifyInstance): Promise<voi
     '/api/pacientes/:id/baja',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const { tenantId } = request.auth
+      const { tenantId, sub, roles } = request.auth
       const { id } = request.params
-
       if (!esUuid(id)) return reply.code(404).send(noEncontrado())
 
-      const motivoRaw = request.body?.motivo
-      const motivo = typeof motivoRaw === 'string' && motivoRaw.trim() !== '' ? motivoRaw.trim() : null
+      const alcance = await resolverAlcance(tenantId, sub, roles)
+      if (!alcance) return reply.code(403).send(sinProfesional())
 
-      const resultado = await darDeBaja(tenantId, id, motivo)
+      const motivoRaw = request.body?.motivo
+      const motivo =
+        typeof motivoRaw === 'string' && motivoRaw.trim() !== '' ? motivoRaw.trim() : null
+
+      const resultado = await darDeBaja(tenantId, id, alcance.restringirA, motivo)
       if (!resultado) return reply.code(404).send(noEncontrado())
 
       return { id, ...resultado }
     },
   )
-}
-
-function noEncontrado() {
-  return { error: 'paciente_no_encontrado', message: 'No se encontró el paciente' }
 }

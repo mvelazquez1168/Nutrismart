@@ -1,16 +1,20 @@
 /**
- * Rutas del expediente y el timeline — Rebanada 3 (CLI-01).
+ * Rutas del expediente y el timeline — CLI-01.
  *
- * Como en pacientes: clinica_id sale del token y un :id de otra clinica
- * responde 404. La excepcion deliberada es /corregir, que devuelve 409
- * cuando el snapshot existe pero no esta cerrado — ahi el cliente ya
- * esta autorizado sobre el recurso, asi que detallar el motivo no
+ * Doble acotación: `clinica_id` del token y alcance del solicitante.
+ * Las rutas /api/snapshots/:id no reciben el paciente, así que la
+ * visibilidad se resuelve en el repositorio atando el snapshot al
+ * nutricionista de SU paciente.
+ *
+ * Excepción deliberada al 404 genérico: /corregir devuelve 409 cuando
+ * el snapshot existe y es visible pero no está cerrado. Ahí el cliente
+ * ya está autorizado sobre el recurso, así que detallar el motivo no
  * revela nada y es lo que el frontend necesita para explicarse.
  */
 import type { FastifyInstance } from 'fastify'
 import { requireAuth } from '../auth.js'
 import { esUuid } from '../pacientes/validacion.js'
-import { resolverProfesional } from '../pacientes/repositorio.js'
+import { resolverAlcance } from '../pacientes/acceso.js'
 import { validarSnapshot } from '../expediente/validacion.js'
 import {
   obtenerCatalogo,
@@ -38,12 +42,19 @@ function noEncontradoSnapshot() {
   return { error: 'snapshot_no_encontrado', message: 'No se encontró el punto de control' }
 }
 
+function sinProfesional() {
+  return {
+    error: 'profesional_no_encontrado',
+    message: 'Tu usuario no tiene un profesional asociado en esta clínica',
+  }
+}
+
 export async function registerExpedienteRoutes(app: FastifyInstance): Promise<void> {
   /* ---------------------------------------------------------------- */
   /* GET /api/metricas                                                 */
   /* ---------------------------------------------------------------- */
   app.get('/api/metricas', { preHandler: requireAuth }, async () => {
-    // El catalogo es global y de solo lectura; no se acota por tenant.
+    // El catalogo es global y de solo lectura: ni tenant ni alcance.
     return obtenerCatalogo()
   })
 
@@ -54,12 +65,15 @@ export async function registerExpedienteRoutes(app: FastifyInstance): Promise<vo
     '/api/pacientes/:id/expediente',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const { tenantId } = request.auth
+      const { tenantId, sub, roles } = request.auth
       const { id } = request.params
       if (!esUuid(id)) return reply.code(404).send(noEncontradoPaciente())
 
+      const alcance = await resolverAlcance(tenantId, sub, roles)
+      if (!alcance) return reply.code(403).send(sinProfesional())
+
       const catalogo = await obtenerCatalogo()
-      const expediente = await obtenerExpediente(tenantId, id, catalogo)
+      const expediente = await obtenerExpediente(tenantId, id, alcance.restringirA, catalogo)
       if (!expediente) return reply.code(404).send(noEncontradoPaciente())
 
       return expediente
@@ -73,16 +87,18 @@ export async function registerExpedienteRoutes(app: FastifyInstance): Promise<vo
     '/api/pacientes/:id/snapshots',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const { tenantId } = request.auth
+      const { tenantId, sub, roles } = request.auth
       const { id } = request.params
       if (!esUuid(id)) return reply.code(404).send(noEncontradoPaciente())
 
-      // Se comprueba que el paciente exista en esta clinica antes de
-      // devolver una lista vacia: si no, un id ajeno daria [] en vez de
-      // 404, y un [] es una respuesta que se interpreta como "existe y
-      // no tiene controles".
+      const alcance = await resolverAlcance(tenantId, sub, roles)
+      if (!alcance) return reply.code(403).send(sinProfesional())
+
+      // Se comprueba que el paciente exista Y sea visible antes de
+      // devolver la lista: si no, un id ajeno daria [] en vez de 404, y
+      // un [] se lee como "existe y no tiene controles".
       const catalogo = await obtenerCatalogo()
-      const expediente = await obtenerExpediente(tenantId, id, catalogo)
+      const expediente = await obtenerExpediente(tenantId, id, alcance.restringirA, catalogo)
       if (!expediente) return reply.code(404).send(noEncontradoPaciente())
 
       return obtenerTimeline(tenantId, id, catalogo)
@@ -96,9 +112,12 @@ export async function registerExpedienteRoutes(app: FastifyInstance): Promise<vo
     '/api/pacientes/:id/snapshots',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const { tenantId, sub } = request.auth
+      const { tenantId, sub, roles } = request.auth
       const { id } = request.params
       if (!esUuid(id)) return reply.code(404).send(noEncontradoPaciente())
+
+      const alcance = await resolverAlcance(tenantId, sub, roles)
+      if (!alcance) return reply.code(403).send(sinProfesional())
 
       const catalogo = await obtenerCatalogo()
       const validacion = validarSnapshot(request.body, catalogo)
@@ -106,12 +125,18 @@ export async function registerExpedienteRoutes(app: FastifyInstance): Promise<vo
         return reply.code(400).send({ error: 'validacion', errores: validacion.errores })
       }
 
-      const profesionalId = await resolverProfesional(tenantId, sub)
-
       try {
-        const snapshotId = await crearSnapshot(tenantId, id, profesionalId, validacion.datos)
+        const snapshotId = await crearSnapshot(
+          tenantId,
+          id,
+          alcance.restringirA,
+          alcance.profesionalId,
+          validacion.datos,
+        )
         if (!snapshotId) return reply.code(404).send(noEncontradoPaciente())
-        return reply.code(201).send({ id: snapshotId, estado: 'borrador', fecha: validacion.datos.fecha })
+        return reply
+          .code(201)
+          .send({ id: snapshotId, estado: 'borrador', fecha: validacion.datos.fecha })
       } catch (error) {
         if (error instanceof BorradorAbiertoError) {
           return reply.code(409).send({
@@ -132,11 +157,14 @@ export async function registerExpedienteRoutes(app: FastifyInstance): Promise<vo
     '/api/snapshots/:id',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const { tenantId } = request.auth
+      const { tenantId, sub, roles } = request.auth
       const { id } = request.params
       if (!esUuid(id)) return reply.code(404).send(noEncontradoSnapshot())
 
-      const base = await obtenerSnapshotBase(tenantId, id)
+      const alcance = await resolverAlcance(tenantId, sub, roles)
+      if (!alcance) return reply.code(403).send(sinProfesional())
+
+      const base = await obtenerSnapshotBase(tenantId, id, alcance.restringirA)
       if (!base) return reply.code(404).send(noEncontradoSnapshot())
 
       const catalogo = await obtenerCatalogo()
@@ -160,9 +188,12 @@ export async function registerExpedienteRoutes(app: FastifyInstance): Promise<vo
     '/api/snapshots/:id',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const { tenantId, sub } = request.auth
+      const { tenantId, sub, roles } = request.auth
       const { id } = request.params
       if (!esUuid(id)) return reply.code(404).send(noEncontradoSnapshot())
+
+      const alcance = await resolverAlcance(tenantId, sub, roles)
+      if (!alcance) return reply.code(403).send(sinProfesional())
 
       const catalogo = await obtenerCatalogo()
       const validacion = validarSnapshot(request.body, catalogo)
@@ -170,10 +201,14 @@ export async function registerExpedienteRoutes(app: FastifyInstance): Promise<vo
         return reply.code(400).send({ error: 'validacion', errores: validacion.errores })
       }
 
-      const profesionalId = await resolverProfesional(tenantId, sub)
-
       try {
-        await actualizarSnapshot(tenantId, id, profesionalId, validacion.datos)
+        await actualizarSnapshot(
+          tenantId,
+          id,
+          alcance.restringirA,
+          alcance.profesionalId,
+          validacion.datos,
+        )
         return { id, estado: 'borrador', fecha: validacion.datos.fecha }
       } catch (error) {
         if (error instanceof SnapshotNoEditableError) {
@@ -201,11 +236,14 @@ export async function registerExpedienteRoutes(app: FastifyInstance): Promise<vo
     '/api/snapshots/:id/cerrar',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const { tenantId } = request.auth
+      const { tenantId, sub, roles } = request.auth
       const { id } = request.params
       if (!esUuid(id)) return reply.code(404).send(noEncontradoSnapshot())
 
-      const resultado = await cerrarSnapshot(tenantId, id)
+      const alcance = await resolverAlcance(tenantId, sub, roles)
+      if (!alcance) return reply.code(403).send(sinProfesional())
+
+      const resultado = await cerrarSnapshot(tenantId, id, alcance.restringirA)
       if (!resultado) return reply.code(404).send(noEncontradoSnapshot())
 
       return { id, ...resultado }
@@ -219,14 +257,20 @@ export async function registerExpedienteRoutes(app: FastifyInstance): Promise<vo
     '/api/snapshots/:id/corregir',
     { preHandler: requireAuth },
     async (request, reply) => {
-      const { tenantId, sub } = request.auth
+      const { tenantId, sub, roles } = request.auth
       const { id } = request.params
       if (!esUuid(id)) return reply.code(404).send(noEncontradoSnapshot())
 
-      const profesionalId = await resolverProfesional(tenantId, sub)
+      const alcance = await resolverAlcance(tenantId, sub, roles)
+      if (!alcance) return reply.code(403).send(sinProfesional())
 
       try {
-        const nuevoId = await corregirSnapshot(tenantId, id, profesionalId)
+        const nuevoId = await corregirSnapshot(
+          tenantId,
+          id,
+          alcance.restringirA,
+          alcance.profesionalId,
+        )
         return reply.code(201).send({ id: nuevoId, corrigeA: id, estado: 'borrador' })
       } catch (error) {
         if (error instanceof SnapshotNoCerradoError) {

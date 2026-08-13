@@ -29,6 +29,9 @@ function buildSubstitutions(): Record<string, string> {
   if (config.devKeycloakSub) {
     subs['DEV_KEYCLOAK_SUB'] = config.devKeycloakSub
   }
+  if (config.devKeycloakSubNutri) {
+    subs['DEV_KEYCLOAK_SUB_NUTRI'] = config.devKeycloakSubNutri
+  }
   return subs
 }
 
