@@ -5,16 +5,36 @@
  */
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
+import { createRequire } from 'node:module'
 import { config } from './config.js'
 import { pingDb, closeDb } from './db.js'
 import { registerAuth } from './auth.js'
 import { registerMeRoutes } from './routes/me.js'
 import { registerPacientesRoutes } from './routes/pacientes.js'
 
+/**
+ * pino-pretty es una devDependency: en la imagen de produccion no
+ * existe. Se comprueba que se pueda resolver ANTES de pedirlo, porque
+ * Fastify lanza al arrancar si el transporte no esta — y un logger
+ * bonito no puede ser motivo de que la API no levante.
+ *
+ * Pasa en cuanto NODE_ENV llega como 'development' dentro del
+ * contenedor (el env_file del compose pisa el ENV de la imagen).
+ */
+function transporteLegible(): Record<string, unknown> {
+  if (!config.isDev) return {}
+  try {
+    createRequire(import.meta.url).resolve('pino-pretty')
+    return { transport: { target: 'pino-pretty' } }
+  } catch {
+    return {}
+  }
+}
+
 const app = Fastify({
   logger: {
     level: config.isDev ? 'info' : 'warn',
-    ...(config.isDev ? { transport: { target: 'pino-pretty' } } : {}),
+    ...transporteLegible(),
   },
 })
 

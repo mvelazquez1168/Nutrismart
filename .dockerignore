@@ -1,0 +1,24 @@
+# El contexto de build es la RAÍZ del repo (lo necesitan los workspaces),
+# así que conviene recortar lo que no aporta nada a la imagen.
+
+# Se reinstalan dentro del contenedor; copiarlos rompería binarios
+# nativos compilados para Windows.
+node_modules
+**/node_modules
+
+# Artefactos: se regeneran en el build
+**/dist
+**/*.tsbuildinfo
+
+.git
+.github
+
+# Secretos: las variables llegan por env_file/environment en runtime
+.env
+.env.local
+
+# ~10 MB de PNG de referencia que ninguna imagen necesita
+disenos
+docs
+
+*.log

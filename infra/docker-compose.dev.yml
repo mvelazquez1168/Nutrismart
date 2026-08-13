@@ -17,7 +17,11 @@ services:
     networks: [nutrismart]
 
   api:
-    build: ../apps/api
+    # Contexto en la raíz del repo: npm workspaces necesita el
+    # package-lock.json y los package.json de todos los paquetes.
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
     container_name: nutrismart-api
     env_file: ../.env
     environment:
@@ -29,18 +33,31 @@ services:
       # Lado interno del mapeo 4001:4000. En el .env vale 4001 (dev en el
       # host); aquí debe ser 4000 o el puerto publicado apuntaría a nada.
       API_PORT: "4000"
+      # El .env de la raíz es de DESARROLLO y trae NODE_ENV=development,
+      # que pisaría el ENV de la imagen. Dentro del contenedor corre el
+      # build de producción, sin devDependencies.
+      NODE_ENV: production
     depends_on: [db]
     ports:
       - "4001:4000"   # 4000 lo ocupa vetplatform-backend-1
     networks: [nutrismart, shared]
 
   web-professional:
-    build: ../apps/web-professional
+    build:
+      context: ..
+      dockerfile: apps/web-professional/Dockerfile
+      # Estas variables se INCRUSTAN en el bundle durante el build; no
+      # son configuración de runtime. Son URLs que resuelve el NAVEGADOR,
+      # así que van con localhost, no con hostnames internos de Docker.
+      args:
+        VITE_API_URL: http://localhost:4001
+        VITE_KEYCLOAK_URL: http://localhost:8080
+        VITE_KEYCLOAK_REALM: nutrismart
+        VITE_KEYCLOAK_CLIENT_ID: nutrismart-web
     container_name: nutrismart-web-pro
-    env_file: ../.env
     depends_on: [api]
     ports:
-      - "5173:5173"
+      - "5173:80"   # nginx sirve en el 80 dentro del contenedor
     networks: [nutrismart]
 
   # --- App del paciente (PWA) — se activa en la rebanada del paciente ---
