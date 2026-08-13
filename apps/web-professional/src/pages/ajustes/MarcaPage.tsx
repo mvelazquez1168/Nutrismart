@@ -10,6 +10,14 @@ import { useEffect, useRef, useState } from 'react'
 import { apiDelete, apiPut, apiUpload, API_BASE, ApiError } from '../../api/client'
 import { Campo, claseControl } from '../../components/Campo'
 import { useBrand, urlLogo, type Brand } from '../../contexts/BrandContext'
+import { contraste, esHex } from '../../lib/color'
+
+/**
+ * Umbral AA de la WCAG para texto normal. Los botones de la aplicación
+ * pintan texto blanco sobre el color primario: por debajo de esto, el
+ * texto deja de leerse.
+ */
+const CONTRASTE_MINIMO = 4.5
 
 /** Mismos valores que tokens.css y que los DEFAULTS de la API. */
 const DEFAULTS = {
@@ -26,8 +34,6 @@ const MAX_LOGO_BYTES = 512 * 1024
  * solo evita que el administrador elija un archivo que va a fallar.
  */
 const TIPOS_ACEPTADOS = ['image/png', 'image/jpeg', 'image/webp']
-
-const HEX_RE = /^#[0-9a-fA-F]{6}$/
 
 export function MarcaPage() {
   const { brand, refrescar } = useBrand()
@@ -61,7 +67,17 @@ export function MarcaPage() {
   const logoActual = urlLogo(brand, API_BASE)
   const logoMostrado = logoPreview ?? logoActual
   const nombreValido = nombre.trim().length > 0 && nombre.length <= 80
-  const coloresValidos = HEX_RE.test(primario) && HEX_RE.test(acento)
+  const coloresValidos = esHex(primario) && esHex(acento)
+
+  /*
+   * Aviso, NO validación: la clínica manda sobre su propia marca y un
+   * color corporativo claro es una decisión legítima, no un error. Pero
+   * un primario muy claro deja el texto blanco de los botones
+   * ilegible —blanco puro da un contraste de 1.00— y quien lo elige no
+   * tiene por qué saberlo hasta que un usuario se queja.
+   */
+  const contrasteBoton = esHex(primario) ? contraste(primario, '#FFFFFF') : null
+  const contrasteBajo = contrasteBoton !== null && contrasteBoton < CONTRASTE_MINIMO
 
   function elegirLogo(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -289,6 +305,16 @@ export function MarcaPage() {
           </div>
         </div>
 
+        {contrasteBajo && (
+          <p className="rounded-md border border-[color:var(--status-alert)] bg-surface p-3 text-sm text-ink">
+            <span className="font-semibold text-[color:var(--status-alert)]">Contraste bajo. </span>
+            El texto blanco sobre este color primario tiene un contraste de{' '}
+            <strong>{contrasteBoton?.toFixed(2)}:1</strong>, por debajo del mínimo recomendado de{' '}
+            {CONTRASTE_MINIMO}:1. Los botones costarán de leer. Puedes guardarlo igualmente: es tu
+            marca.
+          </p>
+        )}
+
         {error && (
           <p
             role="alert"
@@ -338,7 +364,7 @@ function SelectorColor({
   valor: string
   onChange: (v: string) => void
 }) {
-  const invalido = valor.length > 0 && !HEX_RE.test(valor)
+  const invalido = valor.length > 0 && !esHex(valor)
 
   return (
     <Campo
@@ -355,7 +381,7 @@ function SelectorColor({
         <input
           type="color"
           aria-label={`${etiqueta}: selector`}
-          value={HEX_RE.test(valor) ? valor.toLowerCase() : '#000000'}
+          value={esHex(valor) ? valor.toLowerCase() : '#000000'}
           onChange={(e) => onChange(e.target.value)}
           className="h-10 w-12 shrink-0 cursor-pointer rounded-md border border-border p-0.5"
         />

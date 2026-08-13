@@ -39,6 +39,10 @@
 
 8. **Los defaults de la API son los de `tokens.css`.** Si difirieran, activar esta rebanada cambiaría el aspecto de todas las clínicas que no han configurado nada — un cambio visual masivo como efecto secundario de desplegar.
 
+9. **El contraste se avisa, no se impide.** Los botones pintan texto blanco sobre el primario; con un primario claro el texto deja de leerse (blanco puro da un contraste de 1.00:1). La pantalla avisa por debajo de 4.5:1 y deja guardar igualmente: bloquear rechazaría colores corporativos legítimos, y la marca es de la clínica. Misma postura que con la IA — se informa, decide la persona.
+
+   La comprobación vive en `lib/color.ts` junto a la derivación, fuera de `BrandContext`, para poder ejercitarse sin un DOM. Ver T6-11.
+
 ---
 
 ## Modelo de datos

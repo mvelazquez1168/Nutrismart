@@ -438,6 +438,49 @@ Es la prueba que distingue esta funcionalidad de una que solo lo aparenta: `Bran
 
 **Control negativo:** el badge de estado clínico "alerta" **no cambia**. Los estados clínicos y los colores de gráfica se leen como un semáforo y no se re-tematizan.
 
+**Comprobación estática que acompaña a esta prueba.** El modo de fallo real aquí no es que el navegador no repinte —una variable CSS reasignada repinta siempre—, sino que se escriba un token que nadie lee. Se cruzan las dos listas:
+
+```bash
+# Tokens que el CSS compilado consume
+grep -o "var(--[a-z0-9-]*)" dist/assets/*.css | sed 's/.*var(//;s/)//' | sort -u
+# Tokens que BrandContext escribe
+grep -o "fijar(root, '--[a-z-]*'" src/contexts/BrandContext.tsx
+```
+
+`--primary`, `--primary-hover`, `--primary-tint` y `--ring` deben aparecer en **ambas**. Si una desaparece de la primera lista, alguien dejó de usar la clase de Tailwind correspondiente y ese trozo de interfaz ya no sigue la marca.
+
+`--accent` **no** aparece en la lista del CSS compilado, y es correcto: hoy solo lo consume la vista previa de la propia pantalla, con estilo en línea, porque tiene que mostrar el color *sin guardar*. Queda declarado y disponible como `bg-accent` para el PDF (CLI-05) y la app del paciente.
+
+Complemento útil: `grep -rE "#[0-9a-fA-F]{6}" src/components src/pages` debe salir **vacío**. Un hex suelto en un componente es una zona que el white-label no alcanza.
+
+### T6-11 · Derivación de la paleta y contraste
+
+De un solo color se derivan el hover, el tinte y el halo de foco (`src/lib/color.ts`). Ejercitado contra las 8 paletas curadas de `tokens.css` y cinco casos extremos:
+
+| Color de partida | Primario | Hover | Tinte | Contraste tinte/primario | Contraste primario/blanco |
+|---|---|---|---|---|---|
+| Verde nutrición (defecto) | `#0E7C66` | `#084539` | `#e5f5f2` | 4.56 | **5.13** |
+| Azul clínico | `#2563EB` | `#1249c1` | `#e5eaf5` | 4.29 | **5.17** |
+| Teal fresco | `#0891B2` | `#056177` | `#e5f2f5` | 3.22 | 3.68 |
+| Esmeralda | `#059669` | `#035b40` | `#e5f5f0` | 3.35 | 3.77 |
+| Índigo | `#4F46E5` | `#271dd0` | `#e6e5f5` | 5.06 | **6.29** |
+| Coral cálido | `#E11D48` | `#ab1637` | `#f5e5e9` | 3.86 | 4.70 |
+| Ámbar | `#D97706` | `#9d5604` | `#f5eee5` | 2.77 | 3.19 |
+| Grafito | `#334155` | `#1c242f` | `#e9ecf2` | 8.75 | **10.35** |
+| Negro puro | `#000000` | `#000000` | `#ededed` | 17.94 | **21.00** |
+| **Blanco puro** | `#FFFFFF` | `#e0e0e0` | `#ededed` | 1.17 | **1.00** |
+| **Amarillo** | `#FFFF00` | `#c2c200` | `#f5f5e5` | 1.03 | **1.07** |
+| Gris sin saturación | `#808080` | `#616161` | `#ededed` | 3.37 | 3.95 |
+| Rojo puro | `#FF0000` | `#c20000` | `#f5e5e5` | 3.28 | 4.00 |
+
+**Esperado en formato:** el hover siempre más oscuro que el primario (salvo negro, que ya no puede bajar), el tinte siempre casi blanco, y el halo un `rgba(...,0.35)` bien formado. Correcto en los 13 casos.
+
+**Lo que esta prueba destapó.** Los botones pintan texto blanco sobre el primario. Con un primario claro el contraste se hunde: **blanco puro da 1.00 y amarillo 1.07** — texto literalmente invisible. Como CLI-06 deja elegir *cualquier* color, nada lo impedía.
+
+La respuesta es un **aviso, no una validación**: la pantalla avisa cuando el contraste baja de 4.5:1 y deja guardar igualmente. Bloquear rechazaría colores corporativos legítimos, y la marca es de la clínica. Es la misma postura que con la IA: se informa, decide la persona.
+
+Conviene saber que **cuatro de las ocho paletas curadas** ya estaban por debajo de 4.5:1 (teal, esmeralda, ámbar y, por poco, coral). No es una regresión de esta rebanada —vienen así de `tokens.css`— pero ahora el aviso las señala. Revisarlas es trabajo del design system, no de CLI-06.
+
 ---
 
 # Recorrido manual del frontend
@@ -480,6 +523,26 @@ Con **`ana@vida.cr`** (administradora):
 Con **`luis@vida.cr`** (nutricionista): **no aparece el filtro Profesional** —solo se vería a sí mismo— y no ve ninguna cita de María.
 
 **El huso horario es lo más frágil de esta pantalla**: un desfase de seis horas se ve plausible y pasa desapercibido. Es la única vista que muestra instantes con hora; el resto de la app usa fechas sin hora.
+
+### Identidad visual (Rebanada 6)
+
+Con **`ana@vida.cr`** (administradora):
+
+| Paso | Qué comprobar |
+|---|---|
+| Barra lateral | **Configuración** ya navega (antes estaba apagada) |
+| `/ajustes/marca` | Nombre, dos colores y carga de logo; la vista previa refleja lo tecleado **antes** de guardar |
+| Cambiar el primario y **Guardar** | La barra lateral, el botón Guardar y el elemento activo del menú cambian **sin recargar** |
+| Badge "Alerta (fijo)" de la vista previa | **No cambia** de color: el semáforo clínico no se re-tematiza |
+| Escribir `rojo` en el campo hexadecimal | Marca **ese campo**; el botón Guardar queda deshabilitado |
+| Subir un SVG | Rechazado ya en el navegador, antes de salir la petición |
+| Subir un PNG y guardar | Sustituye la inicial por el logo en la barra lateral |
+| Volver a subir otro logo | El anterior **desaparece del almacén** (queda un solo archivo en `datos/archivos/<clinica>/`) |
+| Eliminar logo | Vuelve la inicial sobre el color primario; **los colores no se pierden** |
+| Restaurar valores por defecto | **Pide confirmación**; vuelve el verde `#0E7C66` y "NutriSmart" |
+| **F5** | La marca se mantiene: sale de la base, no del navegador |
+
+Con **`luis@vida.cr`** (nutricionista): **Configuración sigue apagada** y teclear `/ajustes/marca` a mano redirige a Pacientes. La API responde **403** igualmente — la comprobación del navegador solo decide qué se pinta.
 
 ---
 
