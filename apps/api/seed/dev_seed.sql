@@ -73,3 +73,64 @@ values
  ('dddddddd-dddd-dddd-dddd-dddddddddddd','99999999-9999-9999-9999-999999999999','88888888-8888-8888-8888-888888888888',1,'NO DEBE APARECER — Pedro Solano','9-9999-9999','1979-01-15','masculino','critico', now() - interval '2 days','Paciente de otra clínica'),
  ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee','99999999-9999-9999-9999-999999999999','88888888-8888-8888-8888-888888888888',2,'NO DEBE APARECER — Lucía Vargas','8-8888-8888','1995-07-30','femenino','alerta',  now() - interval '5 days','Paciente de otra clínica')
 on conflict do nothing;
+
+-- ============================================================
+-- SNAPSHOTS CLÍNICOS (Rebanada 3)
+--
+-- Juan lleva dos controles con peso descendente, para que las flechas
+-- de tendencia del timeline tengan datos reales desde el primer GET.
+-- María tiene uno solo: su tendencia debe salir nula, que es el otro
+-- caso que hay que poder ver.
+--
+-- Ambos van CERRADOS: el borrador se prueba creándolo desde la API, y
+-- además el índice único parcial solo permite uno por paciente.
+-- Los ids son fijos para que el seed siga siendo idempotente.
+-- ============================================================
+
+insert into clinical_snapshot (id, clinica_id, paciente_id, profesional_id, fecha, estado, cerrado_at)
+values
+ -- Juan · control inicial
+ ('10000000-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','22222222-2222-2222-2222-222222222222',
+  (now() - interval '60 days')::date,'cerrado', now() - interval '60 days'),
+ -- Juan · control de seguimiento; su fecha coincide con paciente.ultima_visita
+ ('10000000-0000-0000-0000-000000000002','11111111-1111-1111-1111-111111111111','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','22222222-2222-2222-2222-222222222222',
+  (now() - interval '20 days')::date,'cerrado', now() - interval '20 days'),
+ -- María · control único
+ ('10000000-0000-0000-0000-000000000003','11111111-1111-1111-1111-111111111111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','22222222-2222-2222-2222-222222222222',
+  (now() - interval '3 days')::date,'cerrado', now() - interval '3 days')
+on conflict (id) do nothing;
+
+-- Métricas. La talla va en TODOS los snapshots: sin ella el IMC de ese
+-- punto sería null, y aquí queremos que la serie de IMC sea continua.
+--   Juan:  95 kg -> 91 kg con 1.75 m  =>  IMC 31.0 -> 29.7
+--   María: 72 kg con 1.62 m           =>  IMC 27.4
+insert into snapshot_metrica (clinica_id, snapshot_id, metrica_codigo, valor) values
+ -- Juan, control inicial
+ ('11111111-1111-1111-1111-111111111111','10000000-0000-0000-0000-000000000001','peso',                95.0),
+ ('11111111-1111-1111-1111-111111111111','10000000-0000-0000-0000-000000000001','talla',             175.0),
+ ('11111111-1111-1111-1111-111111111111','10000000-0000-0000-0000-000000000001','cintura',           108.0),
+ ('11111111-1111-1111-1111-111111111111','10000000-0000-0000-0000-000000000001','glucosa_ayunas',    145.0),
+ ('11111111-1111-1111-1111-111111111111','10000000-0000-0000-0000-000000000001','presion_sistolica', 140.0),
+ ('11111111-1111-1111-1111-111111111111','10000000-0000-0000-0000-000000000001','presion_diastolica', 90.0),
+ -- Juan, seguimiento: todo mejora
+ ('11111111-1111-1111-1111-111111111111','10000000-0000-0000-0000-000000000002','peso',                91.0),
+ ('11111111-1111-1111-1111-111111111111','10000000-0000-0000-0000-000000000002','talla',             175.0),
+ ('11111111-1111-1111-1111-111111111111','10000000-0000-0000-0000-000000000002','cintura',           104.0),
+ ('11111111-1111-1111-1111-111111111111','10000000-0000-0000-0000-000000000002','glucosa_ayunas',    132.0),
+ ('11111111-1111-1111-1111-111111111111','10000000-0000-0000-0000-000000000002','presion_sistolica', 135.0),
+ ('11111111-1111-1111-1111-111111111111','10000000-0000-0000-0000-000000000002','presion_diastolica', 85.0),
+ -- María
+ ('11111111-1111-1111-1111-111111111111','10000000-0000-0000-0000-000000000003','peso',                72.0),
+ ('11111111-1111-1111-1111-111111111111','10000000-0000-0000-0000-000000000003','talla',             162.0),
+ ('11111111-1111-1111-1111-111111111111','10000000-0000-0000-0000-000000000003','cintura',            84.0),
+ ('11111111-1111-1111-1111-111111111111','10000000-0000-0000-0000-000000000003','glucosa_ayunas',     92.0)
+on conflict (snapshot_id, metrica_codigo) do nothing;
+
+insert into clinical_note (clinica_id, snapshot_id, profesional_id, texto) values
+ ('11111111-1111-1111-1111-111111111111','10000000-0000-0000-0000-000000000001','22222222-2222-2222-2222-222222222222',
+  'Primera valoración. Glucemia elevada y perímetro abdominal de riesgo. Se acuerda plan hipocalórico con control de carbohidratos y caminata diaria de 30 minutos.'),
+ ('11111111-1111-1111-1111-111111111111','10000000-0000-0000-0000-000000000002','22222222-2222-2222-2222-222222222222',
+  'Buena adherencia al plan. Pierde 4 kg y 4 cm de cintura. Glucemia en descenso pero aún alterada. Se mantiene el plan y se refuerza la actividad física.'),
+ ('11111111-1111-1111-1111-111111111111','10000000-0000-0000-0000-000000000003','22222222-2222-2222-2222-222222222222',
+  'Valoración inicial. Sin alteraciones metabólicas. Objetivo de pérdida de peso gradual.')
+on conflict (snapshot_id) do nothing;

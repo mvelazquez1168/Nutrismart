@@ -11,6 +11,7 @@ import { pingDb, closeDb } from './db.js'
 import { registerAuth } from './auth.js'
 import { registerMeRoutes } from './routes/me.js'
 import { registerPacientesRoutes } from './routes/pacientes.js'
+import { registerExpedienteRoutes } from './routes/expediente.js'
 
 /**
  * pino-pretty es una devDependency: en la imagen de produccion no
@@ -77,6 +78,7 @@ async function start(): Promise<void> {
 
     await registerMeRoutes(app)
     await registerPacientesRoutes(app)
+    await registerExpedienteRoutes(app)
 
     // host 0.0.0.0: dentro de Docker, escuchar solo en localhost dejaria
     // el puerto publicado inalcanzable desde fuera del contenedor.
