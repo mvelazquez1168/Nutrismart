@@ -5,10 +5,12 @@
   "description": "Plataforma SaaS de gestion nutricional (multi-tenant, white-label)",
   "workspaces": [
     "apps/api",
+    "apps/web-professional",
     "packages/design-system"
   ],
   "scripts": {
     "dev:api": "npm run dev -w @nutrismart/api",
+    "dev:web": "npm run dev -w @nutrismart/web-professional",
     "migrate": "npm run migrate -w @nutrismart/api",
     "seed": "npm run seed -w @nutrismart/api"
   },

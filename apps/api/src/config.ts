@@ -49,6 +49,7 @@ const jwksUrl = required('KEYCLOAK_JWKS_URL')
 const audience = required('KEYCLOAK_AUDIENCE')
 const apiPort = optionalPort('API_PORT', 4000)
 const nodeEnv = process.env['NODE_ENV']?.trim() || 'development'
+const frontendProUrl = optional('FRONTEND_PRO_URL') ?? 'http://localhost:5173'
 
 // Se acumulan TODAS las que faltan y se reportan juntas: descubrirlas de
 // una en una, reiniciando el proceso cada vez, es tiempo perdido.
@@ -65,6 +66,12 @@ export const config = {
   isDev: nodeEnv !== 'production',
   apiPort,
   databaseUrl,
+  /**
+   * Origen del front profesional. La API lo usa como unico origen
+   * permitido en CORS: un '*' seria inaceptable en una API que responde
+   * datos clinicos con credenciales.
+   */
+  frontendProUrl,
   keycloak: {
     /**
      * Issuer LITERAL esperado en el claim 'iss'. NO cambia entre ejecutar

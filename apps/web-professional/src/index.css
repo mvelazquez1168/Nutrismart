@@ -1,0 +1,49 @@
+/*
+ * El import de los tokens va PRIMERO: define las variables CSS que el
+ * preset de Tailwind referencia (var(--primary), var(--ink)…). Lo resuelve
+ * postcss-import antes de que Tailwind genere nada.
+ *
+ * Los tokens son la fuente de verdad de color y forma. Ningun componente
+ * escribe un hex literal: el white-label cambia --primary y toda la app
+ * lo sigue sin recompilar.
+ */
+@import '@nutrismart/design-system/tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  /*
+   * Badge de estado clinico. El diseno los muestra tintados (texto de
+   * color sobre fondo claro del mismo tono), pero los tokens solo
+   * definen el color solido.
+   *
+   * color-mix deriva el fondo DEL PROPIO token en vez de anadir cuatro
+   * tokens nuevos de relleno. Asi sigue habiendo una sola fuente de
+   * verdad por estado: si --status-alert cambia, el badge lo sigue.
+   *
+   * El color concreto llega por la variable --estado-color, que fija
+   * cada instancia.
+   */
+  .badge-estado {
+    @apply inline-flex items-center rounded-pill px-2.5 py-0.5 text-xs font-semibold;
+    color: var(--estado-color);
+    background-color: color-mix(in srgb, var(--estado-color) 14%, transparent);
+  }
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+}

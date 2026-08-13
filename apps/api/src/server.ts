@@ -4,6 +4,7 @@
  * Rebanada 1 (walking skeleton): /health + /api/me + /api/pacientes.
  */
 import Fastify from 'fastify'
+import cors from '@fastify/cors'
 import { config } from './config.js'
 import { pingDb, closeDb } from './db.js'
 import { registerAuth } from './auth.js'
@@ -43,6 +44,15 @@ async function start(): Promise<void> {
     // registerAuth declara la propiedad `auth` en el request y tiene que
     // correr sobre la instancia raiz ANTES de registrar cualquier ruta
     // que la use; si no, el decorador no existe cuando llega la peticion.
+    // Origen unico y explicito, no '*'. Esta API responde datos clinicos
+    // con cabecera Authorization; abrirla a cualquier origen permitiria a
+    // otra pagina leer expedientes con el token del usuario.
+    await app.register(cors, {
+      origin: config.frontendProUrl,
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+      allowedHeaders: ['Authorization', 'Content-Type'],
+    })
+
     registerAuth(app)
 
     await registerMeRoutes(app)
