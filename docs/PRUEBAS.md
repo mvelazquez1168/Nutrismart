@@ -570,6 +570,103 @@ La tabla la lleva aunque se pueda deducir por el paciente. Es la regla del proye
 
 ---
 
+# Rebanada 8 · Dashboard administrativo
+
+**Requiere los dos usuarios**: `ana@vida.cr` (`admin_clinica`) y `luis@vida.cr` (`nutricionista`).
+
+Token y llamada base en PowerShell:
+
+```powershell
+$b = @{client_id='nutrismart-web'; grant_type='password'; username='ana@vida.cr'; password='nutrismart-dev'}
+$TOKEN = (Invoke-RestMethod -Method Post -Body $b `
+  -Uri "http://localhost:8080/realms/nutrismart/protocol/openid-connect/token").access_token
+
+Invoke-RestMethod "http://localhost:4001/api/admin/dashboard?periodo=mes" `
+  -Headers @{ Authorization = "Bearer $TOKEN" } | ConvertTo-Json -Depth 5
+```
+
+> Cuidado con el nombre de la variable: PowerShell **no distingue mayúsculas**, así que guardar un resultado en `$token` teniendo el JWT en `$TOKEN` lo sobrescribe y todo pasa a responder 401. Está documentado en Tropiezos de entorno.
+
+### CA-08-01 · Estructura completa para la administradora
+`GET /api/admin/dashboard?periodo=mes` con el token de Ana.
+
+**Esperado:** **200** con `periodo`, `desde`, `hasta`, `generadoEn`, los ocho `kpis`, `agendaHoy` y `porProfesional`.
+
+Contra el seed: **5 citas — 2 completadas, 1 cancelada, 2 pendientes**, 3 pacientes activos, 10 controles y 3 laboratorios.
+
+### CA-08-02 · Solo el administrador
+| Prueba | Esperado |
+|---|---|
+| Token de `luis@vida.cr` (nutricionista) | **403 `solo_admin_clinica`** |
+| Sin cabecera `Authorization` | **401** |
+| Token válido sin profesional en la clínica | **403 `profesional_no_encontrado`** |
+
+Aquí el 403 **sí** es correcto, al revés que en las rutas con `:pacienteId`. Allí distinguir "no existe" de "no es tuyo" revela la existencia de pacientes ajenos; aquí el recurso es la clínica del propio solicitante, que ya conoce por su token.
+
+### CA-08-03 · Las tres ventanas, en huso de Costa Rica
+```powershell
+foreach ($p in 'hoy','semana','mes') {
+  $d = Invoke-RestMethod "http://localhost:4001/api/admin/dashboard?periodo=$p" -Headers @{Authorization="Bearer $TOKEN"}
+  "{0,-7} {1}  ->  {2}" -f $p, $d.desde, $d.hasta
+}
+```
+
+**Esperado**, un 13 de agosto:
+
+| Período | Desde | Hasta |
+|---|---|---|
+| `hoy` | `2026-08-13T06:00:00Z` | `2026-08-14T06:00:00Z` |
+| `semana` | `now() - 7 días` | `2026-08-14T06:00:00Z` |
+| `mes` | `2026-08-01T06:00:00Z` | `2026-09-01T06:00:00Z` |
+
+Las `06:00Z` son la clave: son las **00:00 en Costa Rica**. Si aparecieran a las `00:00Z`, la ventana se estaría calculando en UTC y el día empezaría a las 18:00 del día anterior en hora local.
+
+Un `?periodo=xyz` cae en `mes`, no da 400.
+
+### CA-08-04 · El período llega hasta su final
+Las citas del seed están el **15 y el 21 de agosto**, es decir, en el futuro respecto al día 13.
+
+**Esperado:** `periodo=mes` las cuenta — `citasTotal = 5`, `citasPendientes = 2`.
+
+Esta es la prueba que motivó apartarse de la especificación de partida. Con la ventana cortada en `now()`, el resultado era `citasTotal = 0` teniendo cinco citas agendadas, y el KPI **Pendientes** no podía contar nada: una cita pendiente está, por definición, en el futuro.
+
+### CA-08-05 · La agenda del día usa el huso de la clínica
+En transacción revertida, mover una cita a las **23:30 hora de Costa Rica** (que en UTC es 05:30 del día siguiente) y contar de las dos formas:
+
+```sql
+begin;
+update cita
+   set inicio = (date_trunc('day', now() at time zone 'America/Costa_Rica') + interval '23 hours 30 minutes')
+                at time zone 'America/Costa_Rica'
+ where id = (select id from cita order by inicio limit 1);
+
+select count(*) from cita   -- comparando en huso CR
+ where (inicio at time zone 'America/Costa_Rica')::date = (now() at time zone 'America/Costa_Rica')::date;
+
+select count(*) from cita   -- comparando en UTC
+ where inicio::date = now()::date;
+rollback;
+```
+
+**Esperado:** **1** con el huso de la clínica y **0** en UTC. La cita "de hoy" desaparecería con la comparación ingenua.
+
+### CA-08-06 · Profesional sin citas
+**Esperado:** los dos profesionales de la clínica aparecen en `porProfesional` aunque no tengan citas en el período, con `citasTotal: 0` y su recuento real de pacientes activos (Ana 1, Luis 2).
+
+Su ausencia de actividad es justamente el dato que el administrador busca. Depende de que las condiciones de período vayan **dentro del `ON`** del `LEFT JOIN`: en el `WHERE` lo convertirían en un `INNER JOIN` silencioso y esas filas se perderían.
+
+### CA-08-07 · Índices de la migración 010
+```sql
+select indexname from pg_indexes
+ where indexname in ('idx_cita_clinica_inicio',
+                     'idx_snapshot_clinica_created',
+                     'idx_lab_estudio_clinica_created');
+```
+
+**Esperado:** las tres filas. La migración va **sin `CONCURRENTLY`**: el runner envuelve cada archivo en su propia transacción y `CREATE INDEX CONCURRENTLY` no puede ejecutarse dentro de una. Y **sin** el predicado `where activo = true`, porque esa columna no existe en ninguna de las tres tablas.
+
+---
+
 # Recorrido manual del frontend
 
 Con `npm run dev:web`, en **http://localhost:5173**:
@@ -649,6 +746,26 @@ En la ficha de un paciente, pestaña **Sociodemografía** (deja de estar apagada
 | Volver a registrar el consentimiento | Los datos anteriores **reaparecen** en el formulario |
 
 El aviso tras revocar es distinto del aviso inicial a propósito: `recolectado` separa "nunca se preguntó" de "se recogió y luego se ocultó". Sin ese matiz, el profesional creería que los datos se perdieron.
+
+### Dashboard (Rebanada 8)
+
+Con **`ana@vida.cr`** (administradora):
+
+| Paso | Qué comprobar |
+|---|---|
+| Barra lateral | **Dashboard** ya navega (era el último item apagado desde la Rebanada 1) |
+| Al entrar | Esqueletos grises mientras carga, no un salto de cero a la cifra |
+| Encabezado | Muestra el rango real: "Del 1 de agosto al 1 de septiembre" |
+| **Este mes** | 5 citas · 2 completadas · 1 cancelada · 2 pendientes |
+| Cambiar a **Hoy** / **Semana** | Los números cambian **sin recargar la página** |
+| Tile Canceladas con 1 | En rojo. Con 0, en color normal — un cero en rojo alarma sobre la ausencia del problema |
+| Tile Completadas | Lleva el porcentaje debajo |
+| Agenda de hoy vacía | "No hay citas programadas para hoy.", no una tabla vacía |
+| Tabla por profesional | Los dos profesionales aparecen aunque no tengan citas |
+| Columna % Completadas sin citas | **"—"**, no "0.0 %" |
+| Teclear `/admin/dashboard` con Luis | Redirige a Pacientes; la API responde 403 igual |
+
+Con **`luis@vida.cr`**: **Dashboard sigue apagado** en el menú.
 
 ---
 

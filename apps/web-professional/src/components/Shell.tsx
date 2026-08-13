@@ -18,14 +18,18 @@ interface ItemNav {
 }
 
 /**
- * Configuración solo lleva a algún sitio si quien mira es
- * administrador de la clínica. Para un nutricionista sigue apagada,
+ * Dashboard y Configuración solo llevan a algún sitio si quien mira es
+ * administrador de la clínica. Para un nutricionista siguen apagadas,
  * como las secciones que aún no existen: mostrarle un enlace que la
  * API va a rechazar con 403 sería prometer algo que no puede hacer.
  */
 function navDe(esAdmin: boolean): ItemNav[] {
   return [
-    { clave: 'dashboard', etiqueta: 'Dashboard' },
+    {
+      clave: 'dashboard',
+      etiqueta: 'Dashboard',
+      ...(esAdmin ? { ruta: '/admin/dashboard' } : {}),
+    },
     { clave: 'pacientes', etiqueta: 'Pacientes', ruta: '/pacientes' },
     { clave: 'agenda', etiqueta: 'Agenda', ruta: '/agenda' },
     { clave: 'laboratorios', etiqueta: 'Laboratorios' },

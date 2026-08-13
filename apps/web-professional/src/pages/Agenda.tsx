@@ -18,6 +18,7 @@ import {
   registrarControl,
 } from '../api/agenda'
 import { getSnapshot } from '../api/expediente'
+import { ChipEstadoCita } from '../components/ChipEstadoCita'
 import { CITA_ESTADOS, type Cita, type CitaEstado, type Profesional } from '../api/tipos'
 import { CitaModal } from '../components/CitaModal'
 import { CitaDetalle } from '../components/CitaDetalle'
@@ -43,31 +44,6 @@ type Estado =
   | { tipo: 'cargando' }
   | { tipo: 'listo'; citas: Cita[] }
   | { tipo: 'error'; mensaje: string }
-
-function ChipEstado({ estado }: { estado: CitaEstado }) {
-  if (estado === 'programada') {
-    return (
-      <span className="rounded-pill bg-primary-tint px-2 py-0.5 text-xs font-medium text-primary">
-        Programada
-      </span>
-    )
-  }
-  if (estado === 'completada') {
-    return (
-      <span
-        className="badge-estado"
-        style={{ '--estado-color': 'var(--status-normal)' } as React.CSSProperties}
-      >
-        Completada
-      </span>
-    )
-  }
-  return (
-    <span className="rounded-pill bg-surface-2 px-2 py-0.5 text-xs font-medium text-muted line-through">
-      Cancelada
-    </span>
-  )
-}
 
 export function Agenda() {
   const { perfil } = useAuth()
@@ -306,7 +282,7 @@ export function Agenda() {
                         {c.profesional ? ` · ${c.profesional}` : ''}
                       </span>
                     </span>
-                    <ChipEstado estado={c.estado} />
+                    <ChipEstadoCita estado={c.estado} />
                     {c.snapshotId && (
                       <span className="rounded-pill bg-primary-tint px-2 py-0.5 text-xs font-medium text-primary">
                         Control registrado

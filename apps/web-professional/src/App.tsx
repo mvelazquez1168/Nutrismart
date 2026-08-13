@@ -7,6 +7,7 @@ import { Pacientes } from './pages/Pacientes'
 import { PacienteFicha } from './pages/PacienteFicha'
 import { Agenda } from './pages/Agenda'
 import { MarcaPage } from './pages/ajustes/MarcaPage'
+import { DashboardPage } from './pages/DashboardPage'
 import { getMe } from './api/pacientes'
 import { ROL_ADMIN_CLINICA } from './api/tipos'
 import type { Me } from './api/tipos'
@@ -23,6 +24,7 @@ function Centrado({ children }: { children: ReactNode }) {
 function seccionDe(pathname: string): string {
   if (pathname.startsWith('/agenda')) return 'agenda'
   if (pathname.startsWith('/ajustes')) return 'configuracion'
+  if (pathname.startsWith('/admin')) return 'dashboard'
   return 'pacientes'
 }
 
@@ -90,6 +92,10 @@ function Contenido() {
           <Route
             path="/ajustes/marca"
             element={esAdmin ? <MarcaPage /> : <Navigate to="/pacientes" replace />}
+          />
+          <Route
+            path="/admin/dashboard"
+            element={esAdmin ? <DashboardPage /> : <Navigate to="/pacientes" replace />}
           />
           {/* Cualquier otra ruta cae en Pacientes: es la unica seccion
               construida, y una pantalla de 404 aqui seria ruido. */}

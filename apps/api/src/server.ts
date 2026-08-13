@@ -19,6 +19,7 @@ import { registerArchivosRoutes } from './routes/archivos.js'
 import { registerLaboratoriosRoutes } from './routes/laboratorios.js'
 import { registerBrandRoutes } from './routes/brand.js'
 import { registerSociodemograficoRoutes } from './routes/sociodemografico.js'
+import { registerAdminRoutes } from './routes/admin.js'
 
 /**
  * pino-pretty es una devDependency: en la imagen de produccion no
@@ -103,6 +104,7 @@ async function start(): Promise<void> {
     // que basta con no ponerlo; no hay que reordenar nada.
     await registerBrandRoutes(app)
     await registerSociodemograficoRoutes(app)
+    await registerAdminRoutes(app)
 
     // host 0.0.0.0: dentro de Docker, escuchar solo en localhost dejaria
     // el puerto publicado inalcanzable desde fuera del contenedor.
