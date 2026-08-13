@@ -1,31 +1,40 @@
 /**
  * Ficha del paciente — /pacientes/:id
  *
- * Pestaña Resumen con lo que existe hoy. Las demás pestañas y las
- * tarjetas de métricas se muestran como placeholders explícitos, no
- * maquetadas con datos falsos: un gráfico de ejemplo en una ficha
- * clínica se confunde con datos reales del paciente.
+ * Dos pestañas activas tras la Rebanada 3: Resumen (estado actual) e
+ * Historial (timeline de puntos de control). Citas y Sociodemografía
+ * siguen apagadas: pertenecen a CLI-03 y CLI-07.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { useNavigate, useParams, Link } from 'react-router-dom'
 import { getPaciente } from '../api/pacientes'
-import type { PacienteDetalle } from '../api/tipos'
+import {
+  getExpediente,
+  getMetricas,
+  getTimeline,
+  cerrarSnapshot,
+  corregirSnapshot,
+} from '../api/expediente'
+import type {
+  Expediente,
+  MetricaCatalogo,
+  PacienteDetalle,
+  SnapshotResumen,
+} from '../api/tipos'
 import { EstadoBadge } from '../components/EstadoBadge'
 import { Avatar } from '../components/Avatar'
 import { PacienteModal } from '../components/PacienteModal'
 import { BajaModal } from '../components/BajaModal'
+import { SnapshotModal } from '../components/SnapshotModal'
+import { Timeline } from '../components/Timeline'
+import { MetricasVitales } from '../components/MetricasVitales'
+
+type Pestana = 'resumen' | 'historial'
 
 type Estado =
   | { tipo: 'cargando' }
   | { tipo: 'listo'; paciente: PacienteDetalle }
   | { tipo: 'error'; mensaje: string; status?: number }
-
-const PESTANAS = [
-  { clave: 'resumen', etiqueta: 'Resumen', disponible: true },
-  { clave: 'citas', etiqueta: 'Citas', disponible: false },
-  { clave: 'historial', etiqueta: 'Historial', disponible: false },
-  { clave: 'socio', etiqueta: 'Sociodemografía', disponible: false },
-]
 
 const ETIQUETA_SEXO: Record<string, string> = {
   masculino: 'Masculino',
@@ -40,6 +49,12 @@ const ETIQUETA_DOCUMENTO: Record<string, string> = {
   nite: 'NITE',
 }
 
+const ETIQUETA_ANTECEDENTE: Record<string, string> = {
+  personal: 'Personal',
+  familiar: 'Familiar',
+  quirurgico: 'Quirúrgico',
+}
+
 function formatearFecha(iso: string | null): string {
   if (!iso) return '—'
   const [anio, mes, dia] = iso.slice(0, 10).split('-')
@@ -52,15 +67,35 @@ export function PacienteFicha() {
   const navigate = useNavigate()
 
   const [estado, setEstado] = useState<Estado>({ tipo: 'cargando' })
+  const [expediente, setExpediente] = useState<Expediente | null>(null)
+  const [timeline, setTimeline] = useState<SnapshotResumen[]>([])
+  const [catalogo, setCatalogo] = useState<MetricaCatalogo[]>([])
+
+  const [pestana, setPestana] = useState<Pestana>('resumen')
   const [editando, setEditando] = useState(false)
   const [dandoBaja, setDandoBaja] = useState(false)
+  const [snapshotModal, setSnapshotModal] = useState<{ abierto: boolean; snapshot: SnapshotResumen | null }>(
+    { abierto: false, snapshot: null },
+  )
+  const [ocupado, setOcupado] = useState(false)
+  const [errorAccion, setErrorAccion] = useState<string | null>(null)
 
   const cargar = useCallback(
     (signal?: AbortSignal) => {
       setEstado({ tipo: 'cargando' })
-      getPaciente(id, signal)
-        .then((paciente) => {
-          if (!signal?.aborted) setEstado({ tipo: 'listo', paciente })
+
+      // Las tres peticiones van juntas: son independientes y encadenarlas
+      // triplicaría la espera antes de pintar nada.
+      Promise.all([
+        getPaciente(id, signal),
+        getExpediente(id, signal),
+        getTimeline(id, signal),
+      ])
+        .then(([paciente, exp, tl]) => {
+          if (signal?.aborted) return
+          setEstado({ tipo: 'listo', paciente })
+          setExpediente(exp)
+          setTimeline(tl)
         })
         .catch((e: unknown) => {
           if (signal?.aborted) return
@@ -82,6 +117,31 @@ export function PacienteFicha() {
     return () => ctrl.abort()
   }, [cargar])
 
+  // El catálogo cambia rara vez: se pide una sola vez, no en cada recarga.
+  useEffect(() => {
+    const ctrl = new AbortController()
+    getMetricas(ctrl.signal)
+      .then(setCatalogo)
+      .catch(() => {
+        /* sin catálogo el modal no se puede abrir; se avisa al intentarlo */
+      })
+    return () => ctrl.abort()
+  }, [])
+
+  async function accion(fn: () => Promise<unknown>) {
+    if (ocupado) return
+    setOcupado(true)
+    setErrorAccion(null)
+    try {
+      await fn()
+      cargar()
+    } catch (e) {
+      setErrorAccion(e instanceof Error ? e.message : 'No se pudo completar la acción')
+    } finally {
+      setOcupado(false)
+    }
+  }
+
   if (estado.tipo === 'cargando') {
     return (
       <div className="mx-auto max-w-5xl space-y-4">
@@ -100,9 +160,7 @@ export function PacienteFicha() {
             {esNoEncontrado ? 'Paciente no encontrado' : 'No se pudo cargar el paciente'}
           </p>
           <p className="mx-auto mt-1 max-w-md text-sm text-muted">
-            {esNoEncontrado
-              ? 'No existe, o pertenece a otra clínica.'
-              : estado.mensaje}
+            {esNoEncontrado ? 'No existe, o pertenece a otra clínica.' : estado.mensaje}
           </p>
           <div className="mt-4 flex justify-center gap-3">
             <Link
@@ -127,6 +185,7 @@ export function PacienteFicha() {
   }
 
   const p = estado.paciente
+  const hayBorrador = timeline.some((s) => s.estado === 'borrador')
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
@@ -134,7 +193,6 @@ export function PacienteFicha() {
         ← Pacientes
       </Link>
 
-      {/* Encabezado */}
       <header className="rounded-lg border border-border bg-surface p-5 shadow-md">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-center gap-4">
@@ -157,7 +215,20 @@ export function PacienteFicha() {
             </div>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={ocupado}
+              onClick={() => setSnapshotModal({ abierto: true, snapshot: null })}
+              title={
+                hayBorrador
+                  ? 'Ya hay un control en borrador: ciérralo o edítalo antes de crear otro'
+                  : undefined
+              }
+              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-60"
+            >
+              + Punto de control
+            </button>
             <button
               type="button"
               onClick={() => setEditando(true)}
@@ -179,116 +250,142 @@ export function PacienteFicha() {
 
         {p.baja && (
           <div className="mt-4 rounded-md border border-border bg-surface-2 p-3 text-sm">
-            <span className="font-semibold text-ink">Archivado el {formatearFecha(p.baja.fecha)}</span>
+            <span className="font-semibold text-ink">
+              Archivado el {formatearFecha(p.baja.fecha)}
+            </span>
             {p.baja.motivo && <span className="text-muted"> · {p.baja.motivo}</span>}
           </div>
         )}
       </header>
 
-      {/* Pestañas */}
+      {errorAccion && (
+        <p
+          role="alert"
+          className="rounded-md border border-[color:var(--status-critical)] bg-surface p-3 text-sm text-ink"
+        >
+          {errorAccion}
+        </p>
+      )}
+
       <div className="flex gap-1 border-b border-border">
-        {PESTANAS.map((t) =>
-          t.disponible ? (
-            <span
-              key={t.clave}
-              aria-current="page"
-              className="-mb-px border-b-2 border-primary px-4 py-2 text-sm font-semibold text-primary"
-            >
-              {t.etiqueta}
-            </span>
-          ) : (
-            <span
-              key={t.clave}
-              aria-disabled="true"
-              title="Disponible en una rebanada posterior"
-              className="cursor-not-allowed px-4 py-2 text-sm text-muted opacity-60"
-            >
-              {t.etiqueta}
-            </span>
-          ),
-        )}
+        <Tab activa={pestana === 'resumen'} onClick={() => setPestana('resumen')}>
+          Resumen
+        </Tab>
+        <Tab activa={pestana === 'historial'} onClick={() => setPestana('historial')}>
+          Historial ({timeline.length})
+        </Tab>
+        <TabApagada>Citas</TabApagada>
+        <TabApagada>Sociodemografía</TabApagada>
       </div>
 
-      {/* Resumen */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-        <section className="rounded-lg border border-border bg-surface p-5 shadow-sm lg:col-span-2">
-          <h2 className="mb-4 font-semibold text-ink">Datos del paciente</h2>
-          <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
-            <Dato etiqueta="Documento">
-              {p.documento.numero
-                ? `${ETIQUETA_DOCUMENTO[p.documento.tipo ?? ''] ?? p.documento.tipo ?? ''} ${p.documento.numero}`.trim()
-                : '—'}
-            </Dato>
-            <Dato etiqueta="Fecha de nacimiento">{formatearFecha(p.fechaNacimiento)}</Dato>
-            <Dato etiqueta="Sexo biológico">
-              {p.sexoBiologico ? (ETIQUETA_SEXO[p.sexoBiologico] ?? p.sexoBiologico) : '—'}
-            </Dato>
-            <Dato etiqueta="Teléfono">{p.telefono ?? '—'}</Dato>
-            <Dato etiqueta="Correo">{p.correo ?? '—'}</Dato>
-            <Dato etiqueta="Nutricionista">{p.nutricionista ?? '— Sin asignar'}</Dato>
-          </dl>
-
-          <div className="mt-5 border-t border-border pt-4">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
-              Motivo de consulta
-            </h3>
-            <p className="mt-1 text-sm text-ink">{p.motivoConsulta ?? '— Sin registrar'}</p>
-          </div>
-        </section>
-
+      {pestana === 'resumen' ? (
         <div className="space-y-5">
-          {/*
-            Las alergias van primero y destacadas: es el dato de esta
-            pantalla que puede causar daño si se pasa por alto.
-          */}
-          <section
-            className="rounded-lg border bg-surface p-5 shadow-sm"
-            style={{ borderColor: 'var(--status-alert)' }}
-          >
-            <h2 className="mb-3 font-semibold text-ink">Alergias e intolerancias</h2>
-            {p.alergias.length === 0 ? (
-              <p className="text-sm text-muted">Sin registrar</p>
-            ) : (
-              <ul className="flex flex-wrap gap-1.5">
-                {p.alergias.map((a) => (
-                  <li
-                    key={a.descripcion}
-                    className="badge-estado"
-                    style={{ '--estado-color': 'var(--status-alert)' } as React.CSSProperties}
-                  >
-                    {a.descripcion}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+          <MetricasVitales metricas={expediente?.metricas ?? []} />
 
-          <section className="rounded-lg border border-border bg-surface p-5 shadow-sm">
-            <h2 className="mb-3 font-semibold text-ink">Diagnósticos activos</h2>
-            {p.diagnosticos.length === 0 ? (
-              <p className="text-sm text-muted">Sin diagnósticos registrados</p>
-            ) : (
-              <ul className="flex flex-wrap gap-1.5">
-                {p.diagnosticos.map((d) => (
-                  <li
-                    key={d.descripcion}
-                    className="rounded-pill bg-primary-tint px-2.5 py-0.5 text-xs font-medium text-primary"
-                  >
-                    {d.descripcion}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+            <section className="rounded-lg border border-border bg-surface p-5 shadow-sm lg:col-span-2">
+              <h2 className="mb-4 font-semibold text-ink">Datos del paciente</h2>
+              <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+                <Dato etiqueta="Documento">
+                  {p.documento.numero
+                    ? `${ETIQUETA_DOCUMENTO[p.documento.tipo ?? ''] ?? ''} ${p.documento.numero}`.trim()
+                    : '—'}
+                </Dato>
+                <Dato etiqueta="Fecha de nacimiento">{formatearFecha(p.fechaNacimiento)}</Dato>
+                <Dato etiqueta="Sexo biológico">
+                  {p.sexoBiologico ? (ETIQUETA_SEXO[p.sexoBiologico] ?? p.sexoBiologico) : '—'}
+                </Dato>
+                <Dato etiqueta="Teléfono">{p.telefono ?? '—'}</Dato>
+                <Dato etiqueta="Correo">{p.correo ?? '—'}</Dato>
+                <Dato etiqueta="Nutricionista">{p.nutricionista ?? '— Sin asignar'}</Dato>
+              </dl>
 
-          <section className="rounded-lg border border-dashed border-border bg-surface p-5">
-            <h2 className="mb-1 font-semibold text-muted">Métricas y evolución</h2>
-            <p className="text-sm text-muted">
-              Aún sin registros — se llenan en la primera valoración.
-            </p>
-          </section>
+              <div className="mt-5 border-t border-border pt-4">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
+                  Motivo de consulta
+                </h3>
+                <p className="mt-1 text-sm text-ink">{p.motivoConsulta ?? '— Sin registrar'}</p>
+              </div>
+            </section>
+
+            <div className="space-y-5">
+              <section
+                className="rounded-lg border bg-surface p-5 shadow-sm"
+                style={{ borderColor: 'var(--status-alert)' }}
+              >
+                <h2 className="mb-3 font-semibold text-ink">Alergias e intolerancias</h2>
+                {p.alergias.length === 0 ? (
+                  <p className="text-sm text-muted">Sin registrar</p>
+                ) : (
+                  <ul className="flex flex-wrap gap-1.5">
+                    {p.alergias.map((a) => (
+                      <li
+                        key={a.descripcion}
+                        className="badge-estado"
+                        style={{ '--estado-color': 'var(--status-alert)' } as CSSProperties}
+                      >
+                        {a.descripcion}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              <section className="rounded-lg border border-border bg-surface p-5 shadow-sm">
+                <h2 className="mb-3 font-semibold text-ink">Diagnósticos activos</h2>
+                {p.diagnosticos.length === 0 ? (
+                  <p className="text-sm text-muted">Sin diagnósticos registrados</p>
+                ) : (
+                  <ul className="flex flex-wrap gap-1.5">
+                    {p.diagnosticos.map((d) => (
+                      <li
+                        key={d.descripcion}
+                        className="rounded-pill bg-primary-tint px-2.5 py-0.5 text-xs font-medium text-primary"
+                      >
+                        {d.descripcion}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              <section className="rounded-lg border border-border bg-surface p-5 shadow-sm">
+                <h2 className="mb-3 font-semibold text-ink">Antecedentes</h2>
+                {(expediente?.antecedentes.length ?? 0) === 0 ? (
+                  <p className="text-sm text-muted">Sin antecedentes registrados</p>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {expediente?.antecedentes.map((a) => (
+                      <li key={`${a.tipo}-${a.descripcion}`} className="text-sm text-ink">
+                        <span className="text-xs uppercase tracking-wide text-muted">
+                          {ETIQUETA_ANTECEDENTE[a.tipo] ?? a.tipo}
+                        </span>
+                        <br />
+                        {a.descripcion}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            </div>
+          </div>
         </div>
-      </div>
+      ) : (
+        <Timeline
+          snapshots={timeline}
+          ocupado={ocupado}
+          onEditar={(s) => setSnapshotModal({ abierto: true, snapshot: s })}
+          onCerrar={(s) => void accion(() => cerrarSnapshot(s.id))}
+          onCorregir={(s) =>
+            void accion(async () => {
+              await corregirSnapshot(s.id)
+              // La corrección nace en borrador; se lleva al usuario al
+              // Historial para que vea qué acaba de crearse.
+              setPestana('historial')
+            })
+          }
+        />
+      )}
 
       <PacienteModal
         abierto={editando}
@@ -307,16 +404,64 @@ export function PacienteFicha() {
         onCerrar={() => setDandoBaja(false)}
         onConfirmado={() => {
           setDandoBaja(false)
-          // Tras la baja el paciente ya no está en la lista; volver allí
-          // es lo que el profesional espera después de archivar.
           navigate('/pacientes')
+        }}
+      />
+
+      <SnapshotModal
+        abierto={snapshotModal.abierto}
+        pacienteId={p.id}
+        catalogo={catalogo}
+        snapshot={snapshotModal.snapshot}
+        onCerrar={() => setSnapshotModal({ abierto: false, snapshot: null })}
+        onGuardado={() => {
+          setSnapshotModal({ abierto: false, snapshot: null })
+          setPestana('historial')
+          cargar()
         }}
       />
     </div>
   )
 }
 
-function Dato({ etiqueta, children }: { etiqueta: string; children: React.ReactNode }) {
+function Tab({
+  activa,
+  onClick,
+  children,
+}: {
+  activa: boolean
+  onClick: () => void
+  children: ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-current={activa ? 'page' : undefined}
+      className={
+        activa
+          ? '-mb-px border-b-2 border-primary px-4 py-2 text-sm font-semibold text-primary'
+          : '-mb-px border-b-2 border-transparent px-4 py-2 text-sm text-muted hover:text-ink'
+      }
+    >
+      {children}
+    </button>
+  )
+}
+
+function TabApagada({ children }: { children: ReactNode }) {
+  return (
+    <span
+      aria-disabled="true"
+      title="Disponible en una rebanada posterior"
+      className="cursor-not-allowed px-4 py-2 text-sm text-muted opacity-60"
+    >
+      {children}
+    </span>
+  )
+}
+
+function Dato({ etiqueta, children }: { etiqueta: string; children: ReactNode }) {
   return (
     <div>
       <dt className="text-xs font-medium uppercase tracking-wide text-muted">{etiqueta}</dt>

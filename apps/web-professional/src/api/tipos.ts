@@ -71,3 +71,65 @@ export interface Me {
   profesional: { id: string; nombre: string; rol: string }
   clinica: { id: string; nombre: string }
 }
+
+/* ---------------- Rebanada 3 · expediente y timeline ---------------- */
+
+export interface MetricaCatalogo {
+  codigo: string
+  nombre: string
+  unidad: string
+  decimales: number
+  minPlausible: number | null
+  maxPlausible: number | null
+}
+
+/**
+ * `tendencia` es DIRECCIÓN, no juicio clínico: bajar de peso puede ser
+ * el objetivo o una alarma según el paciente. La UI muestra hacia dónde
+ * se movió el dato; interpretarlo es del profesional.
+ */
+export type Tendencia = 'sube' | 'baja' | 'igual' | null
+
+export interface MetricaValor {
+  codigo: string
+  nombre: string
+  unidad: string
+  valor: number
+  fecha?: string
+  /** null = no hay punto previo con el que comparar (distinto de 0). */
+  anterior: number | null
+  delta: number | null
+  tendencia: Tendencia
+}
+
+export type EstadoSnapshot = 'borrador' | 'cerrado' | 'corregido'
+
+export interface SnapshotResumen {
+  id: string
+  fecha: string
+  estado: EstadoSnapshot
+  profesional: string | null
+  nota: string | null
+  metricas: MetricaValor[]
+  corrigeA: string | null
+  /** Versión anterior, anidada bajo la que la reemplaza. */
+  corregidoPor: SnapshotResumen | null
+  /** Enganches de CLI-04 y CLI-05; hoy siempre null. */
+  labs: null
+  estrategia: null
+}
+
+export interface Expediente {
+  paciente: { id: string; nombre: string; edad: number | null }
+  metricas: MetricaValor[]
+  diagnosticos: { descripcion: string }[]
+  alergias: { descripcion: string }[]
+  antecedentes: { tipo: string; descripcion: string }[]
+  ultimoSnapshot: { id: string; fecha: string } | null
+}
+
+export interface DatosSnapshotEnvio {
+  fecha: string
+  metricas: Record<string, number>
+  nota: string | null
+}
