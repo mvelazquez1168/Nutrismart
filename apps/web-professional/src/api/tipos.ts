@@ -255,3 +255,56 @@ export interface DatosEstudioEnvio {
  * literalmente en ambos lados.
  */
 export const ROL_ADMIN_CLINICA = 'admin_clinica'
+
+/* ------------------------------------------------------------------ */
+/* Sociodemografía (CLI-07)                                            */
+/* ------------------------------------------------------------------ */
+
+export const NIVELES_ACTIVIDAD = ['sedentario', 'leve', 'moderada', 'intensa'] as const
+export type NivelActividad = (typeof NIVELES_ACTIVIDAD)[number]
+
+export const FRECUENCIAS_ALCOHOL = ['nunca', 'ocasional', 'frecuente'] as const
+export type FrecuenciaAlcohol = (typeof FRECUENCIAS_ALCOHOL)[number]
+
+export const ESCOLARIDADES = [
+  'ninguna',
+  'primaria',
+  'secundaria',
+  'tecnica',
+  'universitaria',
+  'posgrado',
+] as const
+export type Escolaridad = (typeof ESCOLARIDADES)[number]
+
+export const TIPOS_HOGAR = [
+  'solo',
+  'pareja',
+  'familia_nuclear',
+  'familia_extendida',
+  'companeros',
+] as const
+export type TipoHogar = (typeof TIPOS_HOGAR)[number]
+
+export interface DatosSocio {
+  nivelActividad: NivelActividad | null
+  horasSueno: number | null
+  tabaco: boolean | null
+  alcohol: FrecuenciaAlcohol | null
+  ocupacion: string | null
+  escolaridad: Escolaridad | null
+  personasEnHogar: number | null
+  tipoHogar: TipoHogar | null
+}
+
+export interface Sociodemografia {
+  consentimientoOtorgado: boolean
+  consentimientoFecha: string | null
+  /** true si existe fila, aunque el consentimiento esté revocado. */
+  recolectado: boolean
+  /** null mientras no haya consentimiento vigente: la API no los envía. */
+  datos: DatosSocio | null
+}
+
+export interface DatosSocioEnvio extends DatosSocio {
+  consentimientoOtorgado: boolean
+}

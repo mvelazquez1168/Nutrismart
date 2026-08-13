@@ -1,9 +1,9 @@
 /**
  * Ficha del paciente — /pacientes/:id
  *
- * Dos pestañas activas tras la Rebanada 3: Resumen (estado actual) e
- * Historial (timeline de puntos de control). Citas y Sociodemografía
- * siguen apagadas: pertenecen a CLI-03 y CLI-07.
+ * Cuatro pestañas activas tras la Rebanada 7: Resumen, Historial,
+ * Laboratorios y Sociodemografía. Citas sigue apagada: pertenece a
+ * CLI-03 y se resuelve desde la Agenda.
  */
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { useNavigate, useParams, Link } from 'react-router-dom'
@@ -32,8 +32,9 @@ import { BajaModal } from '../components/BajaModal'
 import { SnapshotModal } from '../components/SnapshotModal'
 import { Timeline } from '../components/Timeline'
 import { MetricasVitales } from '../components/MetricasVitales'
+import { SociodemografiaBloque } from '../components/SociodemografiaBloque'
 
-type Pestana = 'resumen' | 'historial' | 'laboratorios'
+type Pestana = 'resumen' | 'historial' | 'laboratorios' | 'sociodemografia'
 
 type Estado =
   | { tipo: 'cargando' }
@@ -285,8 +286,13 @@ export function PacienteFicha() {
         <Tab activa={pestana === 'laboratorios'} onClick={() => setPestana('laboratorios')}>
           Laboratorios ({laboratorios.length})
         </Tab>
+        <Tab
+          activa={pestana === 'sociodemografia'}
+          onClick={() => setPestana('sociodemografia')}
+        >
+          Sociodemografía
+        </Tab>
         <TabApagada>Citas</TabApagada>
-        <TabApagada>Sociodemografía</TabApagada>
       </div>
 
       {pestana === 'resumen' ? (
@@ -383,6 +389,8 @@ export function PacienteFicha() {
             </div>
           </div>
         </div>
+      ) : pestana === 'sociodemografia' ? (
+        <SociodemografiaBloque pacienteId={p.id} />
       ) : pestana === 'laboratorios' ? (
         <div className="space-y-4">
           <div className="flex justify-end">

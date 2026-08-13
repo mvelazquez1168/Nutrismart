@@ -483,6 +483,93 @@ Conviene saber que **cuatro de las ocho paletas curadas** ya estaban por debajo 
 
 ---
 
+# Rebanada 7 · Sociodemografía y consentimiento
+
+**Requiere los dos usuarios**: `ana@vida.cr` (`admin_clinica`) y `luis@vida.cr` (`nutricionista`). El seed **no** trae sociodemografía, a propósito: así se prueba el ciclo entero desde cero.
+
+La regla que gobierna todo el bloque: **sin consentimiento vigente la API no devuelve los datos**, aunque estén en la base. Ocultarlos en el navegador no valdría — cualquiera que mire la respuesta los vería.
+
+### T7-01 · Invariantes del consentimiento en la base
+En transacción revertida, sobre `paciente_sociodemografico`:
+
+| Prueba | Esperado |
+|---|---|
+| `INSERT` con `consentimiento_otorgado = true` | `consentimiento_fecha` **se sella sola** |
+| `UPDATE` de un campo cualquiera | la fecha del consentimiento **no se refresca** |
+| `UPDATE` a `otorgado = false` | `fecha` y `profesional_id` quedan **NULL** |
+| Tras revocar, los campos de contenido | **siguen ahí** |
+
+El primer caso es el que importa. El disparador tiene que cubrir `INSERT` **y** `UPDATE`: solo con `UPDATE`, la primera vez que un profesional marca el consentimiento y guarda, la fila nace con `otorgado = true`, no hay `UPDATE`, y la fecha se queda nula — se estaría afirmando que hay consentimiento sin poder decir de cuándo.
+
+La fecha la pone la base, no la API: es un dato con valor probatorio y no debe depender del reloj de quien llama.
+
+### T7-02 · Sin fila: nada recolectado
+`GET /api/pacientes/:id/sociodemografico` sobre un paciente recién sembrado.
+
+**Esperado:** **200** con `consentimientoOtorgado: false`, `recolectado: false`, `datos: null`. Ninguna fila creada.
+
+`recolectado` distingue "nunca se preguntó" de "se recogió y luego se revocó". Sin ese matiz, la interfaz no sabría si ofrecer *registrar* o explicar que hay datos ocultos.
+
+### T7-03 · Guardar con consentimiento
+`PUT` con `consentimientoOtorgado: true` y los ocho campos.
+
+**Esperado:** **200**, `consentimientoFecha` con marca real y `datos` completos.
+
+### T7-04 · Sin consentimiento no se ven datos
+Revocar y volver a leer.
+
+**Esperado:** `datos: null` y `recolectado: true`. En la base, `select ocupacion, horas_sueno` **sigue devolviendo los valores**.
+
+### T7-05 · Revocar no borra, y volver a otorgar no resucita vacío
+Este es el caso que la primera implementación tenía mal en las dos direcciones.
+
+| Prueba | Esperado |
+|---|---|
+| `PUT {"consentimientoOtorgado": false}` — cuerpo mínimo, lo natural para revocar | los datos **siguen en la base** |
+| `PUT {"consentimientoOtorgado": true}` — cuerpo mínimo, para volver a otorgar | los datos **reaparecen íntegros** |
+| `PUT` con consentimiento **y** campos | reemplaza el bloque; los campos omitidos quedan nulos |
+
+La regla que lo resuelve: **un PUT sin ningún campo de contenido es una operación de consentimiento y no toca los datos.** Con al menos un campo, reemplaza el bloque completo — que es como el formulario vacía una casilla.
+
+Sin esa distinción, revocar con el cuerpo obvio borraba el expediente social entero, y volver a otorgarlo con un cuerpo igual de escueto lo borraba también. Borrar físicamente va contra la trazabilidad clínica del proyecto.
+
+### T7-06 · Validación
+| Prueba | Esperado |
+|---|---|
+| `horasSueno: 0` / `25` | **400** |
+| `horasSueno: 7.5` | **400** — un decimal no se redondea en silencio |
+| `personasEnHogar: 0` | **400** |
+| `ocupacion` de 81 caracteres | **400** |
+| `nivelActividad: "muy_intensa"` | **400** |
+| Cuerpo **sin** `consentimientoOtorgado` | **400** — omitirlo no puede leerse como un "sí" |
+
+El rango se repite en la base con un `CHECK`. La API valida para dar un mensaje por campo; la base valida para que nada entre por otra vía.
+
+### T7-07 · Campos opcionales
+`PUT` con consentimiento y un solo campo, el resto en blanco.
+
+**Esperado:** **200** sin error. Todo el contenido es opcional a propósito: la épica pide minimización, y un campo obligatorio empuja a inventar un valor cuando el paciente no lo ha dicho. En la interfaz, "— Sin registrar" es una respuesta válida, no un marcador de posición.
+
+### T7-08 · Aislamiento y alcance
+| Prueba | Esperado |
+|---|---|
+| Ana sobre un paciente de la otra clínica | **404** |
+| Luis (`GET`) sobre un paciente de Ana | **404** |
+| Luis (`PUT`) sobre un paciente de Ana | **404** |
+| Luis sobre un paciente **suyo** | **200** |
+| Sin token | **401** |
+
+**404, no 403.** La especificación pedía 403, pero el resto del proyecto responde 404 en este caso y está razonado en `pacientes/repositorio.ts`: distinguir "no existe" de "existe pero no es tuyo" le confirma a un profesional que cierto paciente está en la clínica. Un 403 aquí sería un oráculo de existencia sobre datos de pacientes ajenos.
+
+El 403 sí se usa, pero para otra cosa: token válido cuyo usuario no tiene profesional en esa clínica.
+
+### T7-09 · Toda fila lleva su clínica
+`select clinica_id from paciente_sociodemografico` — ninguna nula.
+
+La tabla la lleva aunque se pueda deducir por el paciente. Es la regla del proyecto: tenant en toda tabla y en toda consulta. Deducirlo por join significa que el día que alguien escriba una consulta sin ese join, la fuga entre clínicas no dará ningún error.
+
+---
+
 # Recorrido manual del frontend
 
 Con `npm run dev:web`, en **http://localhost:5173**:
@@ -543,6 +630,25 @@ Con **`ana@vida.cr`** (administradora):
 | **F5** | La marca se mantiene: sale de la base, no del navegador |
 
 Con **`luis@vida.cr`** (nutricionista): **Configuración sigue apagada** y teclear `/ajustes/marca` a mano redirige a Pacientes. La API responde **403** igualmente — la comprobación del navegador solo decide qué se pinta.
+
+### Contexto social (Rebanada 7)
+
+En la ficha de un paciente, pestaña **Sociodemografía** (deja de estar apagada):
+
+| Paso | Qué comprobar |
+|---|---|
+| Paciente recién sembrado | Aviso ámbar de consentimiento pendiente, **no** un formulario vacío |
+| "Registrar consentimiento y completar datos" | Abre el formulario **in situ**, sin modal ni página nueva |
+| Guardar sin marcar la casilla | El botón está **deshabilitado** y explica por qué al pasar el cursor |
+| Marcar consentimiento y guardar con campos en blanco | **Guarda**: todo el contenido es opcional |
+| Vista de lectura | Los ocho campos con "—" donde no hay dato, y la fecha del consentimiento al pie |
+| Editar → vaciar un campo → Guardar | El campo queda vacío (el formulario reemplaza el bloque) |
+| Horas de sueño = 25 | Marca **ese campo**, no un error general |
+| **Revocar consentimiento** | Pide confirmación explicando que los datos se conservan pero dejan de verse |
+| Tras revocar | Vuelve el aviso, y añade que hubo datos recogidos anteriormente |
+| Volver a registrar el consentimiento | Los datos anteriores **reaparecen** en el formulario |
+
+El aviso tras revocar es distinto del aviso inicial a propósito: `recolectado` separa "nunca se preguntó" de "se recogió y luego se ocultó". Sin ese matiz, el profesional creería que los datos se perdieron.
 
 ---
 
