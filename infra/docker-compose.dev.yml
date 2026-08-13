@@ -7,7 +7,11 @@ services:
       POSTGRES_PASSWORD: changeme
       POSTGRES_DB: nutrismart
     ports:
-      - "5433:5432"   # 5433 en el host: el 5432 lo ocupa el Postgres de Vetline
+      # 5434 en el host: el 5432 y el 5433 los ocupan los servicios nativos
+      # de Windows (postgresql-x64-13 y postgresql-x64-18) y el Postgres de
+      # Vetline. Publicar en un puerto ya ocupado NO da error en Docker: el
+      # servicio nativo gana las conexiones y falla la autenticación.
+      - "5434:5432"
     volumes:
       - nutrismart_pgdata:/var/lib/postgresql/data
     networks: [nutrismart]
@@ -16,6 +20,15 @@ services:
     build: ../apps/api
     container_name: nutrismart-api
     env_file: ../.env
+    environment:
+      # Solo estas dos cambian dentro de Docker: usan hostnames internos.
+      # KEYCLOAK_ISSUER y KEYCLOAK_AUDIENCE NO se tocan aquí — el 'iss' del
+      # token siempre es localhost porque lo emite el navegador.
+      DATABASE_URL: postgres://nutrismart:changeme@db:5432/nutrismart
+      KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/nutrismart/protocol/openid-connect/certs
+      # Lado interno del mapeo 4001:4000. En el .env vale 4001 (dev en el
+      # host); aquí debe ser 4000 o el puerto publicado apuntaría a nada.
+      API_PORT: "4000"
     depends_on: [db]
     ports:
       - "4001:4000"   # 4000 lo ocupa vetplatform-backend-1
