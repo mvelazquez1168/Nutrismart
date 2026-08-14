@@ -1120,6 +1120,104 @@ Se marca a mano, al revés que la antropometría: revisar es un acto del profesi
 
 ---
 
+# Rebanada 14 · Historial clínico y evaluación dietética
+
+> **Manda los cuerpos con acentos desde archivo.** `curl -d '…día…'` descuadra el `Content-Length` y la API responde 400. Es del shell, no de la API: usa `--data-binary "@cuerpo.json"`. Costó descubrirlo dos veces (R10 y aquí).
+
+## EVAL-03 · Historial clínico
+
+### CA-14-01 y CA-14-02 · UPSERT, no duplicado
+```powershell
+$body = '{"apf":[{"condicion":"Diabetes tipo 2","parientes":"madre"}],"tipoActividad":"moderado","sesionesSemana":3}'
+Invoke-RestMethod "$API/api/pacientes/$MARIA/historial" -Method Put -Headers $H `
+  -ContentType "application/json" -Body ([Text.Encoding]::UTF8.GetBytes($body))
+```
+
+**Esperado:** el APF vuelve como JSONB. Guardar otra vez con `tipoActividad: "intenso"` deja **una sola fila**, con el nuevo valor.
+
+Lo respalda la restricción `historial_por_paciente`. La especificación pedía el `ON CONFLICT` **sin crear el índice único que necesita**: Postgres lo habría rechazado y cada guardado habría fallado.
+
+### CA-14-03 · FAF calculado en el servidor
+| Tipo | FAF |
+|---|---|
+| sedentario | 1.200 |
+| leve | 1.375 |
+| moderado | 1.550 |
+| intenso | 1.725 |
+| muy_intenso | 1.900 |
+
+Lo calcula la API a partir del tipo, no el cliente: enviado desde fuera podría no corresponder con la etiqueta que el profesional ve.
+
+Un `tipoActividad` inventado → **400**.
+
+### CA-14-04 y CA-14-05 · Medicación
+| Prueba | Esperado |
+|---|---|
+| `POST /farmacologia` con nombre | **201** |
+| Sin nombre o vacío | **400** |
+| `DELETE /farmacologia/:id` | **204** |
+| La lista tras el DELETE | El medicamento **no aparece** |
+| `select count(*) from farmacologia` | La fila **sigue ahí**, con `activo = false` |
+
+Un fármaco suspendido explica hallazgos de laboratorio pasados; borrarlo dejaría el expediente sin la causa.
+
+### CA-14-06 y CA-14-07 · Interacciones
+Con Metformina 850mg, Levotiroxina, Warfarina, Omeprazol 20mg e **Ibuprofeno**:
+
+```powershell
+Invoke-RestMethod "$API/api/pacientes/$MARIA/farmacologia/interacciones" -Headers $H
+```
+
+**Esperado:**
+
+| Campo | Valor |
+|---|---|
+| Coincidencias | Warfarina, Levotiroxina, Metformina, Omeprazol |
+| Orden | `importante` primero (Warfarina), luego `advertencia` |
+| `noReconocidos` | `["Ibuprofeno"]` |
+| `cobertura` | 8 |
+
+El emparejamiento es por subcadena y sin distinguir mayúsculas ni tildes: «Metformina 850mg» coincide con `metformina`.
+
+**Lo que esta prueba verifica de verdad es `noReconocidos`.** La especificación pedía un panel que dijera «no se detectaron interacciones» cuando no encontrara ninguna. Con ocho principios activos cubiertos, esa frase convierte la ignorancia de la lista en una afirmación tranquilizadora. El panel dice, en su lugar, que ninguno de los medicamentos figura entre los que la revisión cubre, y enumera los que quedaron fuera.
+
+### CA-14-08 · Marca la sección
+Guardar el historial con `consultaId` → `seccionesCompletas.clinico = true`.
+
+### CA-14-09 · Escala 1-5
+`atracones: 9` → **400**. El `CHECK` de la base lo repite.
+
+## EVAL-04 · Evaluación dietética
+
+### CA-14-10 a CA-14-12 · Recordatorio de 24 horas
+`PUT /dietetico` con `recordatorio24h` como lista de comidas, cada una con sus alimentos.
+
+**Esperado:** **200**; el JSONB vuelve con la estructura intacta. Un `recordatorio24h` que no sea lista → **400**: lo que llegue rompería la pantalla que lo dibuja.
+
+En la interfaz, el total de kilocalorías se recalcula al teclear. **Son las que escribe el profesional**: no hay tabla de composición de alimentos detrás, y fingir un cálculo daría una cifra con apariencia de dato.
+
+### CA-14-13 · Frecuencia de consumo
+Un radio por grupo; el objeto guarda `grupo → frecuencia`. Debe volver tal cual.
+
+Los grupos se pintan con la paleta de **datos**, no con los tokens de estado clínico: «carnes procesadas» no es una alerta médica del paciente, y usar el rojo de un valor fuera de rango mezclaría dos lenguajes.
+
+### CA-14-14 · Reparto de macros
+Con proteína, carbohidratos y grasa, el donut muestra el porcentaje de cada uno **escrito además de en color**, y las kcal que aportan (4/4/9 por gramo).
+
+**Comprobación añadida:** si las kcal declaradas se apartan más de un 10 % de las que suman los macros, avisa. Suele ser un valor mal tecleado.
+
+### CA-14-15 y CA-14-16 · UPSERT y sección
+Guardar dos veces deja **una fila**. Con `consultaId`, `seccionesCompletas.dietetico = true`.
+
+### CA-14-17 · Aislamiento
+| Prueba | Esperado |
+|---|---|
+| Luis: `GET /historial` de paciente de Ana | **404** |
+| Luis: `PUT /dietetico` | **404** |
+| Luis: `GET /farmacologia/interacciones` | **404** |
+
+---
+
 # Recorrido manual del frontend
 
 Con `npm run dev:web`, en **http://localhost:5173**:
@@ -1325,6 +1423,42 @@ En la ficha del paciente, tarjeta **Valoraciones** (columna derecha del Resumen)
 | Volver a la ficha | La valoración aparece como Finalizada, con botón **Ver** |
 
 La antropometría se marca sola al guardar; la bioquímica se marca a mano. Es deliberado: revisar los laboratorios es un acto del profesional, no una consecuencia de que existan.
+
+### Historial clínico y dietético (Rebanada 14)
+
+En la valoración, pestaña **Clínico**:
+
+| Paso | Qué comprobar |
+|---|---|
+| Marcar «Diabetes tipo 2» en familiares | Aparece **al lado** el campo «¿Quién?» |
+| Desmarcarla | El campo desaparece con su contenido |
+| Elegir «Moderado» | El recuadro de factor de actividad muestra **1.55** |
+| Cambiar a «Intenso» | Pasa a **1.725** sin recargar |
+| «¿Fuma?» pulsar Sí y volver a pulsarlo | Vuelve a **sin responder** (no queda atrapado en Sí/No) |
+| Marcar un síntoma digestivo | Aparece el campo de detalles |
+| Escala de relación con la comida | Nota al pie de que es tamizaje, no instrumento validado |
+| **Guardar historial** | La pestaña Clínico se marca completa |
+| Recargar la página | Todo vuelve precargado: el historial es del paciente, no de la consulta |
+| Añadir «Warfarina» | Aparece tarjeta **⛔ Importante** arriba del todo |
+| Añadir «Ibuprofeno» | Sale en **«Fuera de la revisión»**, no como «sin interacciones» |
+| Con la lista vacía de coincidencias | Dice que ninguno figura entre los N principios que cubre, **no** «sin interacciones» |
+| «Añadir a las notas» | Vuelca las recomendaciones en el cuadro de notas |
+| **Suspender** un medicamento | Pide confirmación; desaparece de la tabla pero sigue en la base |
+
+Pestaña **Dietético**, tres sub-pestañas:
+
+| Paso | Qué comprobar |
+|---|---|
+| **+ Añadir comida** | Card con hora, tipo y una fila de alimento |
+| Escribir kcal en los alimentos | El total de arriba se actualiza al teclear |
+| Cambiar de sub-pestaña y volver | **No se pierde nada**: el estado vive en el contenedor |
+| Frecuencia de consumo | Contador «X de 14 respondidos» |
+| Resumen: proteína 95, CHO 210, grasa 63 | Donut con los tres porcentajes **escritos** |
+| Kcal declaradas 1200 con esos macros | Avisa del descuadre (los macros suman ~1787) |
+| **Guardar evaluación dietética** | Un solo botón guarda las tres sub-pestañas |
+| Tras guardar | La pestaña Dietético se marca completa |
+
+Con la valoración **finalizada**, ambas pestañas quedan en solo lectura y sin botones de guardar.
 
 ---
 

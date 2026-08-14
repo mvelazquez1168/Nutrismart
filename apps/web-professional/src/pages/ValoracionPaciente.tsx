@@ -22,6 +22,8 @@ import type { PacienteDetalle } from '../api/tipos'
 import { TabsValoracion } from '../components/eval/TabsValoracion'
 import { FormAntropometria } from '../components/eval/FormAntropometria'
 import { PanelBioquimica } from '../components/eval/PanelBioquimica'
+import { FormHistorialClinico } from '../components/eval/FormHistorialClinico'
+import { TabsDietetico } from '../components/eval/TabsDietetico'
 
 function EnConstruccion({ seccion }: { seccion: string }) {
   return (
@@ -195,8 +197,22 @@ export function ValoracionPaciente() {
           onGuardado={refrescar}
         />
       )}
-      {tab === 'clinico' && <EnConstruccion seccion="Valoración clínica" />}
-      {tab === 'dietetico' && <EnConstruccion seccion="Valoración dietética" />}
+      {tab === 'clinico' && (
+        <FormHistorialClinico
+          pacienteId={id}
+          consultaId={consultaId}
+          bloqueada={finalizada}
+          onGuardado={refrescar}
+        />
+      )}
+      {tab === 'dietetico' && (
+        <TabsDietetico
+          pacienteId={id}
+          consultaId={consultaId}
+          bloqueada={finalizada}
+          onGuardado={refrescar}
+        />
+      )}
       {tab === 'conclusion' && <EnConstruccion seccion="Conclusiones y diagnóstico nutricional" />}
 
       {/* Atajo de vuelta cuando la valoración ya se cerró. */}
