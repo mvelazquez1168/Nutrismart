@@ -25,6 +25,8 @@ export class ApiError extends Error {
     readonly codigo?: string,
     /** Errores por campo cuando la API responde 400 de validacion. */
     readonly errores?: ErrorCampo[],
+    /** Subtipo del fallo. Lo usan los 503 de IA para explicar la causa. */
+    readonly tipo?: string,
   ) {
     super(message)
     this.name = 'ApiError'
@@ -83,15 +85,18 @@ async function peticion<T>(ruta: string, opciones: Opciones = {}): Promise<T> {
     let codigo: string | undefined
     let mensaje: string | undefined
     let errores: ErrorCampo[] | undefined
+    let tipo: string | undefined
     try {
       const cuerpoError = (await respuesta.json()) as {
         error?: string
         message?: string
         errores?: ErrorCampo[]
+        tipo?: string
       }
       codigo = cuerpoError.error
       mensaje = cuerpoError.message
       errores = cuerpoError.errores
+      tipo = cuerpoError.tipo
     } catch {
       // El cuerpo no era JSON; nos quedamos con el estado HTTP.
     }
@@ -100,6 +105,7 @@ async function peticion<T>(ruta: string, opciones: Opciones = {}): Promise<T> {
       mensajeSegunEstado(respuesta.status, mensaje),
       codigo,
       errores,
+      tipo,
     )
   }
 

@@ -1375,6 +1375,109 @@ Un seguimiento se finaliza igual que una inicial (**200**), y la consulta siguie
 
 ---
 
+# Rebanada 12 · IA clínica
+
+> **Estado.** Todo lo que NO llama al modelo está verificado contra el servidor. Lo que sí llama **no se ha ejecutado nunca**: hace falta `ANTHROPIC_API_KEY` en el `.env` de la raíz. Los criterios marcados **⏳** quedan pendientes de esa primera ejecución.
+
+## Requisito previo
+`ANTHROPIC_API_KEY` en el `.env` de la raíz (opcional: `ANTHROPIC_MODELO`, por defecto `claude-haiku-4-5`). `@anthropic-ai/sdk` ya está en `apps/api`.
+
+> El modelo que pedía el encargo, `claude-3-5-haiku-20241022`, **está retirado desde el 19 de febrero de 2026** y devuelve 404 — la función habría fallado siempre. Se usa su reemplazo directo, `claude-haiku-4-5`.
+
+## La regla de oro, comprobada
+
+Con la IA caída (sin clave):
+
+| Prueba | Esperado |
+|---|---|
+| `GET /api/pacientes/:id` | **200** |
+| `GET /api/citas` | **200** |
+| `GET /api/pacientes/:id/laboratorios` | **200** |
+| `POST /api/labs/:id/interpretar` | **503** `tipo: "sin_configurar"` |
+| `POST /api/pacientes/:id/soap/generar` | **503** |
+
+**Nunca se bloquea el acceso clínico por el estado de la IA.** La API arranca sin clave a propósito.
+
+El `tipo` del 503 (`sin_configurar`, `limite_de_uso`, `credencial_invalida`, `tiempo_agotado`, `sin_conexion`) permite a la pantalla decir qué pasa y qué hacer.
+
+## IA-01 · Interpretación de laboratorios
+
+### CA-12-01 a CA-12-03 ⏳ · Generar
+`POST /api/labs/:estudioId/interpretar` → **201** con las cuatro secciones (RESUMEN CLÍNICO, IMPLICACIONES NUTRICIONALES, RECOMENDACIONES DIETÉTICAS, SEGUIMIENTO PRIORITARIO), el modelo y los contadores de tokens. Se persiste y `GET …/interpretacion` la devuelve.
+
+**Lo que hay que mirar en la primera ejecución real:** que un biomarcador **sin rango declarado** no aparezca descrito como normal. Al modelo se le entrega como «sin rango de referencia declarado» con instrucción explícita; es la misma decisión de la Rebanada 5 y la que más importa comprobar.
+
+### CA-12-04 · Aislamiento
+| Prueba | Esperado |
+|---|---|
+| Estudio inexistente | **404** |
+| Luis sobre un estudio de un paciente de Ana | **404** (no 403) |
+| Estudio sin resultados | **400** |
+| Sin interpretación previa | **404** `sin_interpretacion` |
+
+### CA-12-05 · Degradación
+Sin clave configurada → **503** `{"error":"ia_no_disponible","tipo":"sin_configurar"}`. El error nunca sube sin manejar.
+
+### CA-12-06 · Revisar
+`PUT …/interpretacion/:id/revisar` → `revisada: true` con fecha y **profesional que la avaló**. Es idempotente pero **no vuelve a firmar**: se conserva quien la revisó primero.
+
+### CA-12-07 y CA-12-08 ⏳ · Panel
+Al pie de cada estudio, **después** de la tabla de valores: botón «Interpretar con IA», chip ámbar **«Sugerencia de IA»**, chip verde «Revisada», el modelo y los tokens al pie, y el descargo de que no sustituye el criterio profesional.
+
+## IA-02 · Notas SOAP
+
+### CA-12-09 y CA-12-10 ⏳ · Borrador
+`POST /api/pacientes/:id/soap/generar` devuelve `{ borrador: {subjetivo, objetivo, analisis, planSoap}, textoCompleto }` y **no escribe en la base**. Comprobable con `select count(*) from nota_soap` antes y después.
+
+El reparto en secciones sí está probado en aislamiento, con tres formas de encabezado:
+
+| Entrada | Resultado |
+|---|---|
+| `S (SUBJETIVO): texto` en la misma línea | Se reparte correctamente |
+| `**S (SUBJETIVO):**` con negritas | El marcado no se cuela en el cuerpo |
+| Falta la sección A | `analisis: null` — **no se reparte a ojo** |
+
+Una sección ausente vuelve `null`: es preferible un campo vacío que el profesional rellena a uno con contenido que pertenece a otro apartado.
+
+### CA-12-11 a CA-12-14 · Ciclo completo
+| Prueba | Esperado |
+|---|---|
+| `POST …/soap` con `generadaIa: true` | **201**, la nota queda marcada |
+| `GET …/soap` | Extracto, autor, chips de IA y revisión |
+| `PUT …/soap/:id` con solo `analisis` | Cambia el análisis; **el subjetivo queda intacto** |
+| `PUT …/soap/:id/revisar` | `revisada: true` con fecha |
+| Nota sin ninguna de las cuatro secciones | **400** |
+
+### CA-12-15 y CA-12-16 ⏳ · Generador y tarjeta
+Banner ámbar antes de guardar: «Revísalo y corrígelo antes de guardar: al guardarlo, la nota pasa a ser tuya». Chips **[IA]** y **[Revisada]** en la tarjeta, cuatro secciones al desplegar.
+
+«Escribirla a mano» es un camino de primera clase, no un plan B.
+
+### CA-12-17 y la regla de autoría
+| Prueba | Esperado |
+|---|---|
+| Luis genera SOAP para un paciente de Ana | **404** |
+| Ana (admin) **lee** una nota de Luis | **200**, con `esAutor: false` |
+| Ana **marca revisada** una nota de Luis | **200** |
+| Ana **edita** una nota de Luis | **403** `nota_ajena` |
+
+**Al revés que la conclusión de la R15**, aquí sí se exige autoría. Una nota SOAP lleva la firma de quien la escribió; que otro la reescriba dejaría la firma de uno sobre las palabras de otro. Es un **403 con motivo**, no un 404: el profesional ya está viendo la nota.
+
+### CA-12-18 ⏳ · Medidor de consumo
+Cada llamada queda en `uso_ia` con clínica, profesional, función, modelo y tokens — **incluidas las fallidas**, porque una que agotó el tiempo de espera pudo consumir cuota igual.
+
+```sql
+select funcion, modelo, sum(tokens_entrada), sum(tokens_salida),
+       count(*) filter (where not exito) as fallidas
+  from uso_ia group by 1,2;
+```
+
+> La especificación se conformaba con un `console.log` para el SOAP, pero el borrador **no se persiste**: su gasto habría sido invisible. Un `console.log` no es un registro.
+
+Registrar el consumo nunca tumba la petición: si la tabla falla, el profesional sigue viendo su interpretación.
+
+---
+
 # Recorrido manual del frontend
 
 Con `npm run dev:web`, en **http://localhost:5173**:
@@ -1663,6 +1766,39 @@ Requiere una valoración anterior **finalizada** con datos. Después, **+ Nueva 
 | Crear otra consulta | Vuelve a ser seguimiento, con el número siguiente |
 
 **Lo que hay que mirar con atención**: que el peso NO venga precargado. Si apareciera relleno, un guardado distraído registraría la medición del mes pasado como la de hoy.
+
+### IA clínica (Rebanada 12)
+
+Requiere `ANTHROPIC_API_KEY` en el `.env` de la raíz. **Sin ella todo lo demás funciona igual** y solo estos dos puntos avisan de que la IA no está.
+
+**Interpretación de laboratorios** — ficha → pestaña **Laboratorios**:
+
+| Paso | Qué comprobar |
+|---|---|
+| Al pie de cada estudio | Bloque «Interpretación asistida», **debajo** de la tabla de valores |
+| **Interpretar con IA** | Pasa a «Analizando…» y devuelve cuatro secciones con encabezados |
+| Junto al título | Chip ámbar **«Sugerencia de IA»** |
+| Al pie del texto | Modelo, tokens y quién la solicitó |
+| **Marcar como revisada** | Aparece chip verde «Revisada» y el nombre de quien la avaló |
+| Último párrafo | Descargo de que no sustituye el criterio profesional |
+| Sin clave configurada | Mensaje explicando que hay que hablar con quien administra la plataforma |
+
+**Notas SOAP** — ficha → pestaña **Notas SOAP**:
+
+| Paso | Qué comprobar |
+|---|---|
+| **+ Nueva nota SOAP** | Motivo y observaciones, ambos opcionales |
+| **Generar borrador con IA** | Las cuatro secciones llegan rellenas y **editables** |
+| Banner ámbar | «al guardarlo, la nota pasa a ser tuya y respondes de lo que dice» |
+| **Escribirla a mano** | Las cuatro cajas vacías, sin llamar a la IA |
+| **Descartar** | Vuelve al inicio y **no queda nada guardado** |
+| **Guardar nota** | Aparece en la lista con chip **[IA]** |
+| Desplegar la tarjeta | Las cuatro secciones completas |
+| **Editar** en una nota propia | Cajas de texto; al guardar solo cambia lo tocado |
+| Una nota de otro profesional | Sin botón de editar, con el motivo escrito |
+| **Marcar como revisada** | Chip verde, disponible para todo el equipo |
+
+**Lo que hay que mirar con atención**: que el borrador **no aparezca en la lista hasta pulsar Guardar**. Si apareciera antes, el expediente tendría una nota que nadie ha leído.
 
 ---
 

@@ -54,6 +54,13 @@ const frontendProUrl = optional('FRONTEND_PRO_URL') ?? 'http://localhost:5173'
 // copia de seguridad y cada replica. En Docker es un volumen montado.
 const archivosDir = optional('ARCHIVOS_DIR') ?? resolve(here, '../../../datos/archivos')
 
+// La IA es OPCIONAL a proposito. Si falta la clave, la plataforma
+// arranca igual y solo las funciones de IA responden 503: la regla de
+// oro dice que nunca se bloquea el acceso clinico por el estado del
+// credito de IA, y arrancar sin clave es el mismo caso.
+const anthropicApiKey = optional('ANTHROPIC_API_KEY')
+const anthropicModelo = optional('ANTHROPIC_MODELO') ?? 'claude-haiku-4-5'
+
 // Se acumulan TODAS las que faltan y se reportan juntas: descubrirlas de
 // una en una, reiniciando el proceso cada vez, es tiempo perdido.
 if (missing.length > 0) {
@@ -67,6 +74,9 @@ if (missing.length > 0) {
 export const config = {
   nodeEnv,
   isDev: nodeEnv !== 'production',
+  anthropicApiKey,
+  anthropicModelo,
+  iaHabilitada: anthropicApiKey !== undefined,
   apiPort,
   databaseUrl,
   /**

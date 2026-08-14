@@ -12,6 +12,7 @@ import type { EstudioLab, ResultadoLab } from '../api/tipos'
 import { descargarArchivo } from '../api/laboratorios'
 import { EstadoLab, RangoTexto } from './EstadoLab'
 import { Tendencia } from './Tendencia'
+import { PanelInterpretacionIA } from './ia/PanelInterpretacionIA'
 
 function formatearFecha(iso: string): string {
   const [anio, mes, dia] = iso.slice(0, 10).split('-')
@@ -145,6 +146,13 @@ export function ListaLaboratorios({ estudios }: { estudios: EstudioLab[] }) {
             {e.notas && (
               <p className="border-t border-border px-5 py-3 text-sm text-ink">{e.notas}</p>
             )}
+
+            {/* Al pie del estudio, no en un panel lateral: la
+                interpretacion se lee DESPUES de la tabla de valores,
+                que es lo que la sustenta. */}
+            <div className="border-t border-border p-5">
+              <PanelInterpretacionIA estudioId={e.id} />
+            </div>
           </section>
         )
       })}
