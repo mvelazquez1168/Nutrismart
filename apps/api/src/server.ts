@@ -35,6 +35,8 @@ import { registerIaRoutes } from './routes/ia.js'
 import { registerInvitacionRoutes } from './routes/invitacion.js'
 import { registerPacienteRoutes } from './routes/paciente.js'
 import { registerPacienteMensajeriaRoutes } from './routes/paciente-mensajeria.js'
+import cron from 'node-cron'
+import { correoConfigurado, procesarRecordatorios } from './agenda/recordatorios.js'
 import { cerrarNavegador } from './pdf/generar.js'
 
 /**
@@ -136,6 +138,23 @@ async function start(): Promise<void> {
     await registerInvitacionRoutes(app)
     await registerPacienteRoutes(app)
     await registerPacienteMensajeriaRoutes(app)
+
+    // ---- Recordatorios de cita (AGE-03) ----
+    //
+    // Vive dentro del proceso de la API. Con una sola instancia basta, y
+    // si algun dia hay varias el duplicado no llega al paciente: cada
+    // aviso se reserva en `recordatorio_cita` antes de enviarse y el
+    // indice unico deja pasar solo a uno.
+    //
+    // Cada 15 minutos. La ventana de 1 hora es de 55 a 65 minutos, asi
+    // que ningun aviso se escapa entre dos ciclos.
+    cron.schedule('*/15 * * * *', () => {
+      void procesarRecordatorios()
+    })
+    app.log.info(
+      { correo: correoConfigurado() ? 'resend' : 'consola' },
+      'recordatorios de cita: cada 15 minutos',
+    )
 
     // host 0.0.0.0: dentro de Docker, escuchar solo en localhost dejaria
     // el puerto publicado inalcanzable desde fuera del contenedor.

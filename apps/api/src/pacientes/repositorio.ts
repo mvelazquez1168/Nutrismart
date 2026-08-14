@@ -111,7 +111,7 @@ const SQL_DETALLE = `
     p.estado_clinico::text                     as "estadoClinico",
     p.motivo_consulta                          as "motivoConsulta",
     p.baja_motivo                              as "bajaMotivo",
-    to_char(p.baja_fecha, 'YYYY-MM-DD"T"HH24:MI:SSOF') as "bajaFecha",
+    to_char(p.baja_fecha at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as "bajaFecha",
     prof.nombre                                as nutricionista
   from paciente p
   left join profesional prof
@@ -498,7 +498,7 @@ export async function darDeBaja(
        and ($4::uuid is null or nutricionista_id = $4)
      returning
        estado::text as estado,
-       to_char(baja_fecha, 'YYYY-MM-DD"T"HH24:MI:SSOF') as "bajaFecha",
+       to_char(baja_fecha at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as "bajaFecha",
        baja_motivo as "bajaMotivo"`,
     [pacienteId, tenantId, motivo, restringirA],
   )

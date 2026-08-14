@@ -135,7 +135,7 @@ export async function registerPacienteRoutes(app: FastifyInstance): Promise<void
 
       // La cita usa `inicio` (timestamptz), no fecha + hora por separado.
       pool.query(
-        `select to_char(inicio,'YYYY-MM-DD"T"HH24:MI:SSOF') as inicio,
+        `select to_char(inicio at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as inicio,
                 duracion_minutos, tipo::text as tipo,
                 prof.nombre as profesional
            from cita c

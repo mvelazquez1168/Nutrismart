@@ -1820,6 +1820,91 @@ Rutas servidas: `/activar`, `/inicio`, `/plan`, `/citas`, `/mensajes` — todas 
 
 ---
 
+# Rebanada 21 · Recordatorios, vista mensual y confirmación
+
+## El fallo de fechas que apareció al probar
+
+```js
+new Date('2026-08-15T14:22:02+00')    // Invalid Date
+new Date('2026-08-15T14:22:02Z')      // ok
+```
+
+`to_char(x, '…OF')` produce `+00`, que **no es ISO válido para `Date`**. Estaba en **21 sitios de siete ficheros** — todo lo escrito desde la R12.
+
+| Endpoint | Antes | Ahora |
+|---|---|---|
+| Invitación (`expiraEn`) | `2026-08-21T03:52:08+00` | `2026-08-21T14:24:30Z` |
+| Mensaje (`createdAt`) | `…04:39:50.434264+00` | `…14:26:16.005326Z` |
+| Nota SOAP · cita · plan | `+00` | `Z` |
+
+Las pantallas que los pintan llaman a `new Date(...)`: habrían mostrado **«Invalid Date»** en la caducidad de la invitación, la hora de cada mensaje y la fecha de la próxima cita.
+
+> La agenda de la R4 no lo tenía: devuelve el `timestamptz` crudo y el driver lo serializa como `...000Z`. Solo el código posterior introdujo el `to_char`.
+
+> **No se había visto porque ninguna de esas pantallas se ha abierto todavía en un navegador** — siguen esperando el cliente de Keycloak. Es el tipo de fallo que una API que responde 200 no delata.
+
+## AGE-03 · Recordatorios
+
+### Ciclo completo
+Con una cita a 24 h y el correo configurado:
+
+| Paso | Resultado |
+|---|---|
+| Arranque de la API | `recordatorios de cita: cada 15 minutos` |
+| `POST /api/agenda/recordatorios/ejecutar` | `{"enviados":{"24h":1,"1h":0}}` |
+| Fila en `recordatorio_cita` | `antelacion=24h exito=true destinatario=… error=-` |
+| **Segundo ciclo** | `{"enviados":{"24h":0,"1h":0}}` y **una sola fila** |
+| Cita a 1 h | `{"enviados":{"24h":0,"1h":1}}` |
+
+Dos correos reales enviados por Resend.
+
+> **Tabla, no banderas.** Una bandera responde «se envió» y nada más; la pregunta real en una clínica es «a este paciente que no vino, ¿se le avisó?». El encargo pedía marcar la bandera aunque el envío fallara, con lo que un aviso que nunca llegó queda como enviado.
+
+> **Se reserva antes de enviar.** El encargo enviaba y marcaba después: con dos instancias de la API, el paciente recibe el aviso por duplicado. Aquí la fila se inserta antes de llamar a Resend con `on conflict do nothing`; quien la inserta es quien envía.
+
+> **Ventanas de 23–25 h y 55–65 min.** El proceso corre cada 15 minutos: una ventana exacta de 24 h se saltaría casi todas las citas.
+
+> El disparador manual **solo se registra en desarrollo**. Una ruta que lanza correos a pacientes no debe existir en un servidor accesible.
+
+## AGE-03 · Confirmación desde la app del paciente
+
+`PATCH /api/paciente/citas/:id/confirmar`
+
+| Prueba | Esperado |
+|---|---|
+| Cita futura programada | **200** `{"estado":"confirmada"}` |
+| Repetir | **200**, mismo estado — pulsar dos veces no es un error |
+| Cita de otro paciente o inexistente | **404** |
+| Cita cancelada o pasada (propia) | **409** con el motivo |
+| El profesional la consulta | `"estado":"confirmada"` |
+
+En la app: botón **«Confirmar que asistiré»**, que al pulsarlo pasa a **«✓ Asistencia confirmada»**. Se pinta antes de la respuesta y se revierte si falla.
+
+## AGE-04 · Vista mensual
+
+En Agenda, tres botones: **Lista / Semana / Mes**.
+
+| Paso | Qué comprobar |
+|---|---|
+| Pulsar **Mes** | Rejilla del mes que contiene el `desde` actual, con los días de relleno de los meses vecinos |
+| Cada día | Hasta **tres** citas y «+N más» |
+| Colores | Confirmada llena, completada verde, no asistió ámbar, cancelada gris y tachada |
+| Pulsar un día | Salta a la vista semanal de esa semana |
+| Pulsar una cita | Abre su detalle |
+| Hoy | Resaltado |
+
+> Las citas se agrupan por su día **local**. El encargo usaba `cita.inicio.slice(0, 10)`, que es UTC: en América mete las citas de la tarde en el día siguiente.
+
+## AGE-04 · Iniciar consulta desde la cita
+
+En el detalle de una cita **confirmada, o programada y con la hora encima**, aparece **«Iniciar consulta»**. Crea la valoración, marca la cita como completada y navega a `/pacientes/:id/valoracion/:consultaId`.
+
+> No aparece para una cita de dentro de tres semanas: invitaría a abrir consultas que nadie va a atender.
+
+> No se usa `?cita_id=` en la URL como pedía el encargo — no existe ruta `/consultas/nueva` en este proyecto. Se usa el endpoint de la R13.
+
+---
+
 # Recorrido manual del frontend
 
 Con `npm run dev:web`, en **http://localhost:5173**:

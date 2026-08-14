@@ -170,7 +170,7 @@ export async function registerPacienteMensajeriaRoutes(app: FastifyInstance): Pr
       const { rows } = await pool.query(
         `select * from (
            select m.id, m.autor_tipo::text as autor_tipo, m.contenido, m.leido,
-                  to_char(m.created_at,'YYYY-MM-DD"T"HH24:MI:SS.USOF') as created_at,
+                  to_char(m.created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as created_at,
                   m.created_at as orden
              from mensaje m
             where m.conversacion_id = $1
@@ -237,7 +237,7 @@ export async function registerPacienteMensajeriaRoutes(app: FastifyInstance): Pr
           `insert into mensaje (clinica_id, conversacion_id, autor_tipo, autor_id, contenido)
            values ($1,$2,'paciente',$3,$4)
            returning id, autor_tipo::text as autor_tipo, contenido, leido,
-                     to_char(created_at,'YYYY-MM-DD"T"HH24:MI:SS.USOF') as created_at`,
+                     to_char(created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as created_at`,
           [pac.clinica_id, conv.id, pac.id, contenido],
         )
 
@@ -323,7 +323,7 @@ export async function registerPacienteMensajeriaRoutes(app: FastifyInstance): Pr
 
     const { rows: registros } = await pool.query(
       `select acuerdo_index, acuerdo_texto, cumplido, nota_paciente,
-              to_char(registrado_en,'YYYY-MM-DD"T"HH24:MI:SSOF') as registrado_en
+              to_char(registrado_en at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as registrado_en
          from cumplimiento_acuerdo
         where paciente_id = $1 and consulta_id = $2`,
       [pac.id, p['consulta_id']],
@@ -426,7 +426,7 @@ export async function registerPacienteMensajeriaRoutes(app: FastifyInstance): Pr
                        nota_paciente = excluded.nota_paciente,
                        registrado_en = now()
          returning cumplido,
-                   to_char(registrado_en,'YYYY-MM-DD"T"HH24:MI:SSOF') as registrado_en`,
+                   to_char(registrado_en at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as registrado_en`,
         [pac.clinica_id, pac.id, consultaId, idx, acuerdo.texto, cumplido, nota],
       )
 
@@ -449,7 +449,7 @@ export async function registerPacienteMensajeriaRoutes(app: FastifyInstance): Pr
 
     const SELECT = `
       select c.id,
-             to_char(c.inicio,'YYYY-MM-DD"T"HH24:MI:SSOF') as inicio,
+             to_char(c.inicio at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as inicio,
              c.duracion_minutos, c.tipo::text as tipo, c.estado::text as estado,
              c.motivo, prof.nombre as profesional
         from cita c
@@ -490,4 +490,60 @@ export async function registerPacienteMensajeriaRoutes(app: FastifyInstance): Pr
       historial: pasadas.rows.map(mapear),
     })
   })
+  /* ---------------------------------------------------------------- */
+  /* PATCH /api/paciente/citas/:id/confirmar — AGE-03                  */
+  /* ---------------------------------------------------------------- */
+  app.patch<{ Params: { id: string } }>(
+    '/api/paciente/citas/:id/confirmar',
+    { preHandler: requireAuthPaciente },
+    async (request, reply) => {
+      const pac = await resolverPaciente(request.authPac.sub)
+      if (!pac) {
+        const r = await sinExpediente(request.authPac.sub)
+        return reply.code(r.codigo).send(r.cuerpo)
+      }
+
+      const { id } = request.params
+      if (!esUuid(id)) {
+        return reply.code(404).send({ error: 'cita_no_encontrada', message: 'No se encontró la cita' })
+      }
+
+      // Las cuatro condiciones van en el WHERE, no en comprobaciones
+      // previas: entre el SELECT y el UPDATE la cita puede cancelarse.
+      const { rows } = await pool.query(
+        `update cita set estado = 'confirmada', updated_at = now()
+          where id = $1 and paciente_id = $2 and clinica_id = $3
+            and estado = 'programada' and inicio > now()
+          returning id, estado::text as estado`,
+        [id, pac.id, pac.clinica_id],
+      )
+
+      if (!rows[0]) {
+        // Se distingue "no es tuya" de "ya no se puede": lo segundo el
+        // paciente lo está viendo en pantalla y merece saber por qué el
+        // botón no hizo nada.
+        const { rows: existe } = await pool.query<{ estado: string }>(
+          `select estado::text as estado from cita
+            where id = $1 and paciente_id = $2 and clinica_id = $3`,
+          [id, pac.id, pac.clinica_id],
+        )
+        const estado = existe[0]?.estado
+        if (estado === 'confirmada') {
+          return reply.send({ id, estado: 'confirmada' })
+        }
+        if (estado) {
+          return reply.code(409).send({
+            error: 'no_confirmable',
+            message:
+              estado === 'cancelada'
+                ? 'Esta cita se canceló.'
+                : 'Esta cita ya pasó o no se puede confirmar.',
+          })
+        }
+        return reply.code(404).send({ error: 'cita_no_encontrada', message: 'No se encontró la cita' })
+      }
+
+      return reply.send({ id: rows[0]['id'], estado: rows[0]['estado'] })
+    },
+  )
 }

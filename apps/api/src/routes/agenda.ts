@@ -7,6 +7,8 @@
  */
 import type { FastifyInstance } from 'fastify'
 import { pool } from '../db.js'
+import { config } from '../config.js'
+import { procesarRecordatorios } from '../agenda/recordatorios.js'
 import { requireAuth } from '../auth.js'
 import { esUuid } from '../pacientes/validacion.js'
 import { resolverAlcance } from '../pacientes/acceso.js'
@@ -373,7 +375,7 @@ export async function registerAgendaRoutes(app: FastifyInstance): Promise<void> 
       // ocurrió. Ocultarla dejaría huecos inexplicables en la secuencia.
       const { rows } = await pool.query(
         `select c.id,
-                to_char(c.inicio,'YYYY-MM-DD"T"HH24:MI:SSOF') as inicio,
+                to_char(c.inicio at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as inicio,
                 c.duracion_minutos, c.tipo::text as tipo, c.estado::text as estado,
                 c.motivo, c.notas_clinicas, c.consulta_origen_id, c.snapshot_id,
                 prof.nombre as profesional
@@ -400,4 +402,17 @@ export async function registerAgendaRoutes(app: FastifyInstance): Promise<void> 
       )
     },
   )
+  /* ---------------------------------------------------------------- */
+  /* POST /api/agenda/recordatorios/ejecutar — solo en desarrollo      */
+  /* ---------------------------------------------------------------- */
+  //
+  // Dispara un ciclo sin esperar los 15 minutos del temporizador. NO se
+  // registra en producción: una ruta que lanza correos a pacientes no
+  // debe existir en un servidor accesible, por muy autenticada que esté.
+  if (config.isDev) {
+    app.post('/api/agenda/recordatorios/ejecutar', { preHandler: requireAuth }, async (_req, reply) => {
+      const resultado = await procesarRecordatorios()
+      return reply.send({ enviados: resultado })
+    })
+  }
 }

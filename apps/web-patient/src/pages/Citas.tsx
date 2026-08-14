@@ -8,7 +8,13 @@
  */
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ApiError, getCitasPaciente, type AgendaPaciente, type CitaPaciente } from '../lib/api'
+import {
+  ApiError,
+  confirmarCita,
+  getCitasPaciente,
+  type AgendaPaciente,
+  type CitaPaciente,
+} from '../lib/api'
 import { entrar, initKeycloak } from '../lib/keycloak'
 import { NavBar } from '../components/NavBar'
 
@@ -97,6 +103,7 @@ export function Citas() {
   const [datos, setDatos] = useState<AgendaPaciente | null>(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [confirmando, setConfirmando] = useState(false)
 
   useEffect(() => {
     let vivo = true
@@ -124,6 +131,27 @@ export function Citas() {
       vivo = false
     }
   }, [navegar])
+
+  /**
+   * Confirmar es decir «voy a ir». Se pinta al pulsar y se revierte si
+   * el servidor dice que no: en un móvil con mala cobertura, esperar la
+   * respuesta hace que parezca que el botón no funcionó.
+   */
+  async function confirmar(cita: CitaPaciente) {
+    if (confirmando || !datos) return
+    setConfirmando(true)
+    setError(null)
+    const antes = datos
+    setDatos({ ...datos, proxima: { ...cita, estado: 'confirmada' } })
+    try {
+      await confirmarCita(cita.id)
+    } catch (e) {
+      setDatos(antes)
+      setError(e instanceof ApiError ? e.message : 'No se pudo confirmar. Inténtalo otra vez.')
+    } finally {
+      setConfirmando(false)
+    }
+  }
 
   if (cargando) {
     return (
@@ -167,10 +195,30 @@ export function Citas() {
             {datos.proxima.motivo && (
               <p className="mt-2 text-sm text-ink">{datos.proxima.motivo}</p>
             )}
-            {datos.proxima.estado === 'confirmada' && (
-              <p className="mt-3 text-xs" style={{ color: 'var(--status-normal)' }}>
-                Confirmada con tu nutricionista.
+            {datos.proxima.estado === 'confirmada' ? (
+              <p
+                className="mt-3 flex items-center gap-1.5 text-sm font-semibold"
+                style={{ color: 'var(--status-normal)' }}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                  className="h-4 w-4 fill-none stroke-current"
+                  strokeWidth={3}
+                >
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                Asistencia confirmada
               </p>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void confirmar(datos.proxima!)}
+                disabled={confirmando}
+                className="mt-4 w-full rounded-md bg-primary py-3 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-60"
+              >
+                {confirmando ? 'Confirmando…' : 'Confirmar que asistiré'}
+              </button>
             )}
           </section>
         ) : (

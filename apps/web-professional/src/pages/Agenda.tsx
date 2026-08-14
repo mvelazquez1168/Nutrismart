@@ -22,6 +22,8 @@ import {
 import { getSnapshot } from '../api/expediente'
 import { ChipEstadoCita } from '../components/ChipEstadoCita'
 import { VistaSemana, lunesDe } from '../components/VistaSemana'
+import { VistaMes } from '../components/VistaMes'
+import { crearConsulta } from '../api/valoracion'
 import { CITA_ESTADOS, type Cita, type CitaEstado, type Profesional } from '../api/tipos'
 import { CitaModal } from '../components/CitaModal'
 import { CitaDetalle } from '../components/CitaDetalle'
@@ -61,7 +63,10 @@ export function Agenda() {
   const [profesionales, setProfesionales] = useState<Profesional[]>([])
   const [datos, setDatos] = useState<Estado>({ tipo: 'cargando' })
   const [recarga, setRecarga] = useState(0)
-  const [vista, setVista] = useState<'lista' | 'semana'>('lista')
+  const [vista, setVista] = useState<'lista' | 'semana' | 'mes'>('lista')
+  // Mes que pinta la rejilla mensual. Se guarda aparte porque `desde`
+  // apunta al inicio de la REJILLA, que suele caer en el mes anterior.
+  const [mesRef, setMesRef] = useState(() => new Date())
 
   const [creando, setCreando] = useState(false)
   const [editando, setEditando] = useState<Cita | null>(null)
@@ -122,13 +127,32 @@ export function Agenda() {
    * Al volver a lista el rango se respeta: encogerlo perdería citas que
    * el profesional ya estaba mirando.
    */
-  function cambiarVista(nueva: 'lista' | 'semana') {
+  function cambiarVista(nueva: 'lista' | 'semana' | 'mes') {
+    const iso = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+    if (nueva === 'mes') {
+      // El mes que contiene el `desde` actual, de la primera a la última
+      // celda de la rejilla: hace falta pedir también los días de los
+      // meses vecinos que rellenan la primera y la última fila.
+      const ref = new Date(`${desde}T12:00:00`)
+      setMesRef(ref)
+      const primero = new Date(ref.getFullYear(), ref.getMonth(), 1)
+      const ultimo = new Date(ref.getFullYear(), ref.getMonth() + 1, 0)
+      const inicioRejilla = new Date(primero)
+      inicioRejilla.setDate(primero.getDate() - ((primero.getDay() + 6) % 7))
+      const finRejilla = new Date(ultimo)
+      finRejilla.setDate(ultimo.getDate() + (7 - ((ultimo.getDay() + 6) % 7)))
+      setDesde(iso(inicioRejilla))
+      setHasta(iso(finRejilla))
+      setVista(nueva)
+      return
+    }
+
     if (nueva === 'semana') {
       // `desde` es una fecha local YYYY-MM-DD. Se construye a mediodía
       // para que ningún cambio de horario de verano la mueva de día.
       const lunes = lunesDe(new Date(`${desde}T12:00:00`))
-      const iso = (d: Date) =>
-        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
       const domingo = new Date(lunes)
       domingo.setDate(lunes.getDate() + 7)
       setDesde(iso(lunes))
@@ -149,6 +173,25 @@ export function Agenda() {
     } finally {
       setOcupado(false)
     }
+  }
+
+  /**
+   * Abre la valoración del paciente desde la cita.
+   *
+   * Se crea la consulta y se marca la cita como completada en el mismo
+   * gesto: el profesional está delante del paciente, y obligarle a
+   * volver a la agenda a marcarla después es el paso que nadie da.
+   */
+  async function iniciarConsulta(cita: Cita) {
+    const { id } = await crearConsulta(cita.paciente.id)
+    if (cita.estado !== 'completada') {
+      await cambiarEstadoCita(cita.id, 'completada').catch(() => {
+        // Que la cita no se cierre no debe impedir atender: la consulta
+        // ya existe y el estado se corrige desde la agenda.
+      })
+    }
+    setDetalle(null)
+    navigate(`/pacientes/${cita.paciente.id}/valoracion/${id}`)
   }
 
   /** Crea el control desde la cita y abre el modal del snapshot recién creado. */
@@ -259,7 +302,7 @@ export function Agenda() {
           aria-label="Forma de ver la agenda"
           className="inline-flex overflow-hidden rounded-md border border-border"
         >
-          {(['lista', 'semana'] as const).map((v) => (
+          {(['lista', 'semana', 'mes'] as const).map((v) => (
             <button
               key={v}
               type="button"
@@ -269,7 +312,7 @@ export function Agenda() {
                 vista === v ? 'bg-primary text-white' : 'bg-surface text-ink hover:bg-surface-2'
               }`}
             >
-              {v === 'lista' ? 'Lista' : 'Semana'}
+              {v === 'lista' ? 'Lista' : v === 'semana' ? 'Semana' : 'Mes'}
             </button>
           ))}
         </div>
@@ -295,6 +338,28 @@ export function Agenda() {
             Reintentar
           </button>
         </div>
+      )}
+
+      {datos.tipo === 'listo' && vista === 'mes' && (
+        <VistaMes
+          anio={mesRef.getFullYear()}
+          mes={mesRef.getMonth()}
+          citas={datos.citas}
+          onDia={(dia) => {
+            const lunes = lunesDe(dia)
+            const domingo = new Date(lunes)
+            domingo.setDate(lunes.getDate() + 7)
+            const iso = (d: Date) =>
+              `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+            setDesde(iso(lunes))
+            setHasta(iso(domingo))
+            setVista('semana')
+          }}
+          onCita={(id) => {
+            const c = datos.citas.find((x) => x.id === id)
+            if (c) setDetalle(c)
+          }}
+        />
       )}
 
       {datos.tipo === 'listo' && vista === 'semana' && (
@@ -386,6 +451,7 @@ export function Agenda() {
             setDetalle({ ...c, estado: 'completada' })
           })
         }
+        onIniciarConsulta={(c) => void accion(() => iniciarConsulta(c))}
         onCancelar={(c) =>
           void accion(async () => {
             await cambiarEstadoCita(c.id, 'cancelada')

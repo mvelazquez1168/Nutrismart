@@ -25,6 +25,8 @@ interface Props {
   onEditar: (c: Cita) => void
   onCompletar: (c: Cita) => void
   onCancelar: (c: Cita) => void
+  /** Abre la valoración del paciente a partir de esta cita. */
+  onIniciarConsulta?: (c: Cita) => void
   onRegistrarControl: (c: Cita) => void
   onVerControl: (c: Cita) => void
 }
@@ -37,6 +39,7 @@ export function CitaDetalle({
   onCerrar,
   onEditar,
   onCompletar,
+  onIniciarConsulta,
   onCancelar,
   onRegistrarControl,
   onVerControl,
@@ -45,8 +48,16 @@ export function CitaDetalle({
 
   if (!cita) return null
 
-  const programada = cita.estado === 'programada'
+  // Una cita confirmada se edita igual que una programada: el paciente
+  // avisó de que viene, no de que la hora sea inamovible.
+  const abierta = cita.estado === 'programada' || cita.estado === 'confirmada'
+  const programada = abierta
   const completada = cita.estado === 'completada'
+
+  // Se abre la valoración desde la cita cuando ya toca: confirmada, o
+  // programada y con la hora encima. Ofrecerlo para una cita de dentro
+  // de tres semanas invita a abrir consultas que nadie va a atender.
+  const puedeIniciarConsulta = abierta && new Date(cita.inicio) <= new Date(Date.now() + 3600_000)
 
   return (
     <Modal
@@ -104,6 +115,17 @@ export function CitaDetalle({
         )}
 
         <div className="flex flex-wrap gap-2 border-t border-border pt-4">
+          {puedeIniciarConsulta && onIniciarConsulta && (
+            <button
+              type="button"
+              disabled={ocupado}
+              onClick={() => onIniciarConsulta(cita)}
+              className="rounded-md bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-60"
+            >
+              Iniciar consulta
+            </button>
+          )}
+
           {programada && (
             <>
               <button
@@ -118,7 +140,7 @@ export function CitaDetalle({
                 type="button"
                 disabled={ocupado}
                 onClick={() => onCompletar(cita)}
-                className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-60"
+                className="rounded-md border border-border px-3 py-2 text-sm font-medium text-ink hover:bg-surface-2 disabled:opacity-60"
               >
                 Marcar completada
               </button>

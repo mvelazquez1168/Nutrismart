@@ -203,3 +203,7 @@ export interface AgendaPaciente {
 export function getCitasPaciente(): Promise<AgendaPaciente> {
   return pedir<AgendaPaciente>('/api/paciente/citas', { conAuth: true })
 }
+
+export function confirmarCita(id: string): Promise<{ id: string; estado: string }> {
+  return pedir(`/api/paciente/citas/${id}/confirmar`, { method: 'PATCH', conAuth: true })
+}

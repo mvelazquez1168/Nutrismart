@@ -162,7 +162,7 @@ export async function registerIaRoutes(app: FastifyInstance): Promise<void> {
              (clinica_id, estudio_id, paciente_id, profesional_id, modelo,
               prompt_usado, interpretacion, tokens_entrada, tokens_salida)
            values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-           returning id, to_char(created_at,'YYYY-MM-DD"T"HH24:MI:SSOF') as created_at`,
+           returning id, to_char(created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at`,
           [
             tenantId,
             estudioId,
@@ -208,9 +208,9 @@ export async function registerIaRoutes(app: FastifyInstance): Promise<void> {
       const { rows } = await pool.query(
         `select i.id, i.interpretacion, i.modelo, i.tokens_entrada, i.tokens_salida,
                 i.revisada,
-                to_char(i.revisada_en,'YYYY-MM-DD"T"HH24:MI:SSOF') as revisada_en,
+                to_char(i.revisada_en at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as revisada_en,
                 rev.nombre as revisada_por,
-                to_char(i.created_at,'YYYY-MM-DD"T"HH24:MI:SSOF') as created_at,
+                to_char(i.created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at,
                 autor.nombre as profesional
            from interpretacion_ia i
            left join profesional autor on autor.id = i.profesional_id
@@ -265,7 +265,7 @@ export async function registerIaRoutes(app: FastifyInstance): Promise<void> {
                 revisada_en = coalesce(revisada_en, now()),
                 revisada_por = coalesce(revisada_por, $3)
           where id = $1 and clinica_id = $2 and estudio_id = $4
-          returning revisada, to_char(revisada_en,'YYYY-MM-DD"T"HH24:MI:SSOF') as revisada_en`,
+          returning revisada, to_char(revisada_en at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as revisada_en`,
         [intId, tenantId, alcance.profesionalId, estudioId],
       )
       if (!rows[0]) return reply.code(404).send(NO_ENCONTRADO)
@@ -438,7 +438,7 @@ export async function registerIaRoutes(app: FastifyInstance): Promise<void> {
            (clinica_id, paciente_id, profesional_id, consulta_id,
             subjetivo, objetivo, analisis, plan_soap, generada_ia)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-         returning id, to_char(created_at,'YYYY-MM-DD"T"HH24:MI:SSOF') as created_at`,
+         returning id, to_char(created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at`,
         [
           tenantId,
           id,
@@ -481,7 +481,7 @@ export async function registerIaRoutes(app: FastifyInstance): Promise<void> {
       const { rows } = await pool.query(
         `select n.id, left(coalesce(n.subjetivo, n.analisis, n.objetivo, n.plan_soap, ''), 120) as extracto,
                 n.generada_ia, n.revisada, prof.nombre as profesional,
-                to_char(n.created_at,'YYYY-MM-DD"T"HH24:MI:SSOF') as created_at
+                to_char(n.created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at
            from nota_soap n
            left join profesional prof on prof.id = n.profesional_id
           where n.paciente_id = $1 and n.clinica_id = $2
@@ -521,8 +521,8 @@ export async function registerIaRoutes(app: FastifyInstance): Promise<void> {
         `select n.id, n.subjetivo, n.objetivo, n.analisis, n.plan_soap,
                 n.generada_ia, n.revisada, n.profesional_id,
                 prof.nombre as profesional,
-                to_char(n.revisada_en,'YYYY-MM-DD"T"HH24:MI:SSOF') as revisada_en,
-                to_char(n.created_at,'YYYY-MM-DD"T"HH24:MI:SSOF') as created_at
+                to_char(n.revisada_en at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as revisada_en,
+                to_char(n.created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at
            from nota_soap n
            left join profesional prof on prof.id = n.profesional_id
           where n.id = $1 and n.paciente_id = $2 and n.clinica_id = $3`,
@@ -645,7 +645,7 @@ export async function registerIaRoutes(app: FastifyInstance): Promise<void> {
                 revisada_en = coalesce(revisada_en, now()),
                 revisada_por = coalesce(revisada_por, $3)
           where id = $1 and clinica_id = $2 and paciente_id = $4
-          returning to_char(revisada_en,'YYYY-MM-DD"T"HH24:MI:SSOF') as revisada_en`,
+          returning to_char(revisada_en at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as revisada_en`,
         [soapId, tenantId, alcance.profesionalId, id],
       )
       if (!rows[0]) return reply.code(404).send(NO_ENCONTRADO)

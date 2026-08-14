@@ -101,7 +101,7 @@ export async function registerInvitacionRoutes(app: FastifyInstance): Promise<vo
         const { rows } = await cliente.query(
           `insert into invitacion_paciente (clinica_id, paciente_id, profesional_id, token)
            values ($1,$2,$3,$4)
-           returning id, to_char(expira_en,'YYYY-MM-DD"T"HH24:MI:SSOF') as expira_en`,
+           returning id, to_char(expira_en at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as expira_en`,
           [tenantId, id, alcance.profesionalId, token],
         )
         await cliente.query('commit')
@@ -171,7 +171,7 @@ export async function registerInvitacionRoutes(app: FastifyInstance): Promise<vo
                 (i.expira_en < now()) as caducado,
                 p.nombre as nombre_paciente,
                 coalesce(c.nombre_comercial, c.nombre_fiscal) as clinica,
-                to_char(i.expira_en,'YYYY-MM-DD"T"HH24:MI:SSOF') as expira_en
+                to_char(i.expira_en at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as expira_en
            from invitacion_paciente i
            join paciente p on p.id = i.paciente_id
            join clinica  c on c.id = i.clinica_id
