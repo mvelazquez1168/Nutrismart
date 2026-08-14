@@ -1574,6 +1574,96 @@ La **línea de peso** solo se dibuja con dos o más mediciones. No pude registra
 
 ---
 
+# Rebanada 18 · Mensajería y acuerdos del paciente
+
+> **Estado.** API verificada de punta a punta. El flujo en navegador sigue pendiente del cliente `nutrismart-patient` en Keycloak (mismo bloqueo que la R17). Las cuatro rutas de la app responden 200 y compilan.
+
+## Seguridad (aplica a las cinco rutas)
+
+| Prueba | Esperado |
+|---|---|
+| Token de profesional | **403** `solo_pacientes` |
+| Sin token | **401** |
+| Cuenta sin expediente vinculado | **404** `sin_vincular` |
+
+## PAC-03 · Mensajería
+
+### PAC-03-01 · Abrir la conversación
+`GET /api/paciente/conversacion`
+
+| Prueba | Esperado |
+|---|---|
+| Sin invitación aceptada | **404** `sin_conversacion` con qué esperar |
+| Con invitación aceptada | **200**; se abre con el profesional que invitó |
+| Llamarla otra vez | **El mismo identificador** — no duplica |
+
+Se usa UPSERT contra `uq_conversacion (clinica_id, paciente_id, profesional_id)`. El encargo hacía `on conflict do nothing` sin objetivo y releía después: con dos pestañas, la relectura puede caer entre el insert de una y el commit de la otra.
+
+### PAC-03-02 y PAC-03-05 · Enviar
+`POST …/mensajes` → **201** con el mensaje, y en `notificacion` aparece `mensaje_nuevo → profesional`.
+
+| Prueba | Esperado |
+|---|---|
+| Mensaje en blanco | **400** |
+| 4001 caracteres | **400** |
+
+> `mensaje.clinica_id` es NOT NULL y el `INSERT` del encargo lo omitía: habría fallado en la primera prueba.
+
+### PAC-03-04 · Abrir el hilo marca lo leído
+Con un mensaje del profesional sin leer:
+
+| Momento | `mensajes_no_leidos_pac` |
+|---|---|
+| Antes de abrir | **1** |
+| Después de `GET …/mensajes` | **0** |
+
+El mensaje del profesional vuelve con `leido: true`. Es un efecto sobre un GET y aquí es lo correcto: leer es exactamente lo que el paciente está haciendo.
+
+### PAC-03-03 · Sondeo incremental
+`GET …/mensajes?desde=<createdAt del último>` devuelve **`[]`** cuando no hay nada nuevo.
+
+> `created_at` se devuelve **con microsegundos** porque el cliente lo reenvía como `desde`. Truncado al segundo, el último mensaje volvía a salir en cada sondeo — comprobado antes y después del arreglo.
+
+> **Los últimos 50, no los primeros.** El encargo ordenaba ascendente con `LIMIT 50`: en un hilo de doscientos mensajes eso devuelve los cincuenta **más antiguos** y el paciente no ve lo que acaban de escribirle.
+
+## PAC-04 · Plan y acuerdos
+
+### PAC-04-01 y PAC-04-02 · Ver el plan
+`GET /api/paciente/plan` con una consulta finalizada:
+
+| Campo | Valor |
+|---|---|
+| kcal · reparto | 2100 · 20/50/30 |
+| Gramos | **105 g · 262,5 g · 70 g** (derivados por el servidor en la R15) |
+| Restricciones | `["bajo_sodio"]` |
+| Suplementos | «Vitamina D 1000 UI» |
+| Acuerdos | Los dos, con `cumplidoProfesional` y `cumplidoPaciente` **por separado** |
+
+Sin consulta finalizada devuelve `{ plan: null, mensaje }` — no un 404: no tener plan todavía no es un error.
+
+### PAC-04-03 a PAC-04-05 · Marcar, persistir, desmarcar
+| Prueba | Esperado |
+|---|---|
+| `POST …/acuerdos/:consultaId/0/cumplir` con `{"cumplido":true}` | **200**; al releer el plan, `cumplidoPaciente: true` |
+| Repetir con `{"cumplido":false}` | **200**; en la base sigue habiendo **una sola fila** (UPSERT) |
+| Índice fuera de rango | **404** |
+| `consultaId` de otro paciente | **404** |
+
+### La prueba que el encargo no contemplaba
+
+El paciente marca el acuerdo 0 («Caminar 30 minutos al día»). El profesional lo **sustituye** por «Tomar el suplemento a diario».
+
+| Esperado | Resultado |
+|---|---|
+| El «cumplido» **no** se arrastra al acuerdo nuevo | ✅ `cumplidoPaciente: false` |
+
+Con el diseño del encargo —solo `acuerdo_index`— sí se habría arrastrado, sin error ni aviso: un dato clínico mal atribuido. Se guarda también `acuerdo_texto` y al leer se comprueba que el acuerdo sigue diciendo lo mismo.
+
+### PAC-04-06 · Navegación
+Barra inferior fija con Inicio · Mi plan · Mensajes, contador de no leídos, y respeto del área segura del móvil (`env(safe-area-inset-bottom)`). La pestaña activa se distingue por color **y** subrayado, no solo por el tono.
+
+---
+
 # Recorrido manual del frontend
 
 Con `npm run dev:web`, en **http://localhost:5173**:

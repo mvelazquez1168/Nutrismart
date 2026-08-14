@@ -18,6 +18,7 @@ async function pedir<T>(ruta: string, opciones: RequestInit & { conAuth: boolean
   const { conAuth, ...resto } = opciones
   const cabeceras: Record<string, string> = { Accept: 'application/json' }
   if (conAuth) cabeceras['Authorization'] = `Bearer ${await tokenVigente()}`
+  if (resto.body !== undefined) cabeceras['Content-Type'] = 'application/json'
 
   let respuesta: Response
   try {
@@ -99,4 +100,84 @@ export function getYo(): Promise<Yo> {
 
 export function getDashboard(): Promise<Dashboard> {
   return pedir<Dashboard>('/api/paciente/dashboard', { conAuth: true })
+}
+
+/* ---- PAC-03 · Mensajería ---- */
+
+export interface Conversacion {
+  id: string
+  profesional: string
+  mensajesSinLeer: number
+}
+
+export interface Mensaje {
+  id: string
+  autorTipo: 'profesional' | 'paciente'
+  contenido: string
+  leido: boolean
+  createdAt: string
+}
+
+export function getConversacion(): Promise<Conversacion> {
+  return pedir<Conversacion>('/api/paciente/conversacion', { conAuth: true })
+}
+
+/** `desde` filtra por marca de tiempo: se le pasa el createdAt del último. */
+export function getMensajes(desde?: string): Promise<Mensaje[]> {
+  const q = desde ? `?desde=${encodeURIComponent(desde)}` : ''
+  return pedir<Mensaje[]>(`/api/paciente/conversacion/mensajes${q}`, { conAuth: true })
+}
+
+export function enviarMensaje(contenido: string): Promise<Mensaje> {
+  return pedir<Mensaje>('/api/paciente/conversacion/mensajes', {
+    method: 'POST',
+    conAuth: true,
+    body: JSON.stringify({ contenido }),
+  })
+}
+
+/* ---- PAC-04 · Plan y acuerdos ---- */
+
+export interface AcuerdoPaciente {
+  index: number
+  texto: string
+  /** Lo que marcó el profesional en consulta. */
+  cumplidoProfesional: boolean
+  /** Lo que reporta el paciente desde la app. */
+  cumplidoPaciente: boolean
+  registradoEn: string | null
+  notaPaciente: string | null
+}
+
+export interface PlanPaciente {
+  consultaId: string
+  numeroConsulta: number
+  fecha: string
+  profesional: string | null
+  kcal: number | null
+  pctProteina: number | null
+  pctCho: number | null
+  pctGrasa: number | null
+  proteinaG: number | null
+  choG: number | null
+  grasaG: number | null
+  restricciones: string[]
+  suplementos: string | null
+  acuerdos: AcuerdoPaciente[]
+}
+
+export function getPlan(): Promise<{ plan: PlanPaciente | null; mensaje?: string }> {
+  return pedir('/api/paciente/plan', { conAuth: true })
+}
+
+export function cumplirAcuerdo(
+  consultaId: string,
+  index: number,
+  cumplido: boolean,
+): Promise<{ cumplido: boolean; registradoEn: string }> {
+  return pedir(`/api/paciente/acuerdos/${consultaId}/${index}/cumplir`, {
+    method: 'POST',
+    conAuth: true,
+    body: JSON.stringify({ cumplido }),
+  })
 }

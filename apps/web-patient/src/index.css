@@ -20,3 +20,18 @@
     touch-action: manipulation;
   }
 }
+
+@layer utilities {
+  /* Separacion de la barra de gestos del sistema (notch / home bar).
+     Sin esto, la navegacion inferior queda debajo del indicador y el
+     ultimo elemento no se puede pulsar. */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* Altura de la navegacion mas el area segura, para que el contenido
+     de cada pagina no quede tapado. */
+  .pb-nav {
+    padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
+  }
+}

@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ApiError, getDashboard, getYo, type Dashboard, type Yo } from '../lib/api'
 import { entrar, initKeycloak, salir } from '../lib/keycloak'
+import { NavBar } from '../components/NavBar'
 
 function Tarjeta({
   titulo,
@@ -185,7 +186,7 @@ export function Inicio() {
   }
 
   return (
-    <main className="min-h-screen bg-background pb-10">
+    <main className="min-h-screen bg-background pb-nav">
       <header className="bg-primary px-4 pb-8 pt-10 text-white">
         <div className="mb-1 flex items-center justify-between">
           <p className="text-sm opacity-90">{yo.clinica.nombre}</p>
@@ -322,9 +323,17 @@ export function Inicio() {
           ) : (
             <p className="text-sm text-muted">No tienes mensajes nuevos.</p>
           )}
-          <p className="mt-2 text-xs text-muted">Podrás leerlos y responder muy pronto.</p>
+          <button
+            type="button"
+            onClick={() => navegar('/mensajes')}
+            className="mt-2 text-sm font-medium text-primary hover:underline"
+          >
+            Abrir mensajes →
+          </button>
         </Tarjeta>
       </div>
+
+      <NavBar mensajesSinLeer={datos.mensajesSinLeer} />
     </main>
   )
 }
