@@ -34,7 +34,9 @@ const CAMPOS = `
   id, consulta_id, diagnostico_principal, diagnostico_cie10, diagnostico_secundario,
   observaciones_clinicas, recomendaciones, kcal_prescritas,
   pct_proteina, pct_cho, pct_grasa, proteina_g, cho_g, grasa_g,
-  restricciones, suplementos, acuerdos, updated_at
+  restricciones, suplementos, acuerdos,
+  peso_objetivo, to_char(fecha_objetivo_peso,'YYYY-MM-DD') as fecha_objetivo_peso,
+  updated_at
 `
 
 function sinProfesional() {
@@ -66,6 +68,10 @@ function aConclusion(f: Record<string, unknown>) {
     grasaG: num(f['grasa_g']),
     restricciones: (f['restricciones'] ?? []) as string[],
     suplementos: (f['suplementos'] as string | null) ?? null,
+    // La meta ponderal: lo que hace computable el progreso del paciente
+    // (ver la Rebanada 16, donde faltaba justo esto).
+    pesoObjetivo: f['peso_objetivo'] === null ? null : Number(f['peso_objetivo']),
+    fechaObjetivoPeso: (f['fecha_objetivo_peso'] as string | null) ?? null,
     acuerdos: (f['acuerdos'] ?? []) as { texto: string; cumplido: boolean }[],
     updatedAt: f['updated_at'] as Date,
   }
@@ -199,6 +205,26 @@ export async function registerConclusionRoutes(app: FastifyInstance): Promise<vo
         })
       }
 
+      // Meta de peso. Sin fecha se admite —hay objetivos sin plazo
+      // cerrado— pero una fecha sin peso no dice nada y se descarta.
+      const pesoBruto = c['pesoObjetivo']
+      let pesoObjetivo: number | null = null
+      if (pesoBruto !== undefined && pesoBruto !== null && pesoBruto !== '') {
+        const n = Number(pesoBruto)
+        if (!Number.isFinite(n) || n <= 20 || n >= 400) {
+          return reply.code(400).send({
+            error: 'validacion',
+            message: 'La meta de peso debe estar entre 20 y 400 kg',
+          })
+        }
+        pesoObjetivo = n
+      }
+      const fBruto = c['fechaObjetivoPeso']
+      const fechaObjetivoPeso =
+        pesoObjetivo !== null && typeof fBruto === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(fBruto)
+          ? fBruto
+          : null
+
       const restricciones = Array.isArray(c['restricciones'])
         ? (c['restricciones'] as unknown[]).filter(
             (r): r is string =>
@@ -255,9 +281,11 @@ export async function registerConclusionRoutes(app: FastifyInstance): Promise<vo
              diagnostico_principal, diagnostico_cie10, diagnostico_secundario,
              observaciones_clinicas, recomendaciones,
              kcal_prescritas, pct_proteina, pct_cho, pct_grasa,
-             proteina_g, cho_g, grasa_g, restricciones, suplementos, acuerdos
+             proteina_g, cho_g, grasa_g, restricciones, suplementos, acuerdos,
+             peso_objetivo, fecha_objetivo_peso
            ) values (
-             $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18,$19::jsonb
+             $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18,$19::jsonb,
+             $20,$21::date
            )
            on conflict (consulta_id) do update set
              profesional_id = excluded.profesional_id,
@@ -273,7 +301,9 @@ export async function registerConclusionRoutes(app: FastifyInstance): Promise<vo
              grasa_g = excluded.grasa_g,
              restricciones = excluded.restricciones,
              suplementos = excluded.suplementos,
-             acuerdos = excluded.acuerdos
+             acuerdos = excluded.acuerdos,
+             peso_objetivo = excluded.peso_objetivo,
+             fecha_objetivo_peso = excluded.fecha_objetivo_peso
            returning ${CAMPOS}`,
           [
             tenantId, request.params.id, consulta.id, alcance.profesionalId,
@@ -283,6 +313,7 @@ export async function registerConclusionRoutes(app: FastifyInstance): Promise<vo
             gramos.proteina, gramos.cho, gramos.grasa,
             JSON.stringify(restricciones ?? []), texto('suplementos'),
             JSON.stringify(acuerdos ?? []),
+            pesoObjetivo, fechaObjetivoPeso,
           ],
         )
 

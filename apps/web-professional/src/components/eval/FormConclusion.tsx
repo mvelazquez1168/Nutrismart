@@ -51,6 +51,8 @@ export function FormConclusion({
   const [pct, setPct] = useState({ proteina: 20, cho: 50, grasa: 30 })
   const [restricciones, setRestricciones] = useState<string[]>([])
   const [suplementos, setSuplementos] = useState('')
+  const [pesoObjetivo, setPesoObjetivo] = useState('')
+  const [fechaObjetivo, setFechaObjetivo] = useState('')
   const [acuerdos, setAcuerdos] = useState<Acuerdo[]>(ACUERDOS_INICIALES)
   const [fafHistorial, setFafHistorial] = useState<number | null>(null)
 
@@ -81,6 +83,8 @@ export function FormConclusion({
           }
           setRestricciones(c.restricciones ?? [])
           setSuplementos(c.suplementos ?? '')
+          setPesoObjetivo(c.pesoObjetivo?.toString() ?? '')
+          setFechaObjetivo(c.fechaObjetivoPeso ?? '')
           // Solo se sustituyen los acuerdos si ya había alguno guardado:
           // si no, se dejan los tres de arranque.
           if (c.acuerdos.length > 0) setAcuerdos(c.acuerdos)
@@ -136,6 +140,8 @@ export function FormConclusion({
           : {}),
         restricciones,
         suplementos: suplementos || null,
+        pesoObjetivo: pesoObjetivo.trim() === '' ? null : Number(pesoObjetivo),
+        fechaObjetivoPeso: fechaObjetivo || null,
         acuerdos: acuerdos.filter((a) => a.texto.trim() !== ''),
       })
       setOk(true)
@@ -367,6 +373,41 @@ export function FormConclusion({
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* La meta de peso vive aquí porque es parte de lo que se
+              PRESCRIBE, no un deseo que el paciente se pone. Sin ella, la
+              pantalla de progreso no puede decir cuánto lleva avanzado. */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Campo id="meta-peso" etiqueta="Meta de peso (kg)" ayuda="Opcional">
+              <input
+                id="meta-peso"
+                type="number"
+                step="0.1"
+                min={20}
+                max={400}
+                value={pesoObjetivo}
+                onChange={(e) => {
+                  setPesoObjetivo(e.target.value)
+                  setOk(false)
+                }}
+                className={claseControl(false)}
+              />
+            </Campo>
+            <Campo
+              id="meta-fecha"
+              etiqueta="Para cuándo"
+              ayuda={pesoObjetivo.trim() === '' ? 'Necesita una meta de peso' : 'Opcional'}
+            >
+              <input
+                id="meta-fecha"
+                type="date"
+                value={fechaObjetivo}
+                disabled={pesoObjetivo.trim() === ''}
+                onChange={(e) => setFechaObjetivo(e.target.value)}
+                className={claseControl(false)}
+              />
+            </Campo>
           </div>
 
           <Campo id="supl" etiqueta="Suplementos y preparados" ayuda="Opcional">

@@ -6,7 +6,7 @@
  * consulta, y si no hay forma de mirarlo no hay motivo para apuntarlo.
  */
 import { useEffect, useState } from 'react'
-import { ApiError, apiGet } from '../api/client'
+import { ApiError, apiDelete, apiGet, apiPost } from '../api/client'
 
 const FRANJA: Record<string, string> = {
   desayuno: 'Desayuno',
@@ -45,6 +45,185 @@ interface Respuesta {
   dias: number
   comidas: Comida[]
   metricas: Medida[]
+}
+
+interface Tarea {
+  id: string
+  titulo: string
+  descripcion: string | null
+  fechaLimite: string | null
+  prioridad: 'alta' | 'normal' | 'baja'
+  estado: 'pendiente' | 'completada' | 'archivada'
+  completadaEn: string | null
+}
+
+const ETIQUETA_ESTADO: Record<string, { texto: string; token: string }> = {
+  pendiente: { texto: 'Pendiente', token: '--muted' },
+  completada: { texto: 'Hecha', token: '--status-normal' },
+  archivada: { texto: 'Retirada', token: '--muted' },
+}
+
+/**
+ * Tareas que el profesional manda entre consultas.
+ *
+ * Distintas de los acuerdos de la valoración: un acuerdo se pacta en
+ * consulta y va firmado dentro de la conclusión; una tarea se manda
+ * después, tiene fecha límite y el paciente la marca desde la app.
+ */
+function TareasPaciente({ pacienteId }: { pacienteId: string }) {
+  const [tareas, setTareas] = useState<Tarea[]>([])
+  const [titulo, setTitulo] = useState('')
+  const [limite, setLimite] = useState('')
+  const [prioridad, setPrioridad] = useState<'alta' | 'normal' | 'baja'>('normal')
+  const [ocupado, setOcupado] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function cargar() {
+    try {
+      setTareas(await apiGet<Tarea[]>(`/api/pacientes/${pacienteId}/tareas`))
+    } catch {
+      /* la lista vacía ya comunica el estado */
+    }
+  }
+
+  useEffect(() => {
+    void cargar()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pacienteId])
+
+  async function crear() {
+    if (titulo.trim() === '' || ocupado) return
+    setOcupado(true)
+    setError(null)
+    try {
+      await apiPost(`/api/pacientes/${pacienteId}/tareas`, {
+        titulo: titulo.trim(),
+        prioridad,
+        ...(limite !== '' ? { fechaLimite: limite } : {}),
+      })
+      setTitulo('')
+      setLimite('')
+      setPrioridad('normal')
+      await cargar()
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'No se pudo crear la tarea')
+    } finally {
+      setOcupado(false)
+    }
+  }
+
+  async function retirar(id: string) {
+    setOcupado(true)
+    try {
+      await apiDelete(`/api/pacientes/${pacienteId}/tareas/${id}`)
+      await cargar()
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'No se pudo retirar')
+    } finally {
+      setOcupado(false)
+    }
+  }
+
+  return (
+    <section className="space-y-3 rounded-lg border border-border bg-surface p-5 shadow-sm">
+      <h3 className="font-semibold text-ink">Tareas</h3>
+      <p className="-mt-2 text-xs text-muted">
+        Las ve en su aplicación y las marca desde ahí. No sustituyen a los acuerdos de la
+        valoración.
+      </p>
+
+      <div className="flex flex-wrap gap-2">
+        <input
+          type="text"
+          value={titulo}
+          maxLength={200}
+          onChange={(e) => setTitulo(e.target.value)}
+          placeholder="Caminar 30 minutos, 5 días"
+          aria-label="Título de la tarea"
+          className="min-w-[12rem] flex-1 rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none placeholder:text-muted focus:border-primary"
+        />
+        <input
+          type="date"
+          value={limite}
+          onChange={(e) => setLimite(e.target.value)}
+          aria-label="Fecha límite"
+          className="rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink"
+        />
+        <select
+          value={prioridad}
+          onChange={(e) => setPrioridad(e.target.value as 'alta' | 'normal' | 'baja')}
+          aria-label="Prioridad"
+          className="rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink"
+        >
+          <option value="alta">Alta</option>
+          <option value="normal">Normal</option>
+          <option value="baja">Baja</option>
+        </select>
+        <button
+          type="button"
+          onClick={() => void crear()}
+          disabled={ocupado || titulo.trim() === ''}
+          className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-60"
+        >
+          Añadir
+        </button>
+      </div>
+
+      {error && (
+        <p role="alert" className="text-sm" style={{ color: 'var(--status-critical)' }}>
+          {error}
+        </p>
+      )}
+
+      {tareas.length === 0 ? (
+        <p className="text-sm text-muted">Todavía no le has mandado ninguna tarea.</p>
+      ) : (
+        <ul className="divide-y divide-border">
+          {tareas.map((t) => {
+            const e = ETIQUETA_ESTADO[t.estado]!
+            return (
+              <li key={t.id} className="flex items-start justify-between gap-3 py-2">
+                <div className="min-w-0">
+                  <p
+                    className={`text-sm ${t.estado === 'archivada' ? 'text-muted line-through' : 'text-ink'}`}
+                  >
+                    {t.titulo}
+                  </p>
+                  <p className="text-xs text-muted">
+                    {t.fechaLimite ? `Antes del ${t.fechaLimite}` : 'Sin fecha'}
+                    {t.prioridad === 'alta' && ' · prioridad alta'}
+                    {t.completadaEn &&
+                      ` · marcada el ${new Date(t.completadaEn).toLocaleDateString('es-CR')}`}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span
+                    className="rounded-pill px-2 py-0.5 text-xs font-medium"
+                    style={{
+                      color: `var(${e.token})`,
+                      backgroundColor: `color-mix(in srgb, var(${e.token}) 14%, transparent)`,
+                    }}
+                  >
+                    {e.texto}
+                  </span>
+                  {t.estado !== 'archivada' && (
+                    <button
+                      type="button"
+                      onClick={() => void retirar(t.id)}
+                      disabled={ocupado}
+                      className="text-xs text-muted hover:text-ink"
+                    >
+                      Retirar
+                    </button>
+                  )}
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </section>
+  )
 }
 
 export function RegistrosPaciente({ pacienteId }: { pacienteId: string }) {
@@ -89,6 +268,8 @@ export function RegistrosPaciente({ pacienteId }: { pacienteId: string }) {
 
   return (
     <div className="space-y-5">
+      <TareasPaciente pacienteId={pacienteId} />
+
       <div className="flex items-center justify-between gap-2">
         <p className="text-sm text-muted">
           Lo que el paciente ha apuntado desde la aplicación.

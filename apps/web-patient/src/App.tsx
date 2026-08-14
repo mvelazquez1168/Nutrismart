@@ -5,6 +5,7 @@ import { Mensajes } from './pages/Mensajes'
 import { Plan } from './pages/Plan'
 import { Citas } from './pages/Citas'
 import { Registros } from './pages/Registros'
+import { Progreso } from './pages/Progreso'
 
 export function App() {
   return (
@@ -15,6 +16,7 @@ export function App() {
         <Route path="/plan" element={<Plan />} />
         <Route path="/citas" element={<Citas />} />
         <Route path="/registros" element={<Registros />} />
+        <Route path="/progreso" element={<Progreso />} />
         <Route path="/mensajes" element={<Mensajes />} />
         {/* Cualquier otra ruta va a /activar: si ya hay sesion, esa
             pantalla redirige sola a /inicio. */}

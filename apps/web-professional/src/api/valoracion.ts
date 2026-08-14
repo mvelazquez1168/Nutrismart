@@ -208,6 +208,9 @@ export interface Conclusion {
   grasaG: number | null
   restricciones: string[]
   suplementos: string | null
+  /** Meta ponderal: lo que hace medible el progreso del paciente. */
+  pesoObjetivo: number | null
+  fechaObjetivoPeso: string | null
   acuerdos: Acuerdo[]
 }
 

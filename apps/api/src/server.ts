@@ -36,6 +36,7 @@ import { registerInvitacionRoutes } from './routes/invitacion.js'
 import { registerPacienteRoutes } from './routes/paciente.js'
 import { registerPacienteMensajeriaRoutes } from './routes/paciente-mensajeria.js'
 import { registerPacienteRegistrosRoutes } from './routes/paciente-registros.js'
+import { registerPacienteProgresoRoutes } from './routes/paciente-progreso.js'
 import cron from 'node-cron'
 import { correoConfigurado, procesarRecordatorios } from './agenda/recordatorios.js'
 import { cerrarNavegador } from './pdf/generar.js'
@@ -140,6 +141,7 @@ async function start(): Promise<void> {
     await registerPacienteRoutes(app)
     await registerPacienteMensajeriaRoutes(app)
     await registerPacienteRegistrosRoutes(app)
+    await registerPacienteProgresoRoutes(app)
 
     // ---- Recordatorios de cita (AGE-03) ----
     //

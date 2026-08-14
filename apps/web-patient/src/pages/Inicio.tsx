@@ -7,7 +7,16 @@
  */
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ApiError, getDashboard, getYo, type Dashboard, type Yo } from '../lib/api'
+import {
+  ApiError,
+  getDashboard,
+  getTareas,
+  getYo,
+  marcarTarea,
+  type Dashboard,
+  type Tarea,
+  type Yo,
+} from '../lib/api'
 import { entrar, initKeycloak, salir } from '../lib/keycloak'
 import { NavBar } from '../components/NavBar'
 
@@ -129,6 +138,7 @@ export function Inicio() {
   const [yo, setYo] = useState<Yo | null>(null)
   const [datos, setDatos] = useState<Dashboard | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [tareas, setTareas] = useState<Tarea[]>([])
 
   useEffect(() => {
     let vivo = true
@@ -139,10 +149,17 @@ export function Inicio() {
           entrar(`${window.location.origin}/inicio`)
           return
         }
-        const [perfil, panel] = await Promise.all([getYo(), getDashboard()])
+        const [perfil, panel, pendientes] = await Promise.all([
+          getYo(),
+          getDashboard(),
+          // Las tareas no bloquean el panel: si fallan, el resto se
+          // pinta igual.
+          getTareas(true).catch(() => [] as Tarea[]),
+        ])
         if (!vivo) return
         setYo(perfil)
         setDatos(panel)
+        setTareas(pendientes)
 
         // La app se viste con el color de la clínica del paciente. Es el
         // white-label de la Rebanada 6 visto desde el otro lado.
@@ -318,6 +335,55 @@ export function Inicio() {
             </p>
           </Tarjeta>
         )}
+
+        {tareas.length > 0 && (
+          <Tarjeta titulo="Lo que te pidió tu nutricionista" icono={<IconAcuerdo />}>
+            <ul className="space-y-1">
+              {tareas.slice(0, 4).map((t) => (
+                <li key={t.id}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Se pinta al pulsar; si falla se restaura.
+                      const antes = tareas
+                      setTareas(tareas.filter((x) => x.id !== t.id))
+                      marcarTarea(t.id, true).catch(() => setTareas(antes))
+                    }}
+                    className="flex w-full items-start gap-2 py-1.5 text-left"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="mt-0.5 h-4 w-4 shrink-0 rounded-pill border-2"
+                      style={{
+                        borderColor:
+                          t.prioridad === 'alta' ? 'var(--status-alert)' : 'var(--border)',
+                      }}
+                    />
+                    <span className="flex-1 text-sm text-ink">
+                      {t.titulo}
+                      {t.fechaLimite && (
+                        <span className="ml-1 text-xs text-muted">· antes del {t.fechaLimite}</span>
+                      )}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {tareas.length > 4 && (
+              <p className="mt-2 text-xs text-muted">Y {tareas.length - 4} más.</p>
+            )}
+          </Tarjeta>
+        )}
+
+        <Tarjeta titulo="Tu progreso" icono={<IconPeso />}>
+          <button
+            type="button"
+            onClick={() => navegar('/progreso')}
+            className="text-sm font-medium text-primary hover:underline"
+          >
+            Ver cómo vas hacia tu meta →
+          </button>
+        </Tarjeta>
 
         <Tarjeta titulo="Mensajes" icono={<IconChat />}>
           {datos.mensajesSinLeer > 0 ? (

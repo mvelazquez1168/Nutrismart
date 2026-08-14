@@ -317,3 +317,60 @@ export function guardarMetrica(datos: {
     body: JSON.stringify(datos),
   })
 }
+
+/* ---- Progreso y tareas ---- */
+
+export interface Progreso {
+  meses: number
+  meta: { pesoObjetivo: number | null; fechaObjetivo: string | null; kcalObjetivo: number | null }
+  avance: {
+    pesoInicial: number
+    pesoActual: number
+    objetivo: number
+    recorrido: number
+    restante: number
+    pctCompletado: number
+  } | null
+  /** Serie medida en consulta: la que cuenta contra la meta. */
+  pesoEnConsulta: { fecha: string; pesoKg: number }[]
+  /** Promedio semanal de lo que el paciente se pesa en casa. */
+  pesoEnCasa: { semana: string; promedio: number; lecturas: number }[]
+  calorias: { semana: string; kcalDia: number | null; diasConRegistro: number }[]
+  otrasMetricas: {
+    tipo: string
+    valor: number | null
+    sistolica: number | null
+    diastolica: number | null
+    unidad: string
+    medidoEn: string
+  }[]
+}
+
+export interface Tarea {
+  id: string
+  titulo: string
+  descripcion: string | null
+  fechaLimite: string | null
+  prioridad: 'alta' | 'normal' | 'baja'
+  estado: 'pendiente' | 'completada' | 'archivada'
+  completadaEn: string | null
+  createdAt: string
+  profesional: string | null
+}
+
+export function getProgreso(meses = 6): Promise<Progreso> {
+  return pedir<Progreso>(`/api/paciente/progreso?meses=${meses}`, { conAuth: true })
+}
+
+export function getTareas(soloPendientes = false): Promise<Tarea[]> {
+  const q = soloPendientes ? '?estado=pendiente' : ''
+  return pedir<Tarea[]>(`/api/paciente/tareas${q}`, { conAuth: true })
+}
+
+export function marcarTarea(id: string, completada: boolean): Promise<Tarea> {
+  return pedir(`/api/paciente/tareas/${id}`, {
+    method: 'PATCH',
+    conAuth: true,
+    body: JSON.stringify({ completada }),
+  })
+}

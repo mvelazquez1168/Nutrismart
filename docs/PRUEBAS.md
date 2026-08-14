@@ -1991,6 +1991,106 @@ Rutas servidas: `/inicio`, `/plan`, `/registros`, `/citas`, `/mensajes` — toda
 
 ---
 
+# Rebanada 23 · Metas, progreso y tareas
+
+> **La meta de peso no existía en el esquema.** Se añade a `conclusion_valoracion` y la escribe el formulario de conclusión de la R15. Es lo que la R16 dejó pendiente: «el día que se registre una meta ponderal, "acercándose al objetivo" pasará a ser computable».
+
+## La meta, desde la valoración
+
+`PUT /api/pacientes/:id/consultas/:cid/conclusion`
+
+| Prueba | Esperado |
+|---|---|
+| `{"pesoObjetivo":72,"fechaObjetivoPeso":"2026-12-31"}` | **200**, ambos guardados |
+| Fecha **sin** peso | La fecha se descarta (`null`) — sola no dice nada |
+| `{"pesoObjetivo":5}` | **400** «La meta de peso debe estar entre 20 y 400 kg» |
+| Peso sin fecha | Se admite: hay objetivos sin plazo cerrado |
+
+## PAC-05 · Progreso
+
+`GET /api/paciente/progreso?meses=`
+
+Con 80 kg (hace dos meses) → 77,6 kg (hoy) y meta 72 kg:
+
+```json
+"avance": { "pesoInicial": 80, "pesoActual": 77.6, "objetivo": 72,
+            "recorrido": -2.4, "restante": -5.6, "pctCompletado": 30 }
+```
+
+### El fallo que salió al probar
+El primer cálculo dijo que había **ganado** 2,4 kg cuando había perdido esa misma cantidad.
+
+Dos mediciones con la misma fecha empatan en `ORDER BY fecha_medicion`, el orden queda a merced del plan de ejecución y el «peso inicial» acabó siendo el más reciente. Dos mediciones el mismo día son plausibles: una corrección, o dos consultas. Se desempata por `created_at`.
+
+### Las dos series no se mezclan
+| Campo | Origen |
+|---|---|
+| `pesoEnConsulta` | `medicion_antropometrica` — báscula calibrada. **Es la que cuenta contra la meta** |
+| `pesoEnCasa` | `registro_metrica`, promediado por semana |
+
+> El encargo calculaba el avance con la de casa. Decir «te faltan 2 kg» a partir de una báscula sin calibrar, a una hora cualquiera y vestido, es dar por exacto lo que no lo es.
+
+### Otros casos
+| Prueba | Esperado |
+|---|---|
+| Sin meta registrada | `avance: null`; la pantalla dice que aún no se ha fijado |
+| Con meta pero una sola medición | `avance: null` — sin recorrido, un «0 %» sugiere un estancamiento no observado |
+| Calorías | Media por **día apuntado**, no por día natural, con `diasConRegistro` |
+| Token de profesional | **403** `solo_pacientes` |
+
+## PAC-06 · Tareas
+
+### El profesional las manda
+`POST /api/pacientes/:id/tareas`
+
+| Prueba | Esperado |
+|---|---|
+| Con título, prioridad y fecha | **201** |
+| Título en blanco | **400** |
+| Paciente de otra clínica | **404** |
+
+### El paciente las ve y las marca
+`GET /api/paciente/tareas` — orden: pendientes primero, y dentro de eso lo que vence antes; las que no tienen fecha, al final.
+
+```
+2026-08-20   alta    pendiente   Caminar 30 minutos, 5 dias
+sin fecha    baja    pendiente   Beber 2 litros de agua
+sin fecha    normal  pendiente   Traer analitica de tiroides
+```
+
+| Prueba | Esperado |
+|---|---|
+| `PATCH …/tareas/:id` con `{"completada":true}` | `estado: "completada"` + `completadaEn` |
+| Con `{"completada":false}` | Vuelve a `pendiente` y `completadaEn: null` |
+
+> Un solo endpoint para las dos direcciones. El encargo pedía `/completar` y `/descompletar`: es el mismo interruptor, y separarlo duplica la comprobación de propiedad.
+
+### Archivar: cada uno ve lo suyo
+| Prueba | Esperado |
+|---|---|
+| `DELETE /api/pacientes/:id/tareas/:tareaId` | **204** |
+| El paciente vuelve a listar | **Ya no aparece** |
+| El profesional vuelve a listar | **Sigue apareciendo**, marcada «Retirada» |
+| En base | `archivada=1, pendiente=2` — no se borra nada |
+
+## Pantallas
+
+**Paciente** — `/progreso`, alcanzable desde la tarjeta «Tu progreso» de Inicio (no como sexta pestaña: cinco es el máximo en un móvil).
+
+| Paso | Qué comprobar |
+|---|---|
+| Tarjeta de meta | Barra de avance, «Llevas 30 % del camino», y de dónde sale el número |
+| Gráfica | Dos trazos con **leyenda**: consulta firme, casa fino y discontinuo |
+| Línea de meta | Discontinua y rotulada, dentro del dibujo aunque quede lejos |
+| Selector 3 / 6 / 12 meses | Recarga el periodo |
+| Inicio | Las tareas pendientes se marcan desde ahí, con las de prioridad alta señaladas |
+
+**Profesional** — ficha → pestaña **«Sus registros»**, bloque «Tareas»: crear con título, fecha y prioridad; ver estado; retirar.
+
+Rutas servidas: `/inicio`, `/plan`, `/registros`, `/progreso`, `/citas`, `/mensajes` — todas **200**.
+
+---
+
 # Recorrido manual del frontend
 
 Con `npm run dev:web`, en **http://localhost:5173**:
