@@ -24,6 +24,9 @@ import { registerPlanesRoutes } from './routes/planes.js'
 import { registerPdfRoutes } from './routes/pdf.js'
 import { registerMensajeriaRoutes } from './routes/mensajeria.js'
 import { registerNotificacionesRoutes } from './routes/notificaciones.js'
+import { registerConsultasRoutes } from './routes/consultas.js'
+import { registerAntropometriaRoutes } from './routes/antropometria.js'
+import { registerBioquimicaRoutes } from './routes/bioquimica.js'
 import { cerrarNavegador } from './pdf/generar.js'
 
 /**
@@ -114,6 +117,9 @@ async function start(): Promise<void> {
     await registerPdfRoutes(app)
     await registerMensajeriaRoutes(app)
     await registerNotificacionesRoutes(app)
+    await registerConsultasRoutes(app)
+    await registerAntropometriaRoutes(app)
+    await registerBioquimicaRoutes(app)
 
     // host 0.0.0.0: dentro de Docker, escuchar solo en localhost dejaria
     // el puerto publicado inalcanzable desde fuera del contenedor.

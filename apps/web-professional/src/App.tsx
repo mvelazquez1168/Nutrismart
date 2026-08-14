@@ -10,6 +10,7 @@ import { MarcaPage } from './pages/ajustes/MarcaPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { BandejaMensajes } from './pages/BandejaMensajes'
 import { ReglasNotificacion } from './pages/ReglasNotificacion'
+import { ValoracionPaciente } from './pages/ValoracionPaciente'
 import { getMe } from './api/pacientes'
 import { ROL_ADMIN_CLINICA } from './api/tipos'
 import type { Me } from './api/tipos'
@@ -90,6 +91,10 @@ function Contenido() {
         <Routes>
           <Route path="/pacientes" element={<Pacientes />} />
           <Route path="/pacientes/:id" element={<PacienteFicha />} />
+          <Route
+            path="/pacientes/:id/valoracion/:consultaId"
+            element={<ValoracionPaciente />}
+          />
           <Route path="/agenda" element={<Agenda />} />
           {/* Ambas son de cualquier profesional: los hilos son propios y
               las reglas describen cómo trabaja la clínica entera. */}

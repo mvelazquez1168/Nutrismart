@@ -35,6 +35,7 @@ import { MetricasVitales } from '../components/MetricasVitales'
 import { SociodemografiaBloque } from '../components/SociodemografiaBloque'
 import { PlanAlimentarioTab } from '../components/PlanAlimentarioTab'
 import { ExportarPDFModal } from '../components/ExportarPDFModal'
+import { ListaConsultas } from '../components/eval/ListaConsultas'
 
 type Pestana = 'resumen' | 'historial' | 'laboratorios' | 'plan' | 'sociodemografia'
 
@@ -394,6 +395,8 @@ export function PacienteFicha() {
                   </ul>
                 )}
               </section>
+
+              <ListaConsultas pacienteId={p.id} />
 
               <UltimosLaboratorios estudios={laboratorios} />
 

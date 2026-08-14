@@ -1005,6 +1005,121 @@ Cada tipo tiene sus parámetros y no se aceptan otros. Guardar lo que venga en e
 
 ---
 
+# Rebanada 13 · Valoración ABCD (contenedor, antropometría, bioquímica)
+
+```powershell
+$b = @{client_id='nutrismart-web'; grant_type='password'; username='ana@vida.cr'; password='nutrismart-dev'}
+$TOKEN = (Invoke-RestMethod -Method Post -Body $b `
+  -Uri "http://localhost:8080/realms/nutrismart/protocol/openid-connect/token").access_token
+$H = @{ Authorization = "Bearer $TOKEN" }
+$API = "http://localhost:4001"
+$MARIA = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+```
+
+## EVAL-00 · Contenedor
+
+### CA-13-01 a CA-13-03 · Crear consultas
+```powershell
+$c1 = Invoke-RestMethod "$API/api/pacientes/$MARIA/consultas" -Method Post -Headers $H
+$c2 = Invoke-RestMethod "$API/api/pacientes/$MARIA/consultas" -Method Post -Headers $H
+"$($c1.numeroConsulta) $($c1.tipo) / $($c2.numeroConsulta) $($c2.tipo)"
+```
+
+**Esperado:** `1 inicial / 2 seguimiento`. El ordinal se calcula **dentro del `INSERT`**: con un `count(*)` previo, dos consultas creadas a la vez tomarían el mismo número y la restricción única lo rechazaría con un error incomprensible.
+
+### CA-13-04 · Progreso por sección
+`PUT …/consultas/:id/seccion` con `{"seccion":"conclusion","completa":true}` → la consulta vuelve con `seccionesCompletas: {"antrop":true,"conclusion":true}`. En pantalla, la pestaña muestra el círculo relleno.
+
+Una sección inventada devuelve **400** con la lista de válidas.
+
+### CA-13-05 y CA-13-06 · Finalizar
+| Prueba | Esperado |
+|---|---|
+| Finalizar sin conclusión | **409 `secciones_incompletas`** con `faltan: ["conclusion"]` |
+| Finalizar con antropometría y conclusión | **200**, `estado: "finalizada"` |
+| Finalizar dos veces | **409 `consulta_finalizada`** |
+| Editar una sección de una finalizada | **409** |
+| Registrar medidas en una finalizada | **409** |
+
+La comprobación está en el servidor **además** del botón deshabilitado: el botón decide qué se ve, no qué se puede.
+
+### CA-13-07 · Aislamiento
+Luis (`nutricionista`) sobre una consulta de un paciente de Ana → **404**, no 403: un 403 sobre un identificador ajeno confirma que esa consulta existe.
+
+## EVAL-01 · Antropometría
+
+### CA-13-08 y CA-13-09 · Índices derivados
+```powershell
+Invoke-RestMethod "$API/api/pacientes/$MARIA/antropometria" -Method Post -Headers $H `
+  -ContentType "application/json" `
+  -Body "{`"consultaId`":`"$($c1.id)`",`"pesoKg`":78,`"tallaCm`":165,`"cinturaCm`":92,`"caderaCm`":104}"
+```
+
+**Esperado:** `imc: 28.65`, `icc: 0.885`.
+
+78 / 1,65² = 28,65 — el criterio original decía 28,7, que es el mismo número redondeado a un decimal.
+
+**Son columnas generadas en la base**, no valores que envíe el cliente: un índice que llegara desde fuera podría no corresponder con el peso y la talla de su propia fila.
+
+### CA-13-10 · Grasa derivada en BIA
+Enviando `pesoKg: 78` y `masaLibreGrasaKg: 52` sin porcentaje → `pctGrasa: 33.33`, `masaGrasaKg: 26`.
+
+Solo se deriva lo que **no** viene: si el aparato dio un porcentaje, ese manda.
+
+### CA-13-11 · Pliegues cutáneos
+Con `lib/composicion.ts`, mujer de 42 años y pliegues 8/18/16/14 mm:
+
+| Fórmula | Resultado |
+|---|---|
+| Durnin-Womersley, mujer 42 | 32,31 % |
+| Durnin-Womersley, hombre 42 | 26,13 % |
+| Jackson-Pollock, mujer 42 | 22,90 % |
+| Jackson-Pollock, hombre 42 | 14,06 % |
+| **Sin edad, sin sexo o con un pliegue ausente** | **`null`** |
+
+El `null` es la parte importante: los coeficientes dependen del sexo y del tramo de edad, así que completarlos con valores por defecto daría un porcentaje con apariencia de dato. Mismo criterio que el `sin_referencia` de los laboratorios.
+
+### CA-13-12 a CA-13-14 · Histórico y sección
+- `GET /antropometria` devuelve de la más reciente hacia atrás, `limite` máximo 50.
+- La gráfica aparece con **2 o más** mediciones que tengan masa magra y grasa; con una, dice que es la primera.
+- Guardar la medición marca `antrop` como completa **sin pedirlo aparte**.
+- Repetir el guardado en la misma consulta **reemplaza**: no crea una segunda medición del mismo día.
+
+### CA-13-15 · Lectura de los índices
+| Valor | Etiqueta |
+|---|---|
+| IMC 17 | Bajo peso |
+| IMC 22 | Normal |
+| IMC 28,65 | Sobrepeso |
+| IMC 41 | Obesidad III |
+| ICC 0,885 en **mujer** | Riesgo elevado |
+| ICC 0,885 en **hombre** | Dentro de rango |
+| ICC sin sexo registrado | Sin referencia para este paciente |
+
+El umbral difiere por sexo (OMS: 0,90 y 0,85). Sin sexo no se emite juicio, y la etiqueta va siempre en texto además del color.
+
+## EVAL-02 · Bioquímica
+
+### CA-13-16 y CA-13-17 · Agrupación y estado
+`GET /api/pacientes/:id/labs/nutricional?dias=90`
+
+**Esperado** con el seed: grupos **del catálogo** (`Perfil lipídico`, `Hematología`…), y para un HDL de 45 con mínimo 50 → `estado: "bajo"`.
+
+Los grupos salen de `biomarcador.grupo`, no de listas de nombres en el código: un biomarcador nuevo queda clasificado sin tocar nada, mientras que con listas a mano caería en un limbo silencioso.
+
+`bajo`/`alto` afinan el `alterado` de la Rebanada 5: para valorar hace falta saber hacia dónde se sale del rango. **No hay `critico`**: el valor de pánico depende de umbrales que el proyecto sitúa en RPM.
+
+### CA-13-18 y CA-13-19 · Panel
+- Los grupos con algo fuera de rango se despliegan **solos** al cargar; el resto queda plegado.
+- Sin estudios en la ventana: aviso ámbar explicando que la bioquímica se construye con lo ya cargado, y enlace a Laboratorios. Aquí **no** se capturan valores.
+
+### CA-13-20 · Marcar revisada
+«Marcar bioquímica revisada» → `seccionesCompletas.bioquim = true`.
+
+Se marca a mano, al revés que la antropometría: revisar es un acto del profesional, no una consecuencia de que existan laboratorios.
+
+---
+
 # Recorrido manual del frontend
 
 Con `npm run dev:web`, en **http://localhost:5173**:
@@ -1180,6 +1295,36 @@ En **Reglas automáticas**:
 | **Evaluar ahora** otra vez | «no había nada nuevo que avisar» — **0 generadas** |
 
 La campana está en la cabecera, a la izquierda del nombre. Al pulsarla se abre un panel desde la derecha; **Escape** y el clic fuera lo cierran.
+
+### Valoración ABCD (Rebanada 13)
+
+En la ficha del paciente, tarjeta **Valoraciones** (columna derecha del Resumen):
+
+| Paso | Qué comprobar |
+|---|---|
+| Sin valoraciones | «Sin valoraciones registradas» |
+| **+ Nueva consulta** | Crea y **navega directamente** a la valoración |
+| Cabecera | «Consulta #1 · Inicial» y chip ámbar **En curso** |
+| Pestañas | Cinco: Antropometría, Bioquímica, Clínico, Dietético, Conclusiones |
+| Clínico / Dietético / Conclusiones | Declaradas y vacías, explicando que llegan más adelante |
+| **Finalizar valoración** | **Deshabilitado**; al pasar el cursor dice qué falta |
+| Peso 78 y talla 165 | El chip de IMC muestra **28.65 · Sobrepeso** mientras tecleas |
+| Cintura 92 y cadera 104 | ICC **0.885**; en mujer «Riesgo elevado», en hombre «Dentro de rango» |
+| Paciente sin sexo registrado | El ICC dice «Sin referencia para este paciente» |
+| Método **Bioimpedancia** | Seis campos; con masa libre de grasa y peso, la grasa se deriva al guardar |
+| Método **Pliegues** | Los campos cambian según la fórmula y el sexo |
+| Pliegues sin edad o sexo | Aviso: no se estima el porcentaje, se registran los pliegues tal cual |
+| **Guardar antropometría** | La pestaña se marca completa **sola** |
+| Volver a guardar | **Reemplaza**; no aparece una segunda medición del mismo día |
+| Con 2 o más mediciones | Aparece la gráfica de área apilada, con leyenda |
+| Pestaña **Bioquímica** | Grupos del catálogo; los que tienen algo fuera de rango se abren solos |
+| Paciente sin laboratorios | Aviso ámbar con enlace a Laboratorios |
+| **Marcar bioquímica revisada** | La pestaña se marca completa |
+| Completar antropometría y conclusión | **Finalizar** se habilita |
+| Tras finalizar | Chip verde **Finalizada**, aviso de solo lectura y **sin botones de guardar** |
+| Volver a la ficha | La valoración aparece como Finalizada, con botón **Ver** |
+
+La antropometría se marca sola al guardar; la bioquímica se marca a mano. Es deliberado: revisar los laboratorios es un acto del profesional, no una consecuencia de que existan.
 
 ---
 
