@@ -777,6 +777,103 @@ Crear una comida solo con `descripcion`, sin `caloriasKcal` ni gramos.
 
 ---
 
+# Rebanada 10 · Exportación del expediente a PDF
+
+**Requiere los dos usuarios**: `ana@vida.cr` (`admin_clinica`) y `luis@vida.cr` (`nutricionista`).
+
+Preparación en PowerShell:
+
+```powershell
+$b = @{client_id='nutrismart-web'; grant_type='password'; username='ana@vida.cr'; password='nutrismart-dev'}
+$TOKEN = (Invoke-RestMethod -Method Post -Body $b `
+  -Uri "http://localhost:8080/realms/nutrismart/protocol/openid-connect/token").access_token
+$H = @{ Authorization = "Bearer $TOKEN" }
+$API = "http://localhost:4001"
+$MARIA = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+```
+
+> **Manda el cuerpo desde archivo si lleva acentos.** Pasar JSON con tildes en línea de comandos descuadra el `Content-Length` y la API responde **400 `FST_ERR_CTP_INVALID_CONTENT_LENGTH`** — un error que parece de la API y es del shell. En PowerShell, `-Body ([Text.Encoding]::UTF8.GetBytes($json))`; con curl, `--data-binary "@cuerpo.json"`.
+
+### CA-10-01 · Generar el documento completo
+```powershell
+$json = '{"secciones":["perfil","plan","laboratorios","sociodemografico"],"notasProfesional":"Reducir sodio."}'
+Invoke-WebRequest "$API/api/pacientes/$MARIA/pdf" -Method Post -Headers $H `
+  -ContentType "application/json" -Body ([Text.Encoding]::UTF8.GetBytes($json)) `
+  -OutFile "expediente.pdf"
+Get-Item expediente.pdf | Select-Object Length
+```
+
+**Esperado:** **200**, archivo de decenas de KB que empieza por `%PDF-`. Cabeceras: `Content-Type: application/pdf`, `Content-Disposition` con `Expediente_<Paciente>_<AAAA-MM-DD>.pdf`, `X-Content-Type-Options: nosniff`, `Cache-Control: private, no-store` y `X-Formato-Exportacion: pdf`.
+
+Medido con el seed más un plan activo, un estudio de laboratorio y sociodemografía: **80 KB**.
+
+### CA-10-02 · Contenido del documento
+Volcando el HTML que alimenta al PDF, debe contener:
+
+| Comprobación | Esperado |
+|---|---|
+| Banda de cabecera | `background: <color_primario de brand_config>` |
+| Secciones | Información del paciente · Plan de alimentación · Resultados de laboratorio · Contexto social · Estrategia y recomendaciones |
+| Filas del plan | **Solo los momentos con comida** — un plan de desayuno, almuerzo y cena no pinta seis filas |
+| Estados de laboratorio | `estado normal` / `estado alterado`, con colores **fijos** |
+| Diagnósticos y alergias | Como etiquetas, las alergias en ámbar |
+
+Los estados clínicos **no** siguen la marca: un valor alterado se ve igual en pantalla, en papel y en cualquier clínica.
+
+### CA-10-03 · Aislamiento y alcance
+| Prueba | Esperado |
+|---|---|
+| Luis (`nutricionista`) exportando un paciente de Ana | **404** |
+| Ana exportando un paciente de otra clínica | **404** |
+| Sin token | **401** |
+| Luis pidiendo el historial de un paciente ajeno | **404** |
+
+El historial se acota sobre el **paciente**: quien no puede verlo tampoco puede saber cuántas veces se exportó su expediente.
+
+### CA-10-04 · Historial de exportaciones
+```powershell
+Invoke-RestMethod "$API/api/pacientes/$MARIA/pdf/historial" -Headers $H | Format-Table
+```
+
+**Esperado:** las exportaciones de la más reciente hacia atrás, con `secciones`, `archivoNombre`, `archivoTamano`, `notasProfesional` y el profesional que firmó.
+
+La traza se escribe **antes** de responder: si el registro falla, es preferible no entregar el documento a entregarlo sin constancia de que salió.
+
+### CA-10-05 · Validación de secciones
+| Prueba | Esperado |
+|---|---|
+| `{"secciones":[]}` | **400 `sin_secciones`** |
+| `{"secciones":["perfil","inventada"]}` | **200** — la desconocida se descarta |
+| `notasProfesional` de más de 3000 caracteres | **400** |
+
+Descartar en vez de rechazar es deliberado: el juego de secciones va a crecer y un cliente algo desactualizado debe seguir exportando lo que sí entiende.
+
+### CA-10-06 · El consentimiento manda también en el PDF
+Con un paciente **sin** consentimiento sociodemográfico, pedir `["perfil","sociodemografico"]`.
+
+**Esperado:** el documento sale sin esa sección. La comprobación está en la consulta (`consentimiento_otorgado = true`), no en la plantilla: si dependiera de la capa de presentación, bastaría un descuido para publicar datos que el paciente no autorizó.
+
+### CA-10-07 · Reserva a HTML si Chromium no está
+Forzando un Chromium inexistente:
+
+```bash
+PUPPETEER_EXECUTABLE_PATH=/ruta/que/no/existe npx tsx <script que llama a generar()>
+```
+
+| Entorno | Esperado |
+|---|---|
+| Chromium roto | `tipo: html`, empieza por `<!DOCTYPE html>` |
+| Chromium disponible | `tipo: pdf`, empieza por `%PDF-1.4` |
+
+Un documento clínico no debe quedar retenido por un problema de infraestructura. La respuesta lo declara en `X-Formato-Exportacion` y el modal lo dice en pantalla, en vez de entregar un archivo que el visor no abre.
+
+### CA-10-08 · Solo el plan activo
+Con un paciente que tenga un borrador y un plan activo, exportar con `["plan"]`.
+
+**Esperado:** aparece el **activo**. Un borrador no se ha prescrito y un archivado ya no rige; exportar cualquiera de los dos como «el plan» mentiría.
+
+---
+
 # Recorrido manual del frontend
 
 Con `npm run dev:web`, en **http://localhost:5173**:
@@ -899,6 +996,25 @@ En la ficha de un paciente, pestaña **Plan alimentario**:
 | Vaciar todas las celdas y Guardar | Vuelve el mensaje de «aún no tiene comidas» |
 
 El editor manda la rejilla **entera** y el servidor reemplaza lo que había. Es lo que hace expresable vaciar una celda: con un guardado incremental, quitar el almuerzo del martes no tendría forma de decirse.
+
+### Exportar PDF (Rebanada 10)
+
+En la cabecera de la ficha, botón **Exportar PDF**:
+
+| Paso | Qué comprobar |
+|---|---|
+| Abrir el modal | Esqueletos mientras consulta qué hay disponible |
+| Paciente **sin** plan activo | «Plan de alimentación» **deshabilitado**, con el motivo debajo |
+| Paciente **sin** consentimiento social | «Contexto social» deshabilitado: *«Requiere el consentimiento del paciente»* |
+| Paciente **con** plan activo | La sección entra **marcada** por defecto |
+| Desmarcar todo | El botón **Descargar** se deshabilita |
+| Escribir recomendaciones | El contador llega a 3000 y ahí se detiene |
+| **Descargar** | El navegador guarda `Expediente_<Paciente>_<fecha>.pdf` |
+| Abrir el PDF | Cabecera con el **color de la clínica**, logo si está configurado, y firma con la colegiatura al pie |
+| Con marca cambiada en Configuración | El PDF sale con el color nuevo — es la misma `brand_config` |
+| **Escape** con el modal abierto | Cierra; mientras genera, **no** cierra |
+
+Si el servidor no tiene Chromium, la descarga es un `.html` y el modal lo explica en vez de cerrarse. Es deliberado: un expediente no debe quedar retenido por un problema de infraestructura.
 
 ---
 

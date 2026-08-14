@@ -155,6 +155,71 @@ export async function apiDescargar(ruta: string, nombreSugerido: string): Promis
 }
 
 /**
+ * Envía un cuerpo JSON y descarga la respuesta como archivo.
+ *
+ * No sirve `apiDescargar`: aquel es un GET, y aquí el servidor necesita
+ * saber qué secciones incluir antes de poder generar nada. Tampoco vale
+ * un enlace: la API exige la cabecera Authorization y un `<a href>` no
+ * la envía.
+ *
+ * El nombre sale del `Content-Disposition` que manda el servidor; el
+ * parámetro es solo el respaldo si esa cabecera no llega.
+ */
+export async function apiDescargarPost(
+  ruta: string,
+  cuerpo: unknown,
+  nombreRespaldo: string,
+): Promise<{ nombre: string; tipo: string | null }> {
+  const token = await tokenVigente()
+
+  let respuesta: Response
+  try {
+    respuesta = await fetch(`${BASE}${ruta}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(cuerpo),
+    })
+  } catch {
+    throw new ApiError(0, `No se pudo contactar con la API en ${BASE}. ¿Esta levantada?`)
+  }
+
+  if (!respuesta.ok) {
+    let mensaje: string | undefined
+    let codigo: string | undefined
+    try {
+      const error = (await respuesta.json()) as { error?: string; message?: string }
+      codigo = error.error
+      mensaje = error.message
+    } catch {
+      /* el cuerpo no era JSON */
+    }
+    throw new ApiError(respuesta.status, mensajeSegunEstado(respuesta.status, mensaje), codigo)
+  }
+
+  const disposicion = respuesta.headers.get('Content-Disposition') ?? ''
+  const coincidencia = disposicion.match(/filename="([^"]+)"/)
+  const nombre = coincidencia?.[1] ?? nombreRespaldo
+
+  const blob = await respuesta.blob()
+  const url = URL.createObjectURL(blob)
+  try {
+    const enlace = document.createElement('a')
+    enlace.href = url
+    enlace.download = nombre
+    document.body.appendChild(enlace)
+    enlace.click()
+    enlace.remove()
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+
+  return { nombre, tipo: respuesta.headers.get('X-Formato-Exportacion') }
+}
+
+/**
  * Subida multipart.
  *
  * NO se fija Content-Type a mano: el navegador tiene que añadirlo con

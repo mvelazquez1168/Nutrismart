@@ -15,6 +15,7 @@ import { requireAuth } from '../auth.js'
 import { esUuid } from '../pacientes/validacion.js'
 import { resolverAlcance } from '../pacientes/acceso.js'
 import { almacen, detectarTipo, TAMANO_MAXIMO_BYTES } from '../almacen/index.js'
+import { cabeceraDescarga } from '../almacen/descarga.js'
 import { registrarArchivo, obtenerArchivo } from '../archivos/repositorio.js'
 
 interface ParamsId {
@@ -26,21 +27,6 @@ function sinProfesional() {
     error: 'profesional_no_encontrado',
     message: 'Tu usuario no tiene un profesional asociado en esta clínica',
   }
-}
-
-/**
- * Construye Content-Disposition sin dejar que el nombre inyecte
- * cabeceras.
- *
- * Se emiten las dos formas: `filename` con un ASCII saneado para
- * clientes antiguos, y `filename*` en UTF-8 para que "Informe
- * glucémico.pdf" conserve su tilde. El saneado elimina todo lo que no
- * sea ASCII imprimible, lo que de paso descarta CR y LF —los
- * caracteres con los que se parte una cabecera— y las comillas.
- */
-function cabeceraDescarga(nombre: string): string {
-  const ascii = nombre.replace(/[^\x20-\x7E]/g, '_').replace(/["\\;]/g, '_') || 'archivo'
-  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(nombre)}`
 }
 
 /** Recorta un nombre desmedido conservando algo legible. */

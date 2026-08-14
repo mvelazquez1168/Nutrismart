@@ -34,6 +34,7 @@ import { Timeline } from '../components/Timeline'
 import { MetricasVitales } from '../components/MetricasVitales'
 import { SociodemografiaBloque } from '../components/SociodemografiaBloque'
 import { PlanAlimentarioTab } from '../components/PlanAlimentarioTab'
+import { ExportarPDFModal } from '../components/ExportarPDFModal'
 
 type Pestana = 'resumen' | 'historial' | 'laboratorios' | 'plan' | 'sociodemografia'
 
@@ -78,6 +79,7 @@ export function PacienteFicha() {
   const [laboratorios, setLaboratorios] = useState<EstudioLab[]>([])
   const [catalogo, setCatalogo] = useState<MetricaCatalogo[]>([])
   const [labModal, setLabModal] = useState(false)
+  const [exportando, setExportando] = useState(false)
 
   const [pestana, setPestana] = useState<Pestana>('resumen')
   const [editando, setEditando] = useState(false)
@@ -238,6 +240,29 @@ export function PacienteFicha() {
               className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-60"
             >
               + Punto de control
+            </button>
+            <button
+              type="button"
+              onClick={() => setExportando(true)}
+              className="flex items-center gap-1.5 rounded-md border border-primary px-4 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary-tint"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={1.5}
+                stroke="currentColor"
+                className="h-4 w-4"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
+                />
+              </svg>
+              Exportar PDF
             </button>
             <button
               type="button"
@@ -426,6 +451,13 @@ export function PacienteFicha() {
           }
         />
       )}
+
+      <ExportarPDFModal
+        abierto={exportando}
+        pacienteId={p.id}
+        pacienteNombre={p.nombre}
+        onCerrar={() => setExportando(false)}
+      />
 
       <PacienteModal
         abierto={editando}

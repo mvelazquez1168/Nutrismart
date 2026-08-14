@@ -21,6 +21,8 @@ import { registerBrandRoutes } from './routes/brand.js'
 import { registerSociodemograficoRoutes } from './routes/sociodemografico.js'
 import { registerAdminRoutes } from './routes/admin.js'
 import { registerPlanesRoutes } from './routes/planes.js'
+import { registerPdfRoutes } from './routes/pdf.js'
+import { cerrarNavegador } from './pdf/generar.js'
 
 /**
  * pino-pretty es una devDependency: en la imagen de produccion no
@@ -107,6 +109,7 @@ async function start(): Promise<void> {
     await registerSociodemograficoRoutes(app)
     await registerAdminRoutes(app)
     await registerPlanesRoutes(app)
+    await registerPdfRoutes(app)
 
     // host 0.0.0.0: dentro de Docker, escuchar solo en localhost dejaria
     // el puerto publicado inalcanzable desde fuera del contenedor.
@@ -122,6 +125,9 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     void (async () => {
       app.log.info(`${signal} recibido, cerrando`)
       await app.close()
+      // Chromium se reutiliza entre exportaciones: sin esto queda un
+      // proceso huérfano cada vez que se reinicia la API.
+      await cerrarNavegador()
       await closeDb()
       process.exit(0)
     })()
