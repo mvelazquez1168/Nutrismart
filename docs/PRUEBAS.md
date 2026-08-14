@@ -1721,6 +1721,17 @@ Se resuelven **en el build**, no en runtime: cambiar de entorno exige reconstrui
 | `ports are not available: 0.0.0.0:5175` | Un `npx vite --port 5175` de una prueba anterior sin cerrar. Docker no dice quién ocupa el puerto |
 | Rutas posteriores a la R12 devuelven 404 | El contenedor `nutrismart-api` servía una imagen anterior a la rebanada de IA y competía por el 4001 con `npm run dev`. Se reconstruye la imagen |
 
+Tras reconstruirla, el stack en Docker responde con el código actual:
+
+| Ruta | Esperado |
+|---|---|
+| `GET …/soap` (R12) | **200** |
+| `GET …/consultas/ultima-finalizada` (R16) | **404** `sin_consulta_previa` — no hay consultas cerradas |
+| `POST …/invitar` (R17) | **201** |
+| `GET /api/paciente/plan` (R18) con token de profesional | **403** `solo_pacientes` |
+
+Los tres contenedores —`nutrismart-db`, `nutrismart-api`, `nutrismart-web-pat`— quedan levantados a la vez.
+
 ## Pendiente: el cliente de Keycloak
 
 Sin `nutrismart-patient` en el realm nadie puede autenticarse. Pasos y —sobre todo— el **mapper de audiencia** que suele olvidarse, en `docs/REBANADA-19.md`.
