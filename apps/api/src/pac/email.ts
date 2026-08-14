@@ -1,13 +1,20 @@
 /**
- * Correo de invitación al paciente — PAC-01.
+ * Correo de invitación al paciente — PAC-01, vía Resend.
  *
- * Sin SMTP configurado, el enlace se imprime en la consola de la API y
- * la invitación se crea igual. En desarrollo eso es lo único que hace
+ * Sin `RESEND_API_KEY` el enlace se imprime en la consola de la API y la
+ * invitación se crea igual. En desarrollo eso es lo único que hace
  * falta, y en producción un fallo de correo no debe impedir que el
  * profesional copie el enlace y lo entregue por otra vía.
+ *
+ * El resultado distingue tres desenlaces en vez de un booleano: "no hay
+ * correo configurado" y "el envío falló" piden cosas distintas al
+ * profesional, y decirle lo primero cuando pasó lo segundo le hace
+ * buscar el problema donde no está.
  */
-import nodemailer from 'nodemailer'
+import { Resend } from 'resend'
 import { config } from '../config.js'
+
+export type ResultadoEnvio = 'enviado' | 'sin_configurar' | 'fallo'
 
 /**
  * Escapa el texto que entra en el HTML del correo.
@@ -24,6 +31,8 @@ function esc(t: string): string {
     .replace(/"/g, '&quot;')
 }
 
+const cliente = config.resend ? new Resend(config.resend.apiKey) : null
+
 export interface DatosInvitacion {
   correoPaciente: string
   nombrePaciente: string
@@ -31,28 +40,20 @@ export interface DatosInvitacion {
   token: string
 }
 
-/** Devuelve true si el correo salió de verdad. */
-export async function enviarInvitacion(datos: DatosInvitacion): Promise<boolean> {
+export async function enviarInvitacion(datos: DatosInvitacion): Promise<ResultadoEnvio> {
   const enlace = `${config.pacAppUrl}/activar?token=${datos.token}`
 
-  if (!config.smtp) {
+  if (!cliente || !config.resend) {
     console.log('─'.repeat(60))
-    console.log('[PAC] SMTP no configurado — modo consola')
+    console.log('[PAC] RESEND_API_KEY no configurada — modo consola')
     console.log(`[PAC] Invitación para: ${datos.correoPaciente}`)
     console.log(`[PAC] Enlace de activación: ${enlace}`)
     console.log('─'.repeat(60))
-    return false
+    return 'sin_configurar'
   }
 
-  const transporte = nodemailer.createTransport({
-    host: config.smtp.host,
-    port: config.smtp.port,
-    secure: config.smtp.secure,
-    ...(config.smtp.user ? { auth: { user: config.smtp.user, pass: config.smtp.pass } } : {}),
-  })
-
-  await transporte.sendMail({
-    from: config.smtp.from,
+  const { error } = await cliente.emails.send({
+    from: config.resend.from,
     to: datos.correoPaciente,
     subject: `Tu invitación a NutriSmart — ${datos.nombreClinica}`,
     text:
@@ -71,5 +72,16 @@ export async function enviarInvitacion(datos: DatosInvitacion): Promise<boolean>
     `,
   })
 
-  return true
+  if (error) {
+    // No se lanza: la invitación ya existe en la base y el profesional
+    // tiene el enlace en la respuesta. Convertir esto en una excepción
+    // haría que el botón pareciera haber fallado del todo cuando lo
+    // único que falló fue el reparto.
+    console.error('[PAC] Resend rechazó el envío:', error.name, error.message)
+    // El enlace también a consola: es el plan B inmediato.
+    console.log(`[PAC] Enlace de activación: ${enlace}`)
+    return 'fallo'
+  }
+
+  return 'enviado'
 }

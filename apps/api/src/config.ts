@@ -61,15 +61,18 @@ const archivosDir = optional('ARCHIVOS_DIR') ?? resolve(here, '../../../datos/ar
 // App del paciente y correo saliente. Ambos opcionales: sin SMTP la
 // invitacion se crea igual y el enlace sale por consola.
 const pacAppUrl = optional('PAC_APP_URL') ?? 'http://localhost:5174'
-const smtpHost = optional('SMTP_HOST')
-const smtp = smtpHost
+// Resend para el correo saliente. Sin clave, la invitacion se crea
+// igual y el enlace sale por consola.
+//
+// El remitente por defecto es el sandbox de Resend, que SOLO entrega a
+// direcciones verificadas en la cuenta: sirve para probar entre nosotros
+// y no para invitar a un paciente real. Para eso hace falta un dominio
+// propio verificado — NutriSmart no puede usar el de Vetline.
+const resendApiKey = optional('RESEND_API_KEY')
+const resend = resendApiKey
   ? {
-      host: smtpHost,
-      port: Number(optional('SMTP_PORT') ?? 587),
-      secure: optional('SMTP_SECURE') === 'true',
-      user: optional('SMTP_USER'),
-      pass: optional('SMTP_PASS'),
-      from: optional('SMTP_FROM') ?? 'noreply@nutrismart.app',
+      apiKey: resendApiKey,
+      from: optional('RESEND_FROM') ?? 'NutriSmart <onboarding@resend.dev>',
     }
   : undefined
 
@@ -90,7 +93,7 @@ export const config = {
   nodeEnv,
   isDev: nodeEnv !== 'production',
   pacAppUrl,
-  smtp,
+  resend,
   anthropicApiKey,
   anthropicModelo,
   iaHabilitada: anthropicApiKey !== undefined,

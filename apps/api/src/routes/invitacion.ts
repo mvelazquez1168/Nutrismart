@@ -15,7 +15,8 @@ import { pool } from '../db.js'
 import { requireAuth, requireAuthPaciente } from '../auth.js'
 import { resolverAlcance } from '../pacientes/acceso.js'
 import { pacienteVisible } from './consultas.js'
-import { enviarInvitacion } from '../pac/email.js'
+import { enviarInvitacion, type ResultadoEnvio } from '../pac/email.js'
+import { config } from '../config.js'
 
 function sinProfesional() {
   return {
@@ -115,15 +116,15 @@ export async function registerInvitacionRoutes(app: FastifyInstance): Promise<vo
       // El correo va DESPUÉS de confirmar. Si falla, la invitación ya
       // existe y el profesional puede entregar el enlace a mano; al
       // revés habría enlaces enviados que no existen en la base.
-      let enviado = false
+      let envio: ResultadoEnvio = 'fallo'
       try {
-        enviado = await enviarInvitacion({
+        envio = await enviarInvitacion({
           correoPaciente: p.correo,
           nombrePaciente: p.nombre,
           nombreClinica: p.clinica,
           token,
         })
-        if (enviado) {
+        if (envio === 'enviado') {
           await pool.query(`update invitacion_paciente set email_enviado = true where id = $1`, [
             invitacion.id,
           ])
@@ -132,15 +133,20 @@ export async function registerInvitacionRoutes(app: FastifyInstance): Promise<vo
         request.log.error({ e }, 'pac: fallo al enviar la invitación')
       }
 
+      const MENSAJE: Record<ResultadoEnvio, string> = {
+        enviado: `Invitación enviada a ${p.correo}`,
+        sin_configurar:
+          'Invitación creada. No hay correo configurado: entrega el enlace tú mismo.',
+        fallo: 'Invitación creada, pero el correo no salió. Entrega el enlace tú mismo.',
+      }
+
       return reply.code(201).send({
-        mensaje: enviado
-          ? `Invitación enviada a ${p.correo}`
-          : 'Invitación creada. No hay correo configurado: entrega el enlace tú mismo.',
-        emailEnviado: enviado,
+        mensaje: MENSAJE[envio],
+        emailEnviado: envio === 'enviado',
         // El enlace se devuelve siempre a quien acaba de crearlo. Ya está
         // autorizado a invitar a este paciente, y sin esto una caída del
         // correo deja la invitación inservible.
-        enlace: `${process.env['PAC_APP_URL'] ?? 'http://localhost:5174'}/activar?token=${token}`,
+        enlace: `${config.pacAppUrl}/activar?token=${token}`,
         expiraEn: invitacion.expira_en,
       })
     },

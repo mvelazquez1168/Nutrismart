@@ -12,9 +12,17 @@ Es la primera rebanada que toca `apps/web-patient`, que hasta ahora era solo un 
 
 **La API está verificada de punta a punta**, incluidas las cinco consultas del panel con datos reales: peso, próxima cita, plan con gramos derivados y acuerdos de la última consulta.
 
+**El correo de invitación se envía de verdad.** Comprobado con Resend contra una dirección real: `emailEnviado: true` y `email_enviado` en la base.
+
 **El flujo de activación en el navegador NO se ha ejecutado.** Falta un paso que no puedo dar: el realm de Keycloak no tiene el cliente `nutrismart-patient`, y es una instalación compartida cuyas credenciales de administrador no tengo. Sin ese cliente, la app del paciente no puede autenticar a nadie.
 
 Está todo escrito y compilando; queda aplicarlo. Ver **«El paso que falta»** al final.
+
+### Dos cosas que aparecieron al probar
+
+**El puerto 5174 ya estaba ocupado** por `vetplatform-frontend`, el frontend de Vetline, que corre en la misma máquina. La app del paciente usa el **5175**; el encargo daba por libre el 5174 y `npm run dev` habría fallado al arrancar.
+
+**El contenedor `nutrismart-api` publica el 4001 con código antiguo** y compite con `npm run dev` por ese puerto. Cuando gana el contenedor, todas las rutas desde la Rebanada 12 responden 404 y parece que el código no se registró. Para desarrollar: `docker stop nutrismart-api`.
 
 ---
 
@@ -76,7 +84,15 @@ El encargo caducaba la anterior con un `UPDATE` suelto antes del `INSERT`. Dos p
 
 Un correo que sale bien puede acabar en la carpeta de no deseado. El profesional que acaba de crear la invitación ya está autorizado a invitar a ese paciente: ocultarle el enlace convierte un contratiempo en un callejón sin salida.
 
-### 11. `keycloak_user_id` es único a nivel global
+### 11. El correo va por Resend, y un fallo de envío no es un fallo de invitación
+
+`enviarInvitacion` devuelve tres desenlaces —`enviado`, `sin_configurar`, `fallo`— en vez de un booleano. «No hay correo configurado» y «el envío falló» piden cosas distintas al profesional, y decirle lo primero cuando pasó lo segundo le hace buscar el problema donde no está.
+
+Un rechazo de Resend **no lanza**: la invitación ya existe y el enlace va en la respuesta. Convertirlo en excepción haría que el botón pareciera haber fallado del todo cuando lo único que falló fue el reparto. El enlace se imprime además en consola, como plan B inmediato.
+
+**El remitente por defecto es el sandbox de Resend**, que solo entrega a la dirección del titular de la cuenta. Para invitar a pacientes de verdad hace falta un dominio propio verificado en `resend.com/domains`: NutriSmart no puede usar el de Vetline, porque la verificación es por dominio. Vale también un subdominio propio.
+
+### 12. `keycloak_user_id` es único a nivel global
 
 Una cuenta de Keycloak es una persona que inicia sesión, y al entrar tiene que haber **un** expediente que abrir. Si la misma persona es paciente de dos clínicas, son dos cuentas: la alternativa obliga a un selector de clínica al entrar que esta versión no tiene.
 
@@ -95,6 +111,9 @@ Una cuenta de Keycloak es una persona que inicia sesión, y al entrar tiene que 
 | `cita.estado 'no_asistio'` | El enum es `programada` / `completada` / `cancelada` |
 | `paciente.foto_url` | No existe |
 | Hexadecimales en el Tailwind de la app | Preset del design system |
+| `nodemailer` con SMTP | **Resend** (patch posterior); `nodemailer` desinstalado |
+| Variables en `apps/api/.env` | El `.env` vive en la **raíz** del repo; `config.ts` lo carga desde ahí |
+| Puerto 5174 libre | Lo ocupa `vetplatform-frontend`; se usa el **5175** |
 
 ---
 
@@ -129,8 +148,8 @@ curl -s -X POST http://localhost:8080/admin/realms/nutrismart/clients \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"clientId":"nutrismart-patient","publicClient":true,"standardFlowEnabled":true,
        "directAccessGrantsEnabled":false,
-       "redirectUris":["http://localhost:5174/*"],
-       "webOrigins":["http://localhost:5174"],
+       "redirectUris":["http://localhost:5175/*"],
+       "webOrigins":["http://localhost:5175"],
        "attributes":{"pkce.code.challenge.method":"S256"}}'
 
 # Registro abierto en el realm (el enlace de invitación es lo que acredita

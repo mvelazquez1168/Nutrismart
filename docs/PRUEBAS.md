@@ -1491,11 +1491,17 @@ Registrar el consumo nunca tumba la petición: si la tabla falla, el profesional
 |---|---|
 | Paciente sin correo registrado | **422** `sin_correo`, con qué hacer |
 | Paciente con correo | **201** con mensaje, `enlace` y `expiraEn` |
-| Sin SMTP configurado | El enlace se imprime en la consola de la API y `emailEnviado: false` |
+| Sin `RESEND_API_KEY` | El enlace se imprime en la consola y `emailEnviado: false` |
+| Con clave, destinatario permitido | **`emailEnviado: true`** y `email_enviado` en la base — comprobado con un envío real |
+| Con clave, destinatario rechazado | **201 igual**, `emailEnviado: false`, mensaje «el correo no salió», enlace en la respuesta y en consola |
 | Paciente que ya activó su cuenta | **409** `ya_vinculado` |
 | Paciente de otra clínica | **404** |
 
 El enlace se devuelve **siempre**, no solo cuando falla el correo: un envío correcto puede acabar en la carpeta de no deseado, y quien acaba de crear la invitación ya está autorizado a invitar a ese paciente.
+
+> **El remitente por defecto es el sandbox de Resend** y solo entrega a la dirección del titular de la cuenta. Un destinatario cualquiera devuelve 403 `validation_error` del proveedor: la invitación se crea igual y el profesional recibe el enlace. Para invitar a pacientes reales hace falta un dominio verificado en `resend.com/domains` — NutriSmart no puede usar el de Vetline.
+
+> **Antes de probar en local:** `docker stop nutrismart-api`. Ese contenedor publica el 4001 con código antiguo y compite con `npm run dev`; cuando gana, todo lo posterior a la R12 responde 404 y parece que las rutas no se registraron.
 
 ### PAC-01-02 · El paciente abre el enlace
 `GET /api/invitacion/:token` — **sin cabecera de autenticación**.

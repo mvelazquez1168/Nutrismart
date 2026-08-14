@@ -931,10 +931,10 @@
       "alwaysDisplayInConsole": false,
       "clientAuthenticatorType": "client-secret",
       "redirectUris": [
-        "http://localhost:5174/*"
+        "http://localhost:5175/*"
       ],
       "webOrigins": [
-        "http://localhost:5174"
+        "http://localhost:5175"
       ],
       "notBefore": 0,
       "bearerOnly": false,
@@ -1000,7 +1000,7 @@
       ],
       "name": "NutriSmart · App del paciente",
       "description": "Cliente publico (PKCE S256) de apps/web-patient",
-      "rootUrl": "http://localhost:5174",
+      "rootUrl": "http://localhost:5175",
       "baseUrl": "/activar"
     }
   ],

@@ -8,7 +8,7 @@ export default defineConfig({
   // sola copia de la configuracion para las dos aplicaciones.
   envDir: resolve(__dirname, '../..'),
   server: {
-    port: 5174,
+    port: 5175,
     // Accesible desde la red local para probarla en un movil de verdad,
     // que es donde va a vivir esta aplicacion.
     host: true,
