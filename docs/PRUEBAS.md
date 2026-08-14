@@ -874,6 +874,137 @@ Con un paciente que tenga un borrador y un plan activo, exportar con `["plan"]`.
 
 ---
 
+# Rebanada 11 · Mensajería y notificaciones
+
+**Requiere los dos usuarios**: `ana@vida.cr` (`admin_clinica`) y `luis@vida.cr` (`nutricionista`). El seed no trae conversaciones ni reglas: el ciclo se prueba desde cero.
+
+```powershell
+$b = @{client_id='nutrismart-web'; grant_type='password'; username='ana@vida.cr'; password='nutrismart-dev'}
+$TOKEN = (Invoke-RestMethod -Method Post -Body $b `
+  -Uri "http://localhost:8080/realms/nutrismart/protocol/openid-connect/token").access_token
+$H = @{ Authorization = "Bearer $TOKEN" }
+$API = "http://localhost:4001"
+$MARIA = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+```
+
+## COM-01 · Mensajería
+
+### CA-11-01 · Bandeja vacía
+`GET /api/mensajeria/conversaciones` sin hilos → **`[]`**. La interfaz muestra «Aún no tienes conversaciones», no una tabla vacía.
+
+### CA-11-02 · Abrir hilo, y una sola vez
+```powershell
+$conv = Invoke-RestMethod "$API/api/mensajeria/conversaciones" -Method Post -Headers $H `
+  -ContentType "application/json" -Body "{`"pacienteId`":`"$MARIA`"}"
+```
+**Esperado:** **201** con la conversación. Repetir la llamada devuelve **el mismo `id`**: lo garantiza el índice único `(clinica_id, paciente_id, profesional_id)`, no una comprobación previa.
+
+### CA-11-03 · Enviar mensaje
+`POST …/mensajes` con `{"contenido":"…"}` → **201**, `autorTipo: "profesional"`. En pantalla, burbuja a la derecha sobre el color de marca.
+
+### CA-11-04 · Abrir el hilo lo marca leído
+Simular la respuesta del paciente —la app PAC aún no existe— insertando en la base:
+
+```sql
+insert into mensaje (clinica_id, conversacion_id, autor_tipo, autor_id, contenido)
+values ('<clinica>','<conv>','paciente','<paciente>','Gracias doctora.');
+update conversacion set ultimo_mensaje_at = now(),
+       mensajes_no_leidos_prof = mensajes_no_leidos_prof + 1 where id = '<conv>';
+```
+
+| Paso | Esperado |
+|---|---|
+| `GET /api/mensajeria/no-leidos` | `{ total: 1 }` |
+| `PUT …/leer` | `{ marcados: 1 }` |
+| `GET /api/mensajeria/no-leidos` | `{ total: 0 }` |
+
+Solo se marcan los mensajes **del paciente**: marcar los propios no significa nada.
+
+### CA-11-05 · Sondeo
+Con el hilo abierto en pantalla, insertar un mensaje del paciente como arriba.
+
+**Esperado:** aparece en **≤ 5 segundos** sin recargar, el hilo baja al final y el contador se limpia solo. El sondeo pide `?desde=<último>`, no el hilo entero.
+
+### CA-11-06 · Aislamiento
+| Prueba | Esperado |
+|---|---|
+| Luis abre el hilo de Ana | **404** |
+| Luis escribe en el hilo de Ana | **404** |
+| Luis marca leído el hilo de Ana | **404** |
+| Luis lista sus conversaciones | `[]` |
+| Sin token | **401** |
+
+**404, no el 403 de la especificación.** Un 403 sobre un identificador ajeno confirma que ese hilo existe, y con hilos de por medio eso equivale a confirmar que cierto paciente habla con cierto profesional. Un `admin_clinica` ve todos los pacientes pero **no** los hilos de sus compañeros.
+
+### CA-11-07 · Validación del mensaje
+| Contenido | Esperado |
+|---|---|
+| Vacío o solo espacios | **400** |
+| 4001 caracteres | **400** |
+
+El `CHECK` de la base repite el límite: la API valida para dar un mensaje claro; la base, para que nada entre por otra vía.
+
+## COM-02 · Notificaciones
+
+### CA-11-08 · Enviar un mensaje genera aviso
+Tras `POST …/mensajes`, hay una fila en `notificacion` con `tipo='mensaje_nuevo'` y `destinatario_tipo='paciente'`.
+
+**El contador del profesional sigue en 0**: el aviso es para el paciente. Se registra desde ya aunque la app PAC no exista, para no tener que reprocesar el histórico el día que exista.
+
+### CA-11-09 · Contador de la campana
+`GET /api/notificaciones/contador` → `{ noLeidas: N }`, coincidiendo con el badge.
+
+### CA-11-10 · Marcar una como leída
+`PUT /api/notificaciones/:id/leer` → **200**. Con `enlace`, la interfaz navega después de marcar.
+
+Repetir la llamada devuelve **200** con `marcada: false`: marcar lo que ya estaba leído no es un error, el estado final es el pedido. Un id de otro destinatario **no** la marca — el destinatario va en el `WHERE`.
+
+### CA-11-11 · Marcar todas
+`PUT /api/notificaciones/leer-todas` → `{ actualizadas: N }`; el contador queda en **0**.
+
+### CA-11-12 · Refresco sin recargar
+La campana sondea cada **30 s**, no cada 5 como el hilo: una notificación no es una conversación en curso. Con la pestaña oculta no sondea.
+
+## COM-03 · Reglas paramétricas
+
+### CA-11-13 y CA-11-14 · Crear reglas
+```powershell
+Invoke-RestMethod "$API/api/notificaciones/reglas" -Method Post -Headers $H `
+  -ContentType "application/json" `
+  -Body '{"nombre":"Felicitacion de cumpleanos","tipo":"cumpleanos","parametros":{"hora":"09:00"}}'
+```
+**Esperado:** **201**, `activa: true`. Igual con `checkup` e `intervaloDias: 30`.
+
+### CA-11-15 · Activar y desactivar
+`PUT /reglas/:id/activar` con `{"activa":false}` → `{ activa: false }`. La regla **sigue en la lista**, atenuada: desactivar no es borrar, y una regla inactiva explica los avisos que ya generó.
+
+`DELETE /reglas/:id` hace lo mismo — baja lógica, nunca borrado físico.
+
+### CA-11-16 · Evaluación, y que no duplique
+Poniendo el cumpleaños de un paciente en el día de hoy:
+
+| Llamada | Esperado |
+|---|---|
+| 1.ª `POST /reglas/evaluar` | `{ generadas: 1 }` |
+| 2.ª | `{ generadas: 0 }` |
+| 3.ª | `{ generadas: 0 }` |
+
+Esta es la prueba que más importa de COM-03. Sin `clave_dedup` y su índice único parcial, «Evaluar ahora» sería un botón para llenarse la campana de avisos repetidos. La garantía está en el índice, no en un `select` previo: dos evaluaciones simultáneas se colarían entre la comprobación y la inserción.
+
+El día se compara en huso de Costa Rica: en UTC empieza a las 18:00 del día anterior y los cumpleaños se avisarían con un día de desfase.
+
+### CA-11-17 · Parámetros inválidos
+| Prueba | Esperado |
+|---|---|
+| `hora: "25:99"` | **400** |
+| `tipo: "lunar"` | **400** |
+| `checkup` con `intervaloDias: 3` | **400** (mínimo 7) |
+| `reminder` con `diasAntes: 99` | **400** (máximo 30) |
+
+Cada tipo tiene sus parámetros y no se aceptan otros. Guardar lo que venga en el JSONB parece flexible y es lo que hace que meses después el evaluador se encuentre una regla que no sabe ejecutar.
+
+---
+
 # Recorrido manual del frontend
 
 Con `npm run dev:web`, en **http://localhost:5173**:
@@ -1015,6 +1146,40 @@ En la cabecera de la ficha, botón **Exportar PDF**:
 | **Escape** con el modal abierto | Cierra; mientras genera, **no** cierra |
 
 Si el servidor no tiene Chromium, la descarga es un `.html` y el modal lo explica en vez de cerrarse. Es deliberado: un expediente no debe quedar retenido por un problema de infraestructura.
+
+### Mensajería y notificaciones (Rebanada 11)
+
+Con **`ana@vida.cr`**, en **Mensajería** (nueva entrada del menú):
+
+| Paso | Qué comprobar |
+|---|---|
+| Bandeja vacía | «Aún no tienes conversaciones» |
+| **+ Nueva conversación** | Lista los pacientes **sin hilo**; los que ya tienen no reaparecen |
+| Abrir un hilo | Cabecera con el paciente y enlace **Ver expediente** |
+| Escribir y **Enter** | Envía. **Mayús+Enter** hace párrafo |
+| Mensaje enviado | Burbuja derecha con el color de marca y un tilde ✓ |
+| Insertar en la base un mensaje del paciente | Aparece **en ≤ 5 s** sin recargar, a la izquierda |
+| Tras aparecer | El contador de ese hilo se limpia solo (abrirlo es leerlo) |
+| Desconectar la red y enviar | Sale el error y **el texto no se pierde** |
+| Buscar en el panel izquierdo | Filtra por nombre de paciente |
+
+Con **`luis@vida.cr`**: su bandeja está **vacía** aunque Ana tenga hilos. Los hilos son privados: un administrador ve todos los pacientes, no las conversaciones de sus compañeros.
+
+En **Reglas automáticas**:
+
+| Paso | Qué comprobar |
+|---|---|
+| **+ Nueva regla** | Cuatro tipos en tarjetas, cada una con su explicación |
+| Elegir «Recordatorio de cita» | Aparecen **días de antelación** y **hora** |
+| Elegir «Control de seguimiento» | Aparece **días sin consulta**; el resto desaparece |
+| Guardar | La tarjeta muestra una frase en lenguaje llano de lo que hará |
+| **Editar** una regla | El tipo sale **bloqueado**: cambiarlo sería otra regla |
+| Interruptor | Alterna sin recargar; la inactiva queda atenuada, **no desaparece** |
+| **Desactivar** | Pide confirmación explicando que se conserva |
+| **Evaluar ahora** | Dice cuántas notificaciones generó |
+| **Evaluar ahora** otra vez | «no había nada nuevo que avisar» — **0 generadas** |
+
+La campana está en la cabecera, a la izquierda del nombre. Al pulsarla se abre un panel desde la derecha; **Escape** y el clic fuera lo cierran.
 
 ---
 

@@ -9,6 +9,7 @@ import { useAuth } from '../auth/AuthProvider'
 import { useBrand, urlLogo } from '../contexts/BrandContext'
 import { API_BASE } from '../api/client'
 import { ROL_ADMIN_CLINICA } from '../api/tipos'
+import { NotificacionesCampana } from './notificaciones/NotificacionesCampana'
 
 interface ItemNav {
   clave: string
@@ -32,8 +33,12 @@ function navDe(esAdmin: boolean): ItemNav[] {
     },
     { clave: 'pacientes', etiqueta: 'Pacientes', ruta: '/pacientes' },
     { clave: 'agenda', etiqueta: 'Agenda', ruta: '/agenda' },
+    { clave: 'mensajeria', etiqueta: 'Mensajería', ruta: '/mensajeria' },
     { clave: 'laboratorios', etiqueta: 'Laboratorios' },
     { clave: 'estrategias', etiqueta: 'Estrategias' },
+    // Las reglas son de la clínica, no del administrador: cualquier
+    // profesional necesita ver por qué llegan los avisos que recibe.
+    { clave: 'reglas', etiqueta: 'Reglas automáticas', ruta: '/notificaciones/reglas' },
     {
       clave: 'configuracion',
       etiqueta: 'Configuración',
@@ -161,7 +166,10 @@ export function Shell({
           <div className="text-sm text-muted">
             {nombreClinica ?? <span className="opacity-0">·</span>}
           </div>
-          <div className="text-sm font-medium text-ink">{perfil?.nombre}</div>
+          <div className="flex items-center gap-3">
+            <NotificacionesCampana />
+            <span className="text-sm font-medium text-ink">{perfil?.nombre}</span>
+          </div>
         </header>
 
         <main className="min-w-0 flex-1 p-6">{children}</main>

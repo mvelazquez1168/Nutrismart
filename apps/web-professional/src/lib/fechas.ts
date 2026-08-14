@@ -108,3 +108,38 @@ export function etiquetaDia(claveLocal: string): string {
     month: 'long',
   })
 }
+
+/**
+ * Antigüedad en lenguaje llano: 'ahora', 'hace 5 min', 'ayer', '12 ago'.
+ *
+ * Para bandejas y avisos, donde importa CUÁNTO hace y no la hora exacta.
+ * Pasada la semana se muestra la fecha: "hace 23 días" obliga a contar
+ * hacia atrás, y a esa distancia el día concreto informa más.
+ */
+export function tiempoRelativo(iso: string): string {
+  const instante = new Date(iso)
+  if (Number.isNaN(instante.getTime())) return ''
+
+  const segundos = Math.floor((Date.now() - instante.getTime()) / 1000)
+  if (segundos < 60) return 'ahora'
+  if (segundos < 3600) return `hace ${Math.floor(segundos / 60)} min`
+  if (segundos < 86_400) return `hace ${Math.floor(segundos / 3600)} h`
+
+  const dias = Math.floor(segundos / 86_400)
+  if (dias === 1) return 'ayer'
+  if (dias < 7) return `hace ${dias} días`
+
+  return instante.toLocaleDateString(LOCALE, { day: 'numeric', month: 'short' })
+}
+
+/** Hora si es de hoy; si no, el día. Para la lista de conversaciones. */
+export function horaOFecha(iso: string): string {
+  const instante = new Date(iso)
+  if (Number.isNaN(instante.getTime())) return ''
+  const hoy = new Date()
+  const mismoDia =
+    instante.getFullYear() === hoy.getFullYear() &&
+    instante.getMonth() === hoy.getMonth() &&
+    instante.getDate() === hoy.getDate()
+  return mismoDia ? hora(iso) : instante.toLocaleDateString(LOCALE, { day: 'numeric', month: 'short' })
+}

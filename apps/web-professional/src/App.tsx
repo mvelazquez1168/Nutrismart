@@ -8,6 +8,8 @@ import { PacienteFicha } from './pages/PacienteFicha'
 import { Agenda } from './pages/Agenda'
 import { MarcaPage } from './pages/ajustes/MarcaPage'
 import { DashboardPage } from './pages/DashboardPage'
+import { BandejaMensajes } from './pages/BandejaMensajes'
+import { ReglasNotificacion } from './pages/ReglasNotificacion'
 import { getMe } from './api/pacientes'
 import { ROL_ADMIN_CLINICA } from './api/tipos'
 import type { Me } from './api/tipos'
@@ -25,6 +27,8 @@ function seccionDe(pathname: string): string {
   if (pathname.startsWith('/agenda')) return 'agenda'
   if (pathname.startsWith('/ajustes')) return 'configuracion'
   if (pathname.startsWith('/admin')) return 'dashboard'
+  if (pathname.startsWith('/mensajeria')) return 'mensajeria'
+  if (pathname.startsWith('/notificaciones')) return 'reglas'
   return 'pacientes'
 }
 
@@ -87,6 +91,10 @@ function Contenido() {
           <Route path="/pacientes" element={<Pacientes />} />
           <Route path="/pacientes/:id" element={<PacienteFicha />} />
           <Route path="/agenda" element={<Agenda />} />
+          {/* Ambas son de cualquier profesional: los hilos son propios y
+              las reglas describen cómo trabaja la clínica entera. */}
+          <Route path="/mensajeria" element={<BandejaMensajes />} />
+          <Route path="/notificaciones/reglas" element={<ReglasNotificacion />} />
           {/* Un nutricionista que teclee la URL a mano vuelve a
               Pacientes. No es la defensa: la API responde 403 igual. */}
           <Route
