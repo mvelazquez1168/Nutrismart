@@ -1218,6 +1218,88 @@ Guardar dos veces deja **una fila**. Con `consultaId`, `seccionesCompletas.diete
 
 ---
 
+# Rebanada 15 · Conclusiones, calculadora y plan prescrito
+
+## EVAL-05 · Conclusiones
+
+### CA-15-01 a CA-15-03 · Guardar y derivar
+`PUT …/consultas/:cid/conclusion` con diagnóstico, CIE-10, 2100 kcal y reparto 20/50/30.
+
+**Esperado:** **200** con `proteinaG: 105`, `choG: 262.5`, `grasaG: 70`.
+
+Los gramos **los deriva el servidor**: aceptarlos del cliente permitiría guardar unos gramos que no corresponden con el reparto de su propia fila.
+
+Guardar otra vez con 1800 kcal y 25/45/30 deja **una sola fila**, con `proteinaG: 112.5`.
+
+### CA-15-04 y CA-15-05 · Sección y cierre
+| Prueba | Esperado |
+|---|---|
+| Guardar conclusión | `seccionesCompletas.conclusion = true` |
+| Finalizar con conclusión pero **sin** antropometría | **409** con `faltan: ["antrop"]` |
+| Tras registrar la antropometría | **200**, `estado: "finalizada"` |
+| Editar la conclusión de una finalizada | **409** |
+
+### CA-15-06 y CA-15-07 · JSONB
+Acuerdos como `[{ texto, cumplido }]` y restricciones como array. Vuelven tal cual.
+
+Una restricción desconocida se **descarta en silencio** y las válidas se conservan: `["paleo","renal"]` → `["renal"]`.
+
+### Validación de los porcentajes
+| Prueba | Esperado |
+|---|---|
+| 20 / 50 / 40 (suman 110) | **400**, indicando la suma real |
+| Solo dos de los tres | **400** — los tres o ninguno |
+| Ninguno (prescripción a medias) | **200** |
+
+Lo repite un `CHECK` en la base: un reparto que suma 110 daría unos gramos coherentes entre sí que describen una dieta que no existe.
+
+### Aislamiento
+Luis (`nutricionista`) sobre la conclusión de un paciente de Ana → **404**.
+
+## EVAL-06 · Calculadora
+
+Todo se resuelve en el cliente (`lib/calculadora.ts`). Verificado con `tsx`:
+
+| Cálculo | Resultado |
+|---|---|
+| **CA-15-08** Mifflin, mujer 38 a / 78 kg / 165 cm | **1460 kcal** |
+| **CA-15-09** Harris-Benedict, mismos datos | **1516 kcal** (distinto, como pide el criterio) |
+| **CA-15-10** Katch-McArdle con MLG 52 kg | 1493 kcal |
+| Katch **sin** masa libre de grasa | **`null`** — la opción sale deshabilitada |
+| Mifflin **sin sexo registrado** | **`null`** |
+| Gasto total (1460 × 1,55) | 2263 kcal |
+| Peso ideal Hamwi, mujer 165 cm | 57,1 kg |
+| **CA-15-16** Peso ajustado con 78 kg reales | 62,3 kg |
+| Peso ajustado con 60 kg reales | **`null`** — no supera el ideal en un 20 % |
+| **CA-15-11** Subir proteína a 30 en 20/50/30 | 30 / 44 / 26 — **suma 100** |
+| Macros de 2100 kcal al 20/50/30 | 105 g / 262,5 g / 70 g |
+| **CA-15-13** Déficit de 500 kcal/día | 15,4 días por kilo · −0,45 kg/semana |
+| **CA-15-14** 45 g de azúcar | 9 cucharaditas · 180 kcal · **excede** |
+| **CA-15-15** 2800 mg de sodio | 7 g de sal · **excede** |
+| Intercambios para 2100 kcal | Suman **2105 kcal** |
+
+> **El valor esperado de CA-15-08 estaba mal.** El criterio decía «≈1548». Aplicando la fórmula que el propio encargo transcribe: 780 + 1031,25 − 190 − 161 = **1460,25**. La implementación sigue la fórmula publicada.
+
+> **Los intercambios cubrían solo el 80 %.** Las proporciones dadas sumaban 0,80, así que el profesional habría prescrito una quinta parte menos de lo que acababa de calcular. Se normalizan conservando su peso relativo.
+
+**El `null` sin sexo es la comprobación que importa.** La diferencia entre las constantes de hombre y mujer en Mifflin es de 166 kcal; elegir una por defecto no es un matiz, es inventar el resultado.
+
+### CA-15-12 · Llevar a la prescripción
+«Llevar a la prescripción» rellena la meta calórica y los tres porcentajes en el formulario, y cierra el panel.
+
+## EVAL-07 · Plan prescrito
+
+| Prueba | Esperado |
+|---|---|
+| **CA-15-17** Sin plan activo | Estado vacío con botón «Crear plan alimentario» |
+| **CA-15-18** Con plan activo | Nombre, chip «Activo», rejilla semanal y total declarado |
+| Plan activo sin comidas | Aviso de que está activo pero vacío |
+| **CA-15-19** «Editar el plan completo →» | Lleva al expediente |
+
+Es **solo lectura**: el plan se edita en su pestaña. Dos sitios donde tocar lo mismo acaban discrepando.
+
+---
+
 # Recorrido manual del frontend
 
 Con `npm run dev:web`, en **http://localhost:5173**:
@@ -1459,6 +1541,32 @@ Pestaña **Dietético**, tres sub-pestañas:
 | Tras guardar | La pestaña Dietético se marca completa |
 
 Con la valoración **finalizada**, ambas pestañas quedan en solo lectura y sin botones de guardar.
+
+### Conclusiones y calculadora (Rebanada 15)
+
+Pestaña **Conclusiones**, la última del ABCD:
+
+| Paso | Qué comprobar |
+|---|---|
+| Escribir en «Diagnóstico principal» | Sugiere los frecuentes; al elegir uno, **el CIE-10 se rellena solo** |
+| El código sigue editable | Para diagnósticos que no están en la lista |
+| Chips de recomendaciones | Se añaden y quitan al pulsar; las propias se escriben abajo |
+| Poner 20 / 50 / 40 | Avisa de que suman 110 y **deshabilita Guardar** |
+| Poner 20 / 50 / 30 con 2100 kcal | Muestra 105 g · 262,5 g · 70 g |
+| **Abrir calculadora →** | Panel desde la derecha con los datos del paciente precargados |
+| Paciente sin sexo registrado | La TMB no se calcula y **explica por qué** (166 kcal de diferencia) |
+| Paciente sin masa libre de grasa | **Katch-McArdle sale deshabilitada**, con el motivo al pasar el cursor |
+| Mover el deslizador de proteína | Los otros dos se reajustan y **siempre suman 100** |
+| Presets (Equilibrada, Alta en proteína…) | Fijan el reparto de golpe |
+| Acordeón de intercambios | Dice cuántas kcal suman, para contrastar con la meta |
+| Proyección con −500 kcal | 15,4 días por kilo, con la nota de que es una escala, no una fecha |
+| **Llevar a la prescripción** | Cierra el panel y rellena meta y porcentajes |
+| Acuerdos | Tres de arranque, editables, con «+ Añadir acuerdo» |
+| **Guardar conclusión** | La pestaña se marca completa |
+| Con antropometría y conclusión hechas | **Finalizar valoración** se habilita |
+| Al pie | Plan alimentario activo en **solo lectura**, o invitación a crearlo |
+
+Las cinco pestañas del ABCD quedan construidas: ya no hay ninguna «en desarrollo».
 
 ---
 

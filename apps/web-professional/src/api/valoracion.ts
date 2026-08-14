@@ -143,3 +143,92 @@ export function getBioquimica(
 ): Promise<Bioquimica> {
   return apiGet<Bioquimica>(`/api/pacientes/${pacienteId}/labs/nutricional?dias=${dias}`, signal)
 }
+
+/* ------------------------------------------------------------------ */
+/* Conclusiones (EVAL-05)                                              */
+/* ------------------------------------------------------------------ */
+
+export const RESTRICCIONES = [
+  { clave: 'sin_gluten', etiqueta: 'Sin gluten' },
+  { clave: 'sin_lactosa', etiqueta: 'Sin lactosa' },
+  { clave: 'bajo_sodio', etiqueta: 'Bajo en sodio' },
+  { clave: 'bajo_grasa', etiqueta: 'Bajo en grasas' },
+  { clave: 'diabetica', etiqueta: 'Diabética' },
+  { clave: 'vegetariana', etiqueta: 'Vegetariana' },
+  { clave: 'vegana', etiqueta: 'Vegana' },
+  { clave: 'renal', etiqueta: 'Renal' },
+] as const
+
+/** Diagnósticos nutricionales frecuentes, con su código CIE-10. */
+export const DIAGNOSTICOS = [
+  { cie10: 'E44.0', nombre: 'Desnutrición proteico-calórica moderada' },
+  { cie10: 'E44.1', nombre: 'Desnutrición proteico-calórica leve' },
+  { cie10: 'E46', nombre: 'Desnutrición proteico-calórica no especificada' },
+  { cie10: 'E55.9', nombre: 'Deficiencia de vitamina D' },
+  { cie10: 'E61.1', nombre: 'Deficiencia de hierro' },
+  { cie10: 'E66.0', nombre: 'Obesidad por exceso de calorías' },
+  { cie10: 'E66.9', nombre: 'Obesidad no especificada' },
+  { cie10: 'E67.8', nombre: 'Hiperalimentación especificada' },
+  { cie10: 'R63.4', nombre: 'Pérdida anormal de peso' },
+  { cie10: 'R63.5', nombre: 'Aumento anormal de peso' },
+  { cie10: 'Z71.3', nombre: 'Consulta para instrucción dietética' },
+  { cie10: 'Z72.4', nombre: 'Régimen alimentario inadecuado' },
+] as const
+
+export const RECOMENDACIONES_FRECUENTES = [
+  'Aumentar el aporte de proteína',
+  'Hidratación de 2 litros al día',
+  'Reducir el sodio',
+  'Alimentos ricos en hierro',
+  'Priorizar la fibra',
+  'Reducir azúcares libres',
+  'Fraccionar las comidas',
+  'Actividad física progresiva',
+] as const
+
+export interface Acuerdo {
+  texto: string
+  cumplido: boolean
+}
+
+export interface Conclusion {
+  id: string
+  consultaId: string
+  diagnosticoPrincipal: string | null
+  diagnosticoCie10: string | null
+  diagnosticoSecundario: string | null
+  observacionesClinicas: string | null
+  recomendaciones: string[]
+  kcalPrescritas: number | null
+  pctProteina: number | null
+  pctCho: number | null
+  pctGrasa: number | null
+  proteinaG: number | null
+  choG: number | null
+  grasaG: number | null
+  restricciones: string[]
+  suplementos: string | null
+  acuerdos: Acuerdo[]
+}
+
+export function getConclusion(
+  pacienteId: string,
+  consultaId: string,
+  signal?: AbortSignal,
+): Promise<Conclusion> {
+  return apiGet<Conclusion>(
+    `/api/pacientes/${pacienteId}/consultas/${consultaId}/conclusion`,
+    signal,
+  )
+}
+
+export function guardarConclusion(
+  pacienteId: string,
+  consultaId: string,
+  datos: Record<string, unknown>,
+): Promise<Conclusion> {
+  return apiPut<Conclusion>(
+    `/api/pacientes/${pacienteId}/consultas/${consultaId}/conclusion`,
+    datos,
+  )
+}

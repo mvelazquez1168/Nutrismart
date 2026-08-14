@@ -1,10 +1,8 @@
 /**
  * Valoración nutricional ABCD — EVAL-00, contenedor.
  *
- * Cinco secciones; dos están construidas y tres llegan en rebanadas
- * posteriores. Las pendientes se muestran declaradas y vacías en vez de
- * ocultas: el profesional tiene que ver el alcance completo de la
- * valoración, no descubrirlo a plazos.
+ * Las cinco secciones del ABCD, completas desde la Rebanada 15:
+ * antropometría, bioquímica, clínico, dietético y conclusiones.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
@@ -24,18 +22,8 @@ import { FormAntropometria } from '../components/eval/FormAntropometria'
 import { PanelBioquimica } from '../components/eval/PanelBioquimica'
 import { FormHistorialClinico } from '../components/eval/FormHistorialClinico'
 import { TabsDietetico } from '../components/eval/TabsDietetico'
-
-function EnConstruccion({ seccion }: { seccion: string }) {
-  return (
-    <div className="rounded-lg border border-dashed border-border bg-surface p-10 text-center">
-      <p className="text-sm font-medium text-ink">{seccion}</p>
-      <p className="mx-auto mt-1 max-w-md text-sm text-muted">
-        Esta sección llega en una rebanada posterior. El contenedor ya la contempla para que la
-        valoración no cambie de forma cuando se añada.
-      </p>
-    </div>
-  )
-}
+import { FormConclusion } from '../components/eval/FormConclusion'
+import { ResumenPlanPrescrito } from '../components/eval/ResumenPlanPrescrito'
 
 export function ValoracionPaciente() {
   const { id = '', consultaId = '' } = useParams<{ id: string; consultaId: string }>()
@@ -213,7 +201,19 @@ export function ValoracionPaciente() {
           onGuardado={refrescar}
         />
       )}
-      {tab === 'conclusion' && <EnConstruccion seccion="Conclusiones y diagnóstico nutricional" />}
+      {tab === 'conclusion' && (
+        <div className="space-y-8">
+          <FormConclusion
+            pacienteId={id}
+            consultaId={consultaId}
+            edad={paciente?.edad ?? null}
+            sexo={paciente?.sexoBiologico ?? null}
+            bloqueada={finalizada}
+            onGuardado={refrescar}
+          />
+          <ResumenPlanPrescrito pacienteId={id} />
+        </div>
+      )}
 
       {/* Atajo de vuelta cuando la valoración ya se cerró. */}
       {finalizada && (
