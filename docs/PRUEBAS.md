@@ -1478,6 +1478,96 @@ Registrar el consumo nunca tumba la petición: si la tabla falla, el profesional
 
 ---
 
+# Rebanada 17 · App del paciente
+
+> **Estado.** La API está verificada de punta a punta. **El flujo en el navegador no se ha ejecutado**: falta crear el cliente `nutrismart-patient` en el Keycloak compartido, y no tengo sus credenciales de administrador. Los criterios marcados **⏳** dependen de ese paso — está en `docs/REBANADA-17.md § El paso que falta`.
+
+## PAC-01 · Invitación
+
+### PAC-01-01 · El profesional invita
+`POST /api/pacientes/:id/invitar`
+
+| Prueba | Esperado |
+|---|---|
+| Paciente sin correo registrado | **422** `sin_correo`, con qué hacer |
+| Paciente con correo | **201** con mensaje, `enlace` y `expiraEn` |
+| Sin SMTP configurado | El enlace se imprime en la consola de la API y `emailEnviado: false` |
+| Paciente que ya activó su cuenta | **409** `ya_vinculado` |
+| Paciente de otra clínica | **404** |
+
+El enlace se devuelve **siempre**, no solo cuando falla el correo: un envío correcto puede acabar en la carpeta de no deseado, y quien acaba de crear la invitación ya está autorizado a invitar a ese paciente.
+
+### PAC-01-02 · El paciente abre el enlace
+`GET /api/invitacion/:token` — **sin cabecera de autenticación**.
+
+Devuelve nombre del paciente, clínica y caducidad. **No devuelve el correo**: la ruta es pública y la pantalla no lo necesita.
+
+| Prueba | Esperado |
+|---|---|
+| Token válido | **200** |
+| Token inexistente | **404** |
+
+### PAC-01-05 · Caducidad
+Con `expira_en` en el pasado, la consulta devuelve **410** `caducado` y **deja el estado guardado en `expirada`**: manda la fecha, no la columna.
+
+### PAC-01-06 · Reenviar invalida la anterior
+Tras un segundo `POST …/invitar`:
+
+| Enlace | Esperado |
+|---|---|
+| El viejo | **410** |
+| El nuevo | **200** |
+
+En la base queda `expirada x1, pendiente x1`. Un índice único parcial sobre `(paciente_id) where estado='pendiente'` impide que dos pulsaciones seguidas dejen dos enlaces vivos; el caducado y el alta van en la misma transacción.
+
+### PAC-01-03 y PAC-01-04 ⏳ · Crear cuenta y vincular
+Requieren el cliente de Keycloak. Lo verificable hoy:
+
+| Prueba | Esperado |
+|---|---|
+| Vincular con token de profesional | **403** |
+| Vincular con token inexistente | **404** |
+| Vincular un enlace ya usado | **410** |
+| Sin cabecera de autenticación | **401** |
+
+Simulando la vinculación en la base, la ficha del profesional pasa a `tieneCuenta: true` y reinvitar da **409**.
+
+> **El token nunca viaja en la URL.** El encargo proponía volver de Keycloak con `?jwt=…`; además de que nada en ese flujo produce el parámetro —no habría funcionado nunca—, una credencial en la barra de direcciones queda en el historial y en la cabecera `Referer`. Se usa `keycloak-js` con PKCE S256, que ya estaba en el proyecto.
+
+## PAC-02 · Espacio del paciente
+
+### Seguridad
+| Prueba | Esperado |
+|---|---|
+| Profesional en `/api/paciente/dashboard` | **403** `solo_pacientes`, con a dónde ir |
+| Sin token | **401** |
+| Cuenta sin expediente vinculado | **404** `sin_vincular` |
+| `GET` en `/api/pacientes/:id/invitar` (es POST) | **404** |
+
+> **El acceso no lo da el rol, lo da la fila.** Exigir el rol `paciente` haría que la vinculación —el único momento en que ese rol podría asignarse— fallara antes de ocurrir. Solo se atiende a quien tiene un expediente **activo** cuyo `keycloak_user_id` coincide con el `sub`.
+
+### PAC-02-01 a PAC-02-05 · El panel
+`GET /api/paciente/dashboard`, verificado con datos reales:
+
+| Bloque | Resultado |
+|---|---|
+| **Peso** | 80,3 kg con su fecha; el historial sale en **orden cronológico** |
+| **Próxima cita** | Fecha, duración, tipo y profesional. Usa `inicio` (timestamptz), no fecha + hora |
+| **Plan** | 2100 kcal · 20/50/30 · **105 g / 262,5 g / 70 g** derivados por el servidor |
+| **Acuerdos** | Los dos de la última consulta, con su estado de cumplimiento |
+| **Mensajes** | Contador de `mensajes_no_leidos_pac` |
+
+`GET /api/paciente/yo` devuelve además la marca de la clínica (`colorPrimario`, `nombre_app`), y la app inyecta ese color en `--primary`: es el white-label de la R6 visto desde el otro lado.
+
+> **Los acuerdos salen de UNA consulta.** La consulta del encargo aplanaba el `jsonb` y **después** limitaba a 10 filas, así que mezclaba acuerdos de visitas distintas: el paciente vería como pendiente algo que pactó hace seis meses.
+
+> **El diagnóstico NO se envía.** «Obesidad grado I», escrito para otro profesional, aterriza distinto cuando lo lee el paciente solo en su móvil. El plan sí; el diagnóstico se dice en consulta.
+
+### Sin probar
+La **línea de peso** solo se dibuja con dos o más mediciones. No pude registrar una segunda: hay una medición por consulta (restricción de la R13, funcionando como debe), y montar dos consultas finalizadas para una gráfica no lo justificaba. La forma del componente sí está: con un solo punto no dibuja línea, que es lo correcto.
+
+---
+
 # Recorrido manual del frontend
 
 Con `npm run dev:web`, en **http://localhost:5173**:

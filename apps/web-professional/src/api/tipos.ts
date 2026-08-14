@@ -38,6 +38,8 @@ export interface PacienteDetalle {
   documento: { tipo: DocumentoTipo | null; numero: string | null }
   telefono: string | null
   correo: string | null
+  /** true cuando el paciente ya activó su cuenta en la app. */
+  tieneCuenta: boolean
   estado: EstadoPaciente
   estadoClinico: EstadoClinico
   motivoConsulta: string | null

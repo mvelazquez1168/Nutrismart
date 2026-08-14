@@ -82,6 +82,69 @@ function toAuthContext(payload: JWTPayload): AuthContext {
 }
 
 /**
+ * Contexto de un PACIENTE autenticado.
+ *
+ * No lleva tenantId, y es deliberado. El claim `tenant_id` lo pone un
+ * protocol mapper sobre un atributo del usuario, y un paciente que acaba
+ * de registrarse no tiene ese atributo: su clinica no vive en Keycloak,
+ * vive en la invitacion que le enviaron. Exigir el claim aqui haria que
+ * la vinculacion fallara con 401 antes de llegar al handler.
+ *
+ * La clinica del paciente se resuelve SIEMPRE contra la base a partir de
+ * `sub`. Eso no es una concesion: es mas seguro que confiar en un claim,
+ * porque el tenant deja de depender de nada que viaje en el token.
+ */
+export interface AuthPaciente {
+  /** 'sub' del token = paciente.keycloak_user_id */
+  sub: string
+  roles: string[]
+}
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    authPac: AuthPaciente
+  }
+}
+
+/**
+ * preHandler para las rutas del paciente. Valida firma, emisor y
+ * audiencia igual que requireAuth, y NO exige tenant_id.
+ *
+ * Tampoco exige el rol `paciente`, y conviene explicar por que. Nadie
+ * asigna ese rol cuando alguien se registra desde el enlace de
+ * invitacion: exigirlo aqui haria que la vinculacion —el unico momento
+ * en que podria asignarse— fallara con 403 antes de ocurrir. Es un
+ * circulo cerrado.
+ *
+ * La autorizacion real no la da el rol, la da la fila: solo se atiende a
+ * quien tiene un expediente ACTIVO cuyo keycloak_user_id coincide con el
+ * `sub` del token. Un token sin expediente detras no abre nada, lleve el
+ * rol que lleve. El rol seguiria siendo una etiqueta sobre la misma
+ * comprobacion.
+ */
+export async function requireAuthPaciente(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  try {
+    const token = extractBearer(request)
+    const { payload } = await jwtVerify(token, jwks, {
+      issuer: config.keycloak.issuer,
+      audience: config.keycloak.audience,
+    })
+
+    const sub = payload.sub
+    if (!sub) throw new AuthError('El token no trae "sub"')
+
+    request.authPac = { sub, roles: readRoles(payload) }
+  } catch (error) {
+    const motivo = error instanceof Error ? error.message : 'token invalido'
+    request.log.warn({ motivo }, 'auth-paciente: peticion rechazada')
+    await reply.code(401).send({ error: 'unauthorized', message: 'Token ausente o invalido' })
+  }
+}
+
+/**
  * preHandler que exige un token valido. Uso:
  *   app.get('/api/algo', { preHandler: requireAuth }, handler)
  */
@@ -122,4 +185,5 @@ export function registerAuth(app: FastifyInstance): void {
   // La conversion salva justo ese hueco entre el valor inicial y el
   // tipo que se garantiza en tiempo de ejecucion.
   app.decorateRequest('auth', null as unknown as AuthContext)
+  app.decorateRequest('authPac', null as unknown as AuthPaciente)
 }

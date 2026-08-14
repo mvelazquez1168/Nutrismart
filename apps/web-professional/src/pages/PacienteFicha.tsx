@@ -35,6 +35,7 @@ import { MetricasVitales } from '../components/MetricasVitales'
 import { SociodemografiaBloque } from '../components/SociodemografiaBloque'
 import { PlanAlimentarioTab } from '../components/PlanAlimentarioTab'
 import { ListaSOAP } from '../components/ia/ListaSOAP'
+import { InvitarPaciente } from '../components/InvitarPaciente'
 import { ExportarPDFModal } from '../components/ExportarPDFModal'
 import { ListaConsultas } from '../components/eval/ListaConsultas'
 
@@ -356,6 +357,19 @@ export function PacienteFicha() {
                   Motivo de consulta
                 </h3>
                 <p className="mt-1 text-sm text-ink">{p.motivoConsulta ?? '— Sin registrar'}</p>
+              </div>
+
+              {/* Junto a los datos de contacto: invitar es una accion
+                  sobre el correo del paciente, no sobre su expediente. */}
+              <div className="mt-5 border-t border-border pt-4">
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+                  App del paciente
+                </h3>
+                <InvitarPaciente
+                  pacienteId={p.id}
+                  tieneCuenta={p.tieneCuenta}
+                  correo={p.correo}
+                />
               </div>
             </section>
 

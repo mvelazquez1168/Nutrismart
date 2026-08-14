@@ -21,6 +21,7 @@ export interface PacienteLista {
 }
 
 export interface PacienteDetalle {
+  tieneCuenta: boolean
   id: string
   numeroExpediente: number | null
   nombre: string
@@ -105,6 +106,7 @@ const SQL_DETALLE = `
     p.documento_numero                         as "documentoNumero",
     p.telefono,
     p.correo,
+    (p.keycloak_user_id is not null)           as "tieneCuenta",
     p.estado::text                             as estado,
     p.estado_clinico::text                     as "estadoClinico",
     p.motivo_consulta                          as "motivoConsulta",
@@ -136,6 +138,7 @@ const SQL_ALERGIAS = `
 `
 
 interface FilaDetalle {
+  tieneCuenta: boolean
   id: string
   numeroExpediente: string | number | null
   nombre: string
@@ -191,6 +194,7 @@ export async function obtenerDetalle(
     documento: { tipo: p.documentoTipo, numero: p.documentoNumero },
     telefono: p.telefono,
     correo: p.correo,
+    tieneCuenta: p.tieneCuenta,
     estado: p.estado,
     estadoClinico: p.estadoClinico,
     motivoConsulta: p.motivoConsulta,
