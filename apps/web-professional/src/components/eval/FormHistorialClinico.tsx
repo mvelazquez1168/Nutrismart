@@ -19,6 +19,7 @@ import {
 } from '../../api/clinico'
 import { Campo, claseControl } from '../Campo'
 import { FormFarmacologia } from './FormFarmacologia'
+import { AvisoPrecarga } from './BannerSeguimiento'
 
 type Antecedente = { condicion: string; parientes?: string }
 
@@ -26,11 +27,14 @@ export function FormHistorialClinico({
   pacienteId,
   consultaId,
   bloqueada,
+  fechaAnterior,
   onGuardado,
 }: {
   pacienteId: string
   consultaId: string
   bloqueada: boolean
+  /** Fecha de la consulta anterior, en modo seguimiento. */
+  fechaAnterior?: string | null
   onGuardado: () => void | Promise<void>
 }) {
   const [apf, setApf] = useState<Antecedente[]>([])
@@ -141,6 +145,8 @@ export function FormHistorialClinico({
 
   return (
     <div className="space-y-6">
+      {fechaAnterior && <AvisoPrecarga fecha={fechaAnterior} />}
+
       <fieldset disabled={bloqueada} className="space-y-6">
         <Bloque titulo="Antecedentes familiares">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">

@@ -1300,6 +1300,81 @@ Es **solo lectura**: el plan se edita en su pestaña. Dos sitios donde tocar lo 
 
 ---
 
+# Rebanada 16 · Consulta de seguimiento
+
+**Escenario:** un paciente con una consulta **finalizada** y datos en todas las secciones. Después, una consulta nueva.
+
+### CA-16-01 · La segunda consulta es de seguimiento
+`POST /api/pacientes/:id/consultas` con una consulta finalizada previa → `tipo: "seguimiento"`, `numeroConsulta` incrementado.
+
+### CA-16-02 y CA-16-03 · Foto de la valoración anterior
+`GET /api/pacientes/:id/consultas/ultima-finalizada`
+
+| Prueba | Esperado |
+|---|---|
+| Sin consultas finalizadas | **404 `sin_consulta_previa`** |
+| Con una finalizada | Antropometría, historial, dietético y conclusión de esa consulta |
+
+El 404 **no es un fallo**: significa «es la primera valoración», y la pantalla se comporta como consulta inicial sin decir nada.
+
+La ruta estática **no choca** con `/consultas/:consultaId`: Fastify resuelve los segmentos literales antes que los paramétricos.
+
+> `historial` y `dietetico` se buscan **por paciente**, no por consulta. Ambos son únicos por paciente y su `consulta_id` apunta a la última que los tocó; buscarlos por consulta —como decía la especificación— devolvería vacío en cuanto una consulta posterior los editara.
+
+### CA-16-04 y CA-16-05 · Modo seguimiento en pantalla
+Al abrir una valoración con consulta previa finalizada:
+- Banner con la **fecha y el número** de la consulta anterior.
+- Cabecera: `Consulta #N · Seguimiento`.
+- Antes de las pestañas, el resumen de evolución.
+
+### CA-16-06 y CA-16-07 · Antropometría comparada
+Con la anterior en 80,3 kg y hoy 78,2:
+
+| Prueba | Esperado |
+|---|---|
+| Campo de peso al abrir | **Vacío** |
+| Texto bajo el campo | `Anterior: 80.3 kg` |
+| Tras escribir 78.2 | `Anterior: 80.3 kg · -2.1 kg` |
+| Valor igual al anterior | `· sin cambio` |
+
+**Los campos empiezan vacíos a propósito.** La especificación pedía prerellenarlos; eso convierte un descuido en un dato falso, porque un peso precargado que se guarda sin tocar queda registrado como medición de hoy.
+
+### CA-16-08 · «Sin cambios: copiar las anteriores»
+Pide confirmación y rellena los campos con los valores previos. Copiar es una decisión explícita, no un descuido.
+
+### CA-16-09 y CA-16-10 · Precarga de lo que se arrastra
+Historial, dietético y conclusión **sí** se precargan —son narrativa, no medición— y llevan un aviso de la fecha de la que vienen.
+
+### CA-16-11 y CA-16-12 · Comparativa
+`GET /api/pacientes/:id/consultas/comparativa?consultaActualId=…`
+
+Medido con 80,3 → 78,2 kg:
+
+| Indicador | Anterior | Actual | Delta | % |
+|---|---|---|---|---|
+| Peso | 80,3 | 78,2 | **−2,1 kg** | −2,6 |
+| IMC | — | — | −0,77 | −2,6 |
+| Grasa corporal | — | — | −3,11 | −9,8 |
+| Masa libre de grasa | 54,9 | 55,9 | +1 kg | +1,8 |
+| Ángulo de fase | 5,8 | 6,2 | +0,4° | +6,9 |
+| Cintura | 95 | 91 | −4 cm | −4,2 |
+
+Y los acuerdos de la consulta anterior: **2 de 3 cumplidos**.
+
+> **No hay `mejora` ni `empeora`.** La especificación los pedía; bajar dos kilos es un logro en un paciente con obesidad y una señal de alarma en uno desnutrido. Sin objetivo de peso registrado no hay con qué distinguirlos, así que se devuelve la **dirección** (`sube` / `baja` / `igual`) y la pantalla lo dice al pie.
+
+### CA-16-13 · Aislamiento
+| Prueba | Esperado |
+|---|---|
+| Luis sobre la comparativa de un paciente de Ana | **404** |
+| Sin `consultaActualId` | **400** |
+| `consultaActualId` de otra clínica | **404** |
+
+### CA-16-14 y CA-16-15 · Ciclo completo
+Un seguimiento se finaliza igual que una inicial (**200**), y la consulta siguiente vuelve a nacer como `seguimiento` con el ordinal incrementado. `ultima-finalizada` pasa a apuntar a la recién cerrada.
+
+---
+
 # Recorrido manual del frontend
 
 Con `npm run dev:web`, en **http://localhost:5173**:
@@ -1567,6 +1642,27 @@ Pestaña **Conclusiones**, la última del ABCD:
 | Al pie | Plan alimentario activo en **solo lectura**, o invitación a crearlo |
 
 Las cinco pestañas del ABCD quedan construidas: ya no hay ninguna «en desarrollo».
+
+### Consulta de seguimiento (Rebanada 16)
+
+Requiere una valoración anterior **finalizada** con datos. Después, **+ Nueva consulta** en la ficha:
+
+| Paso | Qué comprobar |
+|---|---|
+| Al abrir la valoración | Banner con la fecha y el número de la consulta anterior |
+| Cabecera | «Consulta #2 · Seguimiento» |
+| Antes de las pestañas | Tarjetas de evolución: peso, grasa, masa magra, ángulo de fase |
+| Tarjeta de acuerdos | «2 de 3», con ● y ○ por cada acuerdo anterior |
+| Pestaña Antropometría | El campo de peso está **vacío**, con «Anterior: 80.3 kg» debajo |
+| Escribir 78.2 | El texto pasa a «Anterior: 80.3 kg · −2.1 kg» |
+| Escribir 80.3 | «· sin cambio» |
+| **Sin cambios: copiar las anteriores** | Pide confirmación y rellena todo |
+| Pestañas Clínico y Dietético | Precargadas, con aviso de la fecha de origen |
+| Al pie de la evolución | Nota de que las flechas no dicen si el cambio es bueno o malo |
+| Finalizar el seguimiento | Funciona igual que una inicial |
+| Crear otra consulta | Vuelve a ser seguimiento, con el número siguiente |
+
+**Lo que hay que mirar con atención**: que el peso NO venga precargado. Si apareciera relleno, un guardado distraído registraría la medición del mes pasado como la de hoy.
 
 ---
 

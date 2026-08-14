@@ -25,6 +25,8 @@ import {
 } from '../../lib/composicion'
 import { Campo, claseControl } from '../Campo'
 import { GraficaComposicion } from './GraficaComposicion'
+import { AvisoPrecarga } from './BannerSeguimiento'
+import type { FotoAntropometria } from '../../api/seguimiento'
 
 type Campos = Record<string, string>
 
@@ -91,6 +93,8 @@ export function FormAntropometria({
   edad,
   sexo,
   bloqueada,
+  anterior,
+  fechaAnterior,
   onGuardado,
 }: {
   pacienteId: string
@@ -98,6 +102,9 @@ export function FormAntropometria({
   edad: number | null
   sexo: Sexo
   bloqueada: boolean
+  /** Medición de la consulta anterior, en modo seguimiento. */
+  anterior?: FotoAntropometria | null
+  fechaAnterior?: string | null
   onGuardado: () => void | Promise<void>
 }) {
   const [campos, setCampos] = useState<Campos>({})
@@ -179,6 +186,52 @@ export function FormAntropometria({
     setOk(null)
   }
 
+  /**
+   * Texto de apoyo con el valor de la consulta anterior y, si hoy ya hay
+   * uno distinto, cuánto ha cambiado.
+   *
+   * El delta va aquí y no en un panel aparte: el número que hay que
+   * comparar está justo al lado del que se acaba de teclear.
+   */
+  function comparativa(clave: string, unidad: string): string | undefined {
+    const previo = anterior ? (anterior as unknown as Record<string, number | null>)[clave] : null
+    if (previo === null || previo === undefined) return undefined
+
+    const hoy = n(campos[clave])
+    if (hoy === null) return `Anterior: ${previo} ${unidad}`.trim()
+
+    const delta = Math.round((hoy - previo) * 100) / 100
+    if (delta === 0) return `Anterior: ${previo} ${unidad} · sin cambio`.trim()
+    return `Anterior: ${previo} ${unidad} · ${delta > 0 ? '+' : ''}${delta} ${unidad}`.trim()
+  }
+
+  /** Copia las medidas anteriores como las de hoy, de forma explícita. */
+  function copiarAnteriores() {
+    if (!anterior) return
+    if (
+      !window.confirm(
+        'Se registrarán las medidas de la consulta anterior como las de hoy. Úsalo solo si de verdad no hubo cambios.',
+      )
+    ) {
+      return
+    }
+    const a = anterior as unknown as Record<string, number | null>
+    setCampos((c) => {
+      const copia = { ...c }
+      for (const clave of [
+        'pesoKg', 'tallaCm', 'cinturaCm', 'caderaCm', 'brazoCm', 'piernaCm',
+        'masaLibreGrasaKg', 'masaMuscularKg', 'pctGrasa', 'masaGrasaKg',
+        'aguaCorporalPct', 'anguloFase',
+      ]) {
+        const v = a[clave]
+        if (v !== null && v !== undefined) copia[clave] = String(v)
+      }
+      return copia
+    })
+    if (anterior.metodo === 'bia' || anterior.metodo === 'pliegues') setMetodo(anterior.metodo)
+    setOk(null)
+  }
+
   async function guardar() {
     setGuardando(true)
     setError(null)
@@ -226,12 +279,32 @@ export function FormAntropometria({
 
   return (
     <div className="space-y-6">
+      {anterior && fechaAnterior && <AvisoPrecarga fecha={fechaAnterior} medidas />}
+
       <fieldset disabled={bloqueada} className="space-y-6">
         <section className="space-y-4 rounded-lg border border-border bg-surface p-5">
-          <h3 className="font-semibold text-ink">Medidas básicas</h3>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-semibold text-ink">Medidas básicas</h3>
+            {anterior && !bloqueada && (
+              <button
+                type="button"
+                onClick={copiarAnteriores}
+                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted hover:bg-surface-2 hover:text-ink"
+              >
+                Sin cambios: copiar las anteriores
+              </button>
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
             {BASICOS.map((b) => (
-              <Campo key={b.clave} id={`ant-${b.clave}`} etiqueta={`${b.etiqueta} (${b.unidad})`}>
+              <Campo
+                key={b.clave}
+                id={`ant-${b.clave}`}
+                etiqueta={`${b.etiqueta} (${b.unidad})`}
+                {...(comparativa(b.clave, b.unidad)
+                  ? { ayuda: comparativa(b.clave, b.unidad) }
+                  : {})}
+              >
                 <input
                   id={`ant-${b.clave}`}
                   type="number"
@@ -282,7 +355,14 @@ export function FormAntropometria({
           {metodo === 'bia' && (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
               {BIA.map((b) => (
-                <Campo key={b.clave} id={`ant-${b.clave}`} etiqueta={`${b.etiqueta} (${b.unidad})`}>
+                <Campo
+                key={b.clave}
+                id={`ant-${b.clave}`}
+                etiqueta={`${b.etiqueta} (${b.unidad})`}
+                {...(comparativa(b.clave, b.unidad)
+                  ? { ayuda: comparativa(b.clave, b.unidad) }
+                  : {})}
+              >
                   <input
                     id={`ant-${b.clave}`}
                     type="number"

@@ -24,6 +24,9 @@ import { FormHistorialClinico } from '../components/eval/FormHistorialClinico'
 import { TabsDietetico } from '../components/eval/TabsDietetico'
 import { FormConclusion } from '../components/eval/FormConclusion'
 import { ResumenPlanPrescrito } from '../components/eval/ResumenPlanPrescrito'
+import { BannerSeguimiento } from '../components/eval/BannerSeguimiento'
+import { DashboardDeltaConsultas } from '../components/eval/DashboardDeltaConsultas'
+import { getUltimaFinalizada, type FotoConsulta } from '../api/seguimiento'
 
 export function ValoracionPaciente() {
   const { id = '', consultaId = '' } = useParams<{ id: string; consultaId: string }>()
@@ -35,6 +38,7 @@ export function ValoracionPaciente() {
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [finalizando, setFinalizando] = useState(false)
+  const [anterior, setAnterior] = useState<FotoConsulta | null>(null)
 
   const refrescar = useCallback(
     async (signal?: AbortSignal) => {
@@ -53,9 +57,18 @@ export function ValoracionPaciente() {
   useEffect(() => {
     const ctrl = new AbortController()
     setCargando(true)
-    Promise.allSettled([refrescar(ctrl.signal), getPaciente(id, ctrl.signal)]).then(([, pac]) => {
+    // La valoración anterior se pide siempre: si no hay ninguna
+    // finalizada la API responde 404 y esto se comporta como una consulta
+    // inicial, sin ruido. Así el modo seguimiento no depende de que el
+    // tipo esté bien calculado.
+    Promise.allSettled([
+      refrescar(ctrl.signal),
+      getPaciente(id, ctrl.signal),
+      getUltimaFinalizada(id, ctrl.signal),
+    ]).then(([, pac, previa]) => {
       if (ctrl.signal.aborted) return
       if (pac.status === 'fulfilled') setPaciente(pac.value)
+      if (previa.status === 'fulfilled') setAnterior(previa.value)
       setCargando(false)
     })
     return () => ctrl.abort()
@@ -99,6 +112,7 @@ export function ValoracionPaciente() {
   }
 
   const finalizada = consulta.estado === 'finalizada'
+  const seguimiento = anterior !== null && anterior.consulta.id !== consulta.id
   const completas = consulta.seccionesCompletas
   const faltan = SECCIONES_EXIGIDAS.filter((s) => completas[s] !== true)
 
@@ -165,6 +179,15 @@ export function ValoracionPaciente() {
         </p>
       )}
 
+      {seguimiento && anterior && (
+        <>
+          <BannerSeguimiento anterior={anterior} />
+          {/* Antes de las pestañas: lo primero al abrir un seguimiento es
+              qué ha pasado desde la última vez. */}
+          <DashboardDeltaConsultas pacienteId={id} consultaId={consultaId} />
+        </>
+      )}
+
       <TabsValoracion activa={tab} completas={completas} onCambiar={setTab} />
 
       {tab === 'antrop' && (
@@ -174,6 +197,8 @@ export function ValoracionPaciente() {
           edad={paciente?.edad ?? null}
           sexo={(paciente?.sexoBiologico ?? null) as never}
           bloqueada={finalizada}
+          anterior={seguimiento ? (anterior?.antropometria ?? null) : null}
+          fechaAnterior={seguimiento ? (anterior?.consulta.fechaConsulta ?? null) : null}
           onGuardado={refrescar}
         />
       )}
@@ -190,6 +215,7 @@ export function ValoracionPaciente() {
           pacienteId={id}
           consultaId={consultaId}
           bloqueada={finalizada}
+          fechaAnterior={seguimiento ? (anterior?.consulta.fechaConsulta ?? null) : null}
           onGuardado={refrescar}
         />
       )}
@@ -198,6 +224,7 @@ export function ValoracionPaciente() {
           pacienteId={id}
           consultaId={consultaId}
           bloqueada={finalizada}
+          fechaAnterior={seguimiento ? (anterior?.consulta.fechaConsulta ?? null) : null}
           onGuardado={refrescar}
         />
       )}

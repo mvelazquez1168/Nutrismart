@@ -11,6 +11,7 @@ import { getDietetico, guardarDietetico, type ComidaR24 } from '../../api/clinic
 import { FormR24h } from './FormR24h'
 import { FormFrecuenciaConsumo } from './FormFrecuenciaConsumo'
 import { ResumenDietetico } from './ResumenDietetico'
+import { AvisoPrecarga } from './BannerSeguimiento'
 
 const SUB = [
   { clave: 'r24', etiqueta: 'Recordatorio 24 h' },
@@ -26,11 +27,13 @@ export function TabsDietetico({
   pacienteId,
   consultaId,
   bloqueada,
+  fechaAnterior,
   onGuardado,
 }: {
   pacienteId: string
   consultaId: string
   bloqueada: boolean
+  fechaAnterior?: string | null
   onGuardado: () => void | Promise<void>
 }) {
   const [sub, setSub] = useState<Sub>('r24')
@@ -109,6 +112,8 @@ export function TabsDietetico({
 
   return (
     <div className="space-y-4">
+      {fechaAnterior && <AvisoPrecarga fecha={fechaAnterior} />}
+
       <div className="flex gap-1 overflow-x-auto border-b border-border">
         {SUB.map((s) => (
           <button
