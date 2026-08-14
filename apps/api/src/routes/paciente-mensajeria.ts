@@ -436,4 +436,58 @@ export async function registerPacienteMensajeriaRoutes(app: FastifyInstance): Pr
       })
     },
   )
+  /* ================================================================ */
+  /* AGE-02 · Agenda del paciente                                      */
+  /* ================================================================ */
+
+  app.get('/api/paciente/citas', { preHandler: requireAuthPaciente }, async (request, reply) => {
+    const pac = await resolverPaciente(request.authPac.sub)
+    if (!pac) {
+      const r = await sinExpediente(request.authPac.sub)
+      return reply.code(r.codigo).send(r.cuerpo)
+    }
+
+    const SELECT = `
+      select c.id,
+             to_char(c.inicio,'YYYY-MM-DD"T"HH24:MI:SSOF') as inicio,
+             c.duracion_minutos, c.tipo::text as tipo, c.estado::text as estado,
+             c.motivo, prof.nombre as profesional
+        from cita c
+        left join profesional prof on prof.id = c.profesional_id
+       where c.clinica_id = $1 and c.paciente_id = $2`
+
+    const [proximas, pasadas] = await Promise.all([
+      // Próximas: solo las que siguen en pie. Una cancelada futura no es
+      // una cita, es un hueco.
+      pool.query(
+        `${SELECT} and c.estado in ('programada','confirmada') and c.inicio >= now()
+         order by c.inicio asc limit 5`,
+        [pac.clinica_id, pac.id],
+      ),
+      // Pasadas: se incluyen canceladas y ausencias. Al paciente le
+      // sirve ver que aquel día no fue; ocultarlo deja huecos que no
+      // puede explicarse.
+      pool.query(
+        `${SELECT} and c.inicio < now() order by c.inicio desc limit 20`,
+        [pac.clinica_id, pac.id],
+      ),
+    ])
+
+    const mapear = (c: Record<string, unknown>) => ({
+      id: c['id'],
+      inicio: c['inicio'],
+      duracionMinutos: Number(c['duracion_minutos']),
+      tipo: c['tipo'],
+      estado: c['estado'],
+      motivo: c['motivo'],
+      profesional: c['profesional'],
+    })
+
+    const lista = proximas.rows.map(mapear)
+    return reply.send({
+      proxima: lista[0] ?? null,
+      siguientes: lista.slice(1),
+      historial: pasadas.rows.map(mapear),
+    })
+  })
 }

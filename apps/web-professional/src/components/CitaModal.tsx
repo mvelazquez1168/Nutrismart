@@ -19,6 +19,7 @@ const ETIQUETA_TIPO: Record<CitaTipo, string> = {
   primera_vez: 'Primera vez',
   seguimiento: 'Seguimiento',
   control: 'Control',
+  urgencia: 'Urgencia',
 }
 
 /** Propuesta del formulario, no default del esquema (ver migración 006). */

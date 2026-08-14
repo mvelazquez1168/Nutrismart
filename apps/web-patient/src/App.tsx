@@ -3,6 +3,7 @@ import { Activar } from './pages/Activar'
 import { Inicio } from './pages/Inicio'
 import { Mensajes } from './pages/Mensajes'
 import { Plan } from './pages/Plan'
+import { Citas } from './pages/Citas'
 
 export function App() {
   return (
@@ -11,6 +12,7 @@ export function App() {
         <Route path="/activar" element={<Activar />} />
         <Route path="/inicio" element={<Inicio />} />
         <Route path="/plan" element={<Plan />} />
+        <Route path="/citas" element={<Citas />} />
         <Route path="/mensajes" element={<Mensajes />} />
         {/* Cualquier otra ruta va a /activar: si ya hay sesion, esa
             pantalla redirige sola a /inicio. */}

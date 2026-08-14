@@ -1,8 +1,10 @@
 /**
  * Agenda — CLI-03.
  *
- * Lista con filtros, agrupada por día. La vista de calendario mensual
- * queda fuera de la v1, como marca la épica.
+ * Dos vistas sobre los mismos datos: lista agrupada por día —que
+ * responde «qué tengo hoy»— y rejilla semanal, que responde «dónde me
+ * cabe una cita esta semana». La rejilla llegó en la Rebanada 20; la
+ * lista sigue siendo la vista por defecto porque es la del día a día.
  *
  * Todas las horas se formatean en el huso del NAVEGADOR: la API entrega
  * instantes en UTC crudo precisamente para no adivinar el huso del
@@ -19,6 +21,7 @@ import {
 } from '../api/agenda'
 import { getSnapshot } from '../api/expediente'
 import { ChipEstadoCita } from '../components/ChipEstadoCita'
+import { VistaSemana, lunesDe } from '../components/VistaSemana'
 import { CITA_ESTADOS, type Cita, type CitaEstado, type Profesional } from '../api/tipos'
 import { CitaModal } from '../components/CitaModal'
 import { CitaDetalle } from '../components/CitaDetalle'
@@ -58,6 +61,7 @@ export function Agenda() {
   const [profesionales, setProfesionales] = useState<Profesional[]>([])
   const [datos, setDatos] = useState<Estado>({ tipo: 'cargando' })
   const [recarga, setRecarga] = useState(0)
+  const [vista, setVista] = useState<'lista' | 'semana'>('lista')
 
   const [creando, setCreando] = useState(false)
   const [editando, setEditando] = useState<Cita | null>(null)
@@ -109,6 +113,29 @@ export function Agenda() {
     getMetricas(ctrl.signal).then(setCatalogo).catch(() => {})
     return () => ctrl.abort()
   }, [esAdmin])
+
+  /**
+   * Cambia de vista encuadrando el rango.
+   *
+   * La rejilla necesita los siete días de la semana; si se llega desde
+   * un filtro de tres días, se amplía al lunes-domingo que los contiene.
+   * Al volver a lista el rango se respeta: encogerlo perdería citas que
+   * el profesional ya estaba mirando.
+   */
+  function cambiarVista(nueva: 'lista' | 'semana') {
+    if (nueva === 'semana') {
+      // `desde` es una fecha local YYYY-MM-DD. Se construye a mediodía
+      // para que ningún cambio de horario de verano la mueva de día.
+      const lunes = lunesDe(new Date(`${desde}T12:00:00`))
+      const iso = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      const domingo = new Date(lunes)
+      domingo.setDate(lunes.getDate() + 7)
+      setDesde(iso(lunes))
+      setHasta(iso(domingo))
+    }
+    setVista(nueva)
+  }
 
   async function accion(fn: () => Promise<unknown>) {
     if (ocupado) return
@@ -226,6 +253,28 @@ export function Agenda() {
         </p>
       )}
 
+      <div className="flex justify-end">
+        <div
+          role="group"
+          aria-label="Forma de ver la agenda"
+          className="inline-flex overflow-hidden rounded-md border border-border"
+        >
+          {(['lista', 'semana'] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => cambiarVista(v)}
+              aria-pressed={vista === v}
+              className={`px-3 py-1.5 text-sm font-medium ${
+                vista === v ? 'bg-primary text-white' : 'bg-surface text-ink hover:bg-surface-2'
+              }`}
+            >
+              {v === 'lista' ? 'Lista' : 'Semana'}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {datos.tipo === 'cargando' && (
         <div className="space-y-3" aria-busy="true">
           {[0, 1, 2].map((i) => (
@@ -248,7 +297,18 @@ export function Agenda() {
         </div>
       )}
 
-      {datos.tipo === 'listo' && datos.citas.length === 0 && (
+      {datos.tipo === 'listo' && vista === 'semana' && (
+        <VistaSemana
+          citas={datos.citas}
+          lunes={new Date(`${desde}T12:00:00`)}
+          onAbrir={(id) => {
+            const c = datos.citas.find((x) => x.id === id)
+            if (c) setDetalle(c)
+          }}
+        />
+      )}
+
+      {datos.tipo === 'listo' && vista === 'lista' && datos.citas.length === 0 && (
         <div className="rounded-lg border border-border bg-surface p-10 text-center shadow-sm">
           <p className="font-semibold text-ink">No hay citas en este rango</p>
           <p className="mt-1 text-sm text-muted">Prueba con otras fechas o quita los filtros.</p>
@@ -256,6 +316,7 @@ export function Agenda() {
       )}
 
       {datos.tipo === 'listo' &&
+        vista === 'lista' &&
         [...porDia.entries()].map(([dia, citas]) => (
           <section key={dia}>
             <h2 className="mb-2 text-sm font-semibold capitalize text-muted">

@@ -138,10 +138,16 @@ export interface DatosSnapshotEnvio {
 
 /* ---------------------- Rebanada 4 · agenda ---------------------- */
 
-export const CITA_TIPOS = ['primera_vez', 'seguimiento', 'control'] as const
+export const CITA_TIPOS = ['primera_vez', 'seguimiento', 'control', 'urgencia'] as const
 export type CitaTipo = (typeof CITA_TIPOS)[number]
 
-export const CITA_ESTADOS = ['programada', 'completada', 'cancelada'] as const
+export const CITA_ESTADOS = [
+  'programada',
+  'confirmada',
+  'completada',
+  'cancelada',
+  'no_asistio',
+] as const
 export type CitaEstado = (typeof CITA_ESTADOS)[number]
 
 export interface Cita {

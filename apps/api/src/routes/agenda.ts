@@ -6,6 +6,7 @@
  * `admin_clinica`, las de toda la clínica.
  */
 import type { FastifyInstance } from 'fastify'
+import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
 import { esUuid } from '../pacientes/validacion.js'
 import { resolverAlcance } from '../pacientes/acceso.js'
@@ -333,6 +334,70 @@ export async function registerAgendaRoutes(app: FastifyInstance): Promise<void> 
         }
         throw error
       }
+    },
+  )
+  /* ---------------------------------------------------------------- */
+  /* GET /api/citas/paciente/:pacienteId — historial (profesional)     */
+  /* ---------------------------------------------------------------- */
+  //
+  // Va DESPUÉS de /api/citas/:id en el archivo, pero eso da igual:
+  // Fastify resuelve los segmentos literales antes que los
+  // paramétricos, así que `paciente` nunca cae en `:id`.
+  app.get<{ Params: { pacienteId: string } }>(
+    '/api/citas/paciente/:pacienteId',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { tenantId, sub, roles } = request.auth
+      const alcance = await resolverAlcance(tenantId, sub, roles)
+      if (!alcance) return reply.code(403).send(sinProfesional())
+
+      const { pacienteId } = request.params
+      if (!esUuid(pacienteId)) return reply.code(404).send(noEncontrada())
+
+      // Mismo criterio de visibilidad que el resto del expediente: un
+      // paciente fuera del alcance no existe.
+      const { rows: visible } = await pool.query(
+        `select 1 from paciente
+          where id = $1 and clinica_id = $2
+            and ($3::uuid is null or nutricionista_id = $3)`,
+        [pacienteId, tenantId, alcance.restringirA],
+      )
+      if (!visible[0]) {
+        return reply
+          .code(404)
+          .send({ error: 'paciente_no_encontrado', message: 'No se encontró el paciente' })
+      }
+
+      // Se devuelven TODAS, canceladas incluidas. En el historial de un
+      // paciente una cancelación es información: dice que se agendó y no
+      // ocurrió. Ocultarla dejaría huecos inexplicables en la secuencia.
+      const { rows } = await pool.query(
+        `select c.id,
+                to_char(c.inicio,'YYYY-MM-DD"T"HH24:MI:SSOF') as inicio,
+                c.duracion_minutos, c.tipo::text as tipo, c.estado::text as estado,
+                c.motivo, c.notas_clinicas, c.consulta_origen_id, c.snapshot_id,
+                prof.nombre as profesional
+           from cita c
+           left join profesional prof on prof.id = c.profesional_id
+          where c.clinica_id = $1 and c.paciente_id = $2
+          order by c.inicio desc`,
+        [tenantId, pacienteId],
+      )
+
+      return reply.send(
+        rows.map((c: Record<string, unknown>) => ({
+          id: c['id'],
+          inicio: c['inicio'],
+          duracionMinutos: Number(c['duracion_minutos']),
+          tipo: c['tipo'],
+          estado: c['estado'],
+          motivo: c['motivo'],
+          notasClinicas: c['notas_clinicas'],
+          consultaOrigenId: c['consulta_origen_id'],
+          snapshotId: c['snapshot_id'],
+          profesional: c['profesional'],
+        })),
+      )
     },
   )
 }

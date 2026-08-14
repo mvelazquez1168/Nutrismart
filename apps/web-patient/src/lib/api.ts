@@ -181,3 +181,25 @@ export function cumplirAcuerdo(
     body: JSON.stringify({ cumplido }),
   })
 }
+
+/* ---- AGE-02 · Agenda del paciente ---- */
+
+export interface CitaPaciente {
+  id: string
+  inicio: string
+  duracionMinutos: number
+  tipo: string
+  estado: 'programada' | 'confirmada' | 'completada' | 'cancelada' | 'no_asistio'
+  motivo: string | null
+  profesional: string | null
+}
+
+export interface AgendaPaciente {
+  proxima: CitaPaciente | null
+  siguientes: CitaPaciente[]
+  historial: CitaPaciente[]
+}
+
+export function getCitasPaciente(): Promise<AgendaPaciente> {
+  return pedir<AgendaPaciente>('/api/paciente/citas', { conAuth: true })
+}

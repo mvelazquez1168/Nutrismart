@@ -277,7 +277,12 @@ export async function actualizarCita(
   const actual = rows[0]
   if (!actual) return false
 
-  if (actual.estado !== 'programada') throw new CitaNoEditableError(actual.estado)
+  // También se reprograma una cita confirmada: el paciente avisó de que
+  // viene, no de que la hora sea inamovible. Lo que no se toca es lo ya
+  // cerrado — completada, cancelada o no_asistio son historia.
+  if (actual.estado !== 'programada' && actual.estado !== 'confirmada') {
+    throw new CitaNoEditableError(actual.estado)
+  }
 
   try {
     await pool.query(
@@ -309,16 +314,26 @@ export async function actualizarCita(
 /* Cambio de estado                                                    */
 /* ------------------------------------------------------------------ */
 
+/**
+ * `confirmada` es el único estado intermedio: el paciente avisó de que
+ * viene. Desde ahí se llega a los mismos tres finales que desde
+ * `programada`.
+ *
+ * `no_asistio` es final y distinto de `cancelada`: cancelar es un aviso
+ * y el hueco se pudo reasignar; no presentarse es un hueco perdido. Una
+ * clínica necesita contarlos por separado.
+ */
 const TRANSICIONES: Record<string, CitaEstado[]> = {
-  programada: ['completada', 'cancelada'],
+  programada: ['confirmada', 'completada', 'cancelada', 'no_asistio'],
+  confirmada: ['completada', 'cancelada', 'no_asistio'],
   completada: [],
   cancelada: [],
+  no_asistio: [],
 }
 
 /**
- * Solo se avanza desde 'programada'. Reabrir una cita cerrada
- * falsearía el registro de lo que ocurrió; si hace falta otra
- * consulta, se agenda una nueva.
+ * No se reabre una cita cerrada: falsearía el registro de lo que
+ * ocurrió. Si hace falta otra consulta, se agenda una nueva.
  */
 export async function cambiarEstado(
   tenantId: string,

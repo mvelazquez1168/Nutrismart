@@ -18,6 +18,17 @@ export function ChipEstadoCita({ estado }: { estado: CitaEstado }) {
     )
   }
 
+  // Confirmada es "programada, y además el paciente dijo que viene": el
+  // mismo color con relleno lleno, para que se lea como un paso más
+  // dentro de la misma vía y no como otro estado.
+  if (estado === 'confirmada') {
+    return (
+      <span className="rounded-pill bg-primary px-2 py-0.5 text-xs font-medium text-white">
+        Confirmada
+      </span>
+    )
+  }
+
   if (estado === 'completada') {
     return (
       <span
@@ -25,6 +36,21 @@ export function ChipEstadoCita({ estado }: { estado: CitaEstado }) {
         style={{ '--estado-color': 'var(--status-normal)' } as CSSProperties}
       >
         Completada
+      </span>
+    )
+  }
+
+  // La ausencia se lee distinto de la cancelación, y por eso lleva su
+  // propio color. Cancelar es un aviso —el hueco se pudo reasignar—; no
+  // presentarse es un hueco perdido, y quien mira la agenda de la
+  // semana necesita distinguirlos de un vistazo.
+  if (estado === 'no_asistio') {
+    return (
+      <span
+        className="badge-estado"
+        style={{ '--estado-color': 'var(--status-alert)' } as CSSProperties}
+      >
+        No asistió
       </span>
     )
   }

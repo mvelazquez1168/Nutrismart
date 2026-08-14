@@ -1740,6 +1740,86 @@ Sin ese mapper el token no lleva `aud: nutrismart-api` y **la API responde 401 s
 
 ---
 
+# Rebanada 20 · Agenda: lo que faltaba
+
+> **La Rebanada 4 ya había construido la agenda.** Tabla, validación de solapes, siete rutas y cinco componentes. R20 no la rehace: la extiende. Detalle de qué existía en `docs/REBANADA-20.md`.
+
+## Los dos estados nuevos
+
+`no_asistio` no es un matiz de `cancelada`: cancelar es un aviso y el hueco se pudo reasignar; no presentarse es un hueco perdido. Una clínica los cuenta por separado.
+
+### Máquina de estados
+| Desde | Hacia | Resultado |
+|---|---|---|
+| `programada` | `confirmada` | **200** |
+| `confirmada` | reprogramar (`PUT`) | **200** — avisó de que viene, no de que la hora sea fija |
+| `confirmada` | `completada` | **200** |
+| `completada` | `programada` | **409** — no se reabre lo cerrado |
+| `programada` | `no_asistio` | **200** |
+| `no_asistio` | `cancelada` | **409** — es final |
+| cualquiera | `inventado` | **400** |
+
+La validación de solapes de R4 sigue vigente con los estados nuevos: una cita encima de una **confirmada** devuelve **409**.
+
+## Historial por paciente (profesional)
+
+`GET /api/citas/paciente/:pacienteId`
+
+| Prueba | Esperado |
+|---|---|
+| Paciente visible | **200** con la lista, más reciente primero |
+| Paciente inexistente o fuera de alcance | **404** |
+
+Devuelve **todas, canceladas incluidas**: en un historial una cancelación es información —se agendó y no ocurrió— y ocultarla deja huecos inexplicables.
+
+## Agenda del paciente
+
+`GET /api/paciente/citas` → `{ proxima, siguientes, historial }`
+
+| Bloque | Qué incluye |
+|---|---|
+| `proxima` / `siguientes` | Solo `programada` y `confirmada`, futuras. Una cancelada futura no es una cita, es un hueco |
+| `historial` | Todo lo pasado, canceladas y ausencias incluidas |
+
+| Prueba | Esperado |
+|---|---|
+| Token de profesional | **403** `solo_pacientes` |
+| Sin token | **401** |
+
+## Rejilla semanal (profesional)
+
+En Agenda, botones **Lista / Semana**. La lista sigue por defecto.
+
+| Paso | Qué comprobar |
+|---|---|
+| Pulsar **Semana** | El rango se encuadra al lunes–domingo que contiene el `desde` actual |
+| Rejilla | Siete columnas, franja de 07:00 a 21:00, el día de hoy resaltado |
+| Bloques | Altura proporcional a la duración; color por estado |
+| Cancelada | Gris y tachada |
+| No asistió | Color de alerta — se distingue de cancelada de un vistazo |
+| Pulsar un bloque | Abre el detalle de esa cita |
+| Semana sin citas | «No hay citas esta semana» |
+
+> **No se añadió `?semana=YYYY-WW`.** Sería otra forma de decir `?desde=&hasta=`, que ya existía — y el cálculo de semana ISO del encargo está mal: `new Date(anio, 0, 1 + (ww-1)*7)` no da el lunes de la semana ISO, con desfases de hasta tres días según el año.
+
+> El lunes se calcula en hora **local**, no en UTC: hacerlo en UTC desplaza la rejilla un día cada domingo por la noche.
+
+## App del paciente
+
+Pantalla `/citas`, cuarta pestaña de la barra inferior.
+
+| Paso | Qué comprobar |
+|---|---|
+| Arriba | Cuenta atrás en la unidad que usaría una persona: «Mañana», «En 3 días», «En 2 semanas» |
+| Debajo | Fecha larga, hora, duración y profesional |
+| Sin citas | Invita a escribir un mensaje, con botón a `/mensajes` |
+| Historial | Estados en lenguaje de paciente: `no_asistio` se lee **«No se realizó»**, sin reproche |
+| Desde Inicio | «Ver todas mis citas →» lleva aquí |
+
+Rutas servidas: `/activar`, `/inicio`, `/plan`, `/citas`, `/mensajes` — todas **200**.
+
+---
+
 # Recorrido manual del frontend
 
 Con `npm run dev:web`, en **http://localhost:5173**:

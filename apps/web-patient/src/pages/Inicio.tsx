@@ -221,6 +221,13 @@ export function Inicio() {
               siguiente.
             </p>
           )}
+          <button
+            type="button"
+            onClick={() => navegar('/citas')}
+            className="mt-2 text-sm font-medium text-primary hover:underline"
+          >
+            Ver todas mis citas →
+          </button>
         </Tarjeta>
 
         <Tarjeta titulo="Tu peso" icono={<IconPeso />}>
