@@ -1905,6 +1905,92 @@ En el detalle de una cita **confirmada, o programada y con la hora encima**, apa
 
 ---
 
+# Rebanada 22 · Diario de comidas y medidas en casa
+
+## Seguridad (las siete rutas)
+
+| Prueba | Esperado |
+|---|---|
+| Token de profesional en `/api/paciente/diario` | **403** `solo_pacientes` |
+| Sin token | **401** |
+| Otro profesional sobre `/api/pacientes/:id/registros` | **404** |
+
+## Diario de comidas
+
+### Guardar y leer
+| Prueba | Esperado |
+|---|---|
+| `POST` almuerzo con kcal | **201** con el registro |
+| `POST` desayuno **sin** kcal | **201**, `kcal: null` |
+| `GET /api/paciente/diario` | Las dos comidas y los totales |
+| Reescribir el almuerzo | **UPSERT** — sigue habiendo **dos filas**, no tres |
+| `DELETE` de un registro | **204**; baja lógica, la fila se conserva |
+
+### El orden del día, no el alfabético
+| Esperado | Resultado |
+|---|---|
+| `desayuno` antes que `almuerzo` | ✅ tras el arreglo |
+
+> **Volvió a aparecer el fallo de la R9.** `select tipo_comida::text as tipo_comida … order by tipo_comida` resuelve el `ORDER BY` contra el alias de salida, que es texto: sale «almuerzo, desayuno». Se arregla aliando la tabla y ordenando por `rc.tipo_comida`. El comentario que había escrito en esa misma consulta decía cómo evitarlo — y aun así cayó.
+
+### Totales incompletos
+Con una comida sin calorías: `kcal: 620`, **`sinEstimar: 1`**.
+
+La pantalla lo dice: «Una comida sin calorías apuntadas: no cuenta en el total». Sumar solo lo que tiene número y presentarlo sin más parece que el paciente comió de menos.
+
+### Serie semanal
+`GET /api/paciente/diario/semana?dias=4`:
+```json
+[{"fecha":"2026-08-11","kcal":0,"comidas":0},
+ {"fecha":"2026-08-12","kcal":0,"comidas":0},
+ {"fecha":"2026-08-13","kcal":0,"comidas":0},
+ {"fecha":"2026-08-14","kcal":220,"comidas":2}]
+```
+**Los días vacíos salen a cero**, no faltan: una gráfica sin ellos dibuja una línea continua sobre los huecos.
+
+## Medidas en casa
+
+| Prueba | Esperado |
+|---|---|
+| `POST` peso 77.4 | **201**, `unidad: "kg"` |
+| `POST` presión 128/82 con nota | **201**, `unidad: "mmHg"` |
+| Presión **80/120** | **400** «La primera cifra (sistólica) debe ser mayor que la segunda» |
+| Presión sin diastólica | **400** |
+| Peso sin valor | **400** |
+| Fecha en el futuro | **400** «Esa fecha todavía no ha llegado» |
+| Peso con `unidad: "lb"` | Se guarda como **`kg`** — manda el servidor |
+| `GET …/metricas/resumen` | Última lectura de cada tipo, indexada por tipo |
+
+> **Separadas de `medicion_antropometrica`.** La báscula de la clínica está calibrada y se usa siempre igual; la de casa, no. Mezclarlas convierte la línea de peso en ruido. Las dos pantallas lo dicen para que nadie crea que se contradicen.
+
+## Vista del profesional
+
+Ficha del paciente → pestaña **«Sus registros»**.
+
+| Paso | Qué comprobar |
+|---|---|
+| Diario agrupado por día | Con la franja y las calorías si las hay |
+| Medidas | Con el aviso de que se las tomó el paciente y no sustituyen a las de consulta |
+| Selector 7 / 14 / 30 días | Recarga el periodo |
+
+> Sin esta pestaña el diario es un cuaderno que nadie lee: el paciente apunta **para que su nutricionista lo mire**.
+
+## App del paciente
+
+Pantalla `/registros`, tercera pestaña de la barra: **Inicio · Plan · Apuntar · Citas · Mensajes**.
+
+| Paso | Qué comprobar |
+|---|---|
+| Pestañas internas | «Qué comí» y «Mis medidas» — una pantalla, no dos entradas más en la barra |
+| Seis franjas | Se despliegan y guardan; la ya escrita aparece rellena al abrirla |
+| Selector de día | No deja elegir un día futuro |
+| Barras de 7 días | Los días sin registro se ven como marca gris, no como hueco |
+| Presión | Dos campos con la barra `/` entre ellos |
+
+Rutas servidas: `/inicio`, `/plan`, `/registros`, `/citas`, `/mensajes` — todas **200**.
+
+---
+
 # Recorrido manual del frontend
 
 Con `npm run dev:web`, en **http://localhost:5173**:

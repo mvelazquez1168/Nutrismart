@@ -35,15 +35,24 @@ const IconCita = () => (
     <line x1="3" y1="10" x2="21" y2="10" />
   </Svg>
 )
+const IconApuntar = () => (
+  <Svg>
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+  </Svg>
+)
 const IconChat = () => (
   <Svg>
     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
   </Svg>
 )
 
+// Cinco es el máximo razonable en una barra inferior; con etiquetas
+// cortas caben en 390 px sin partirse.
 const ITEMS = [
   { to: '/inicio', etiqueta: 'Inicio', Icono: IconInicio },
-  { to: '/plan', etiqueta: 'Mi plan', Icono: IconPlan },
+  { to: '/plan', etiqueta: 'Plan', Icono: IconPlan },
+  { to: '/registros', etiqueta: 'Apuntar', Icono: IconApuntar },
   { to: '/citas', etiqueta: 'Citas', Icono: IconCita },
   { to: '/mensajes', etiqueta: 'Mensajes', Icono: IconChat },
 ] as const
@@ -60,7 +69,7 @@ export function NavBar({ mensajesSinLeer = 0 }: { mensajesSinLeer?: number }) {
             <NavLink
               to={to}
               className={({ isActive }) =>
-                `flex flex-col items-center px-2 pb-2 pt-3 text-xs font-medium transition-colors ${
+                `flex flex-col items-center px-1 pb-2 pt-3 text-[11px] font-medium transition-colors ${
                   isActive ? 'text-primary' : 'text-muted'
                 }`
               }

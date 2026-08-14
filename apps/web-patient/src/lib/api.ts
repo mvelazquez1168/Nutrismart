@@ -40,6 +40,8 @@ async function pedir<T>(ruta: string, opciones: RequestInit & { conAuth: boolean
     throw new ApiError(respuesta.status, mensaje, codigo)
   }
 
+  // 204 no trae cuerpo: intentar parsearlo lanzaría.
+  if (respuesta.status === 204) return undefined as T
   return (await respuesta.json()) as T
 }
 
@@ -206,4 +208,112 @@ export function getCitasPaciente(): Promise<AgendaPaciente> {
 
 export function confirmarCita(id: string): Promise<{ id: string; estado: string }> {
   return pedir(`/api/paciente/citas/${id}/confirmar`, { method: 'PATCH', conAuth: true })
+}
+
+/* ---- Diario de comidas y métricas ---- */
+
+export const FRANJAS = [
+  { clave: 'desayuno', etiqueta: 'Desayuno' },
+  { clave: 'media_manana', etiqueta: 'Media mañana' },
+  { clave: 'almuerzo', etiqueta: 'Almuerzo' },
+  { clave: 'merienda', etiqueta: 'Merienda' },
+  { clave: 'cena', etiqueta: 'Cena' },
+  { clave: 'extra', etiqueta: 'Otro' },
+] as const
+
+export type Franja = (typeof FRANJAS)[number]['clave']
+
+export interface Comida {
+  id: string
+  tipoComida: Franja
+  descripcion: string
+  kcal: number | null
+  proteinaG: number | null
+  choG: number | null
+  grasaG: number | null
+  actualizadoEn: string
+}
+
+export interface Diario {
+  fecha: string
+  registros: Comida[]
+  totales: {
+    kcal: number
+    proteinaG: number
+    choG: number
+    grasaG: number
+    /** Comidas apuntadas sin calorías: el total no las incluye. */
+    sinEstimar: number
+  }
+  objetivo: {
+    kcal: number | null
+    proteinaG: number | null
+    choG: number | null
+    grasaG: number | null
+  } | null
+}
+
+export interface DiaSemana {
+  fecha: string
+  kcal: number
+  comidas: number
+}
+
+export type TipoMetrica = 'peso' | 'presion_arterial' | 'glucosa' | 'otro'
+
+export interface Metrica {
+  id: string
+  tipo: TipoMetrica
+  valor: number | null
+  sistolica: number | null
+  diastolica: number | null
+  unidad: string
+  nota: string | null
+  medidoEn: string
+}
+
+export function getDiario(fecha?: string): Promise<Diario> {
+  const q = fecha ? `?fecha=${encodeURIComponent(fecha)}` : ''
+  return pedir<Diario>(`/api/paciente/diario${q}`, { conAuth: true })
+}
+
+export function guardarComida(datos: {
+  tipoComida: Franja
+  descripcion: string
+  fecha?: string
+  kcal?: number | null
+}): Promise<Comida> {
+  return pedir('/api/paciente/diario', {
+    method: 'POST',
+    conAuth: true,
+    body: JSON.stringify(datos),
+  })
+}
+
+export async function borrarComida(id: string): Promise<void> {
+  await pedir<unknown>(`/api/paciente/diario/${id}`, { method: 'DELETE', conAuth: true })
+}
+
+export function getSemanaDiario(dias = 7): Promise<DiaSemana[]> {
+  return pedir<DiaSemana[]>(`/api/paciente/diario/semana?dias=${dias}`, { conAuth: true })
+}
+
+export function getMetricas(tipo?: TipoMetrica, limite = 30): Promise<Metrica[]> {
+  const q = new URLSearchParams({ limite: String(limite) })
+  if (tipo) q.set('tipo', tipo)
+  return pedir<Metrica[]>(`/api/paciente/metricas?${q.toString()}`, { conAuth: true })
+}
+
+export function guardarMetrica(datos: {
+  tipo: TipoMetrica
+  valor?: number
+  sistolica?: number
+  diastolica?: number
+  nota?: string
+}): Promise<Metrica> {
+  return pedir('/api/paciente/metricas', {
+    method: 'POST',
+    conAuth: true,
+    body: JSON.stringify(datos),
+  })
 }

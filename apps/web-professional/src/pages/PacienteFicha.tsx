@@ -36,10 +36,18 @@ import { SociodemografiaBloque } from '../components/SociodemografiaBloque'
 import { PlanAlimentarioTab } from '../components/PlanAlimentarioTab'
 import { ListaSOAP } from '../components/ia/ListaSOAP'
 import { InvitarPaciente } from '../components/InvitarPaciente'
+import { RegistrosPaciente } from '../components/RegistrosPaciente'
 import { ExportarPDFModal } from '../components/ExportarPDFModal'
 import { ListaConsultas } from '../components/eval/ListaConsultas'
 
-type Pestana = 'resumen' | 'historial' | 'laboratorios' | 'plan' | 'sociodemografia' | 'soap'
+type Pestana =
+  | 'resumen'
+  | 'historial'
+  | 'laboratorios'
+  | 'plan'
+  | 'registros'
+  | 'sociodemografia'
+  | 'soap'
 
 type Estado =
   | { tipo: 'cargando' }
@@ -324,6 +332,9 @@ export function PacienteFicha() {
         >
           Sociodemografía
         </Tab>
+        <Tab activa={pestana === 'registros'} onClick={() => setPestana('registros')}>
+          Sus registros
+        </Tab>
         <Tab activa={pestana === 'soap'} onClick={() => setPestana('soap')}>
           Notas SOAP
         </Tab>
@@ -441,6 +452,8 @@ export function PacienteFicha() {
         </div>
       ) : pestana === 'plan' ? (
         <PlanAlimentarioTab pacienteId={p.id} />
+      ) : pestana === 'registros' ? (
+        <RegistrosPaciente pacienteId={p.id} />
       ) : pestana === 'soap' ? (
         <ListaSOAP pacienteId={p.id} />
       ) : pestana === 'sociodemografia' ? (
