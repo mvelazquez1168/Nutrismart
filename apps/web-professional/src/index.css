@@ -48,6 +48,36 @@
     color: var(--estado-color);
     background-color: color-mix(in srgb, var(--estado-color) 14%, transparent);
   }
+
+  /*
+   * Tarjeta de KPI teñida (dashboard, CLI-08).
+   *
+   * El tono llega por --tono-kpi y de él se derivan fondo y borde con
+   * color-mix, igual que .badge-estado. Asi hay UNA fuente de verdad por
+   * tono: si el token cambia —o si la clinica cambia su marca— la
+   * tarjeta lo sigue sin tocar nada.
+   *
+   * Porcentajes bajos a proposito: el fondo es un tinte, no un bloque de
+   * color. La cifra va encima en color de texto normal y necesita
+   * contraste; ademas, seis tarjetas saturadas en fila compiten entre si
+   * y ninguna destaca.
+   */
+  .tile-kpi {
+    background-color: color-mix(in srgb, var(--tono-kpi) 8%, var(--surface));
+    border-color: color-mix(in srgb, var(--tono-kpi) 28%, var(--border));
+  }
+
+  /*
+   * El icono NO lleva el token en crudo.
+   *
+   * Los tonos claros de la paleta —el ambar sobre todo— quedan en torno
+   * a 2:1 contra su propio tinte y se ven lavados. Se oscurecen contra
+   * la tinta conservando el tono, que es lo mismo que hace el
+   * white-label para derivar --primary-hover.
+   */
+  .tile-kpi__icono {
+    color: color-mix(in srgb, var(--tono-kpi) 78%, var(--ink));
+  }
 }
 
 @layer base {

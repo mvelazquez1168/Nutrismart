@@ -15,10 +15,26 @@ import {
 import { KpiTile } from '../components/KpiTile'
 import { AgendaHoy } from '../components/AgendaHoy'
 import { TablaProfesionales } from '../components/TablaProfesionales'
+import {
+  IconoCalendario,
+  IconoCheck,
+  IconoEquis,
+  IconoMatraz,
+  IconoPersonaMas,
+  IconoPersonas,
+  IconoPortapapeles,
+  IconoReloj,
+} from '../components/iconos'
 
 /** '2026-08-01T06:00:00Z' → '1 de agosto'. */
 function diaLegible(iso: string): string {
   return new Date(iso).toLocaleDateString('es-CR', { day: 'numeric', month: 'long' })
+}
+
+const SUBTITULO_PERIODO: Record<Periodo, string> = {
+  hoy: 'hoy',
+  semana: 'esta semana',
+  mes: 'este mes',
 }
 
 export function DashboardPage() {
@@ -122,38 +138,62 @@ export function DashboardPage() {
         </div>
       )}
 
+      {/*
+        Los cuatro primeros son las citas y sus desenlaces —suman el
+        total— así que llevan tonos de ESTADO: los mismos tokens que el
+        chip "Completada" de la agenda, más abajo en esta pantalla. Dos
+        verdes distintos para lo mismo en la misma página sería el fallo.
+
+        Los dos últimos son recuentos de pacientes: no significan bien
+        ni mal, así que llevan la paleta categórica del design system.
+      */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
-        <KpiTile etiqueta="Citas del período" valor={k?.citasTotal ?? 0} cargando={cargando} />
+        <KpiTile
+          etiqueta="Citas"
+          valor={k?.citasTotal ?? 0}
+          secundario={SUBTITULO_PERIODO[periodo]}
+          icono={<IconoCalendario />}
+          tono="marca"
+          cargando={cargando}
+        />
         <KpiTile
           etiqueta="Completadas"
           valor={k?.citasCompletadas ?? 0}
           secundario={pct(k?.citasCompletadas)}
+          icono={<IconoCheck />}
+          tono="normal"
           cargando={cargando}
         />
         <KpiTile
           etiqueta="Canceladas"
           valor={k?.citasCanceladas ?? 0}
           secundario={pct(k?.citasCanceladas)}
-          // Solo se tiñe si hay alguna: un cero en rojo daría una
-          // alarma sobre la ausencia del problema.
-          claseColor={(k?.citasCanceladas ?? 0) > 0 ? 'text-[color:var(--status-critical)]' : 'text-ink'}
+          icono={<IconoEquis />}
+          tono="critico"
           cargando={cargando}
         />
         <KpiTile
           etiqueta="Pendientes"
           valor={k?.citasPendientes ?? 0}
           secundario={pct(k?.citasPendientes)}
+          icono={<IconoReloj />}
+          tono="espera"
           cargando={cargando}
         />
         <KpiTile
-          etiqueta="Pacientes activos"
+          etiqueta="Pacientes"
           valor={k?.pacientesActivos ?? 0}
-          secundario="en toda la clínica"
+          secundario="activos en total"
+          icono={<IconoPersonas />}
+          tono="dato-1"
           cargando={cargando}
         />
         <KpiTile
-          etiqueta="Nuevos en el período"
+          etiqueta="Nuevos"
           valor={k?.pacientesNuevos ?? 0}
+          secundario={SUBTITULO_PERIODO[periodo]}
+          icono={<IconoPersonaMas />}
+          tono="dato-2"
           cargando={cargando}
         />
       </div>
@@ -164,11 +204,17 @@ export function DashboardPage() {
         <KpiTile
           etiqueta="Controles registrados"
           valor={k?.snapshotsCreados ?? 0}
+          secundario={SUBTITULO_PERIODO[periodo]}
+          icono={<IconoPortapapeles />}
+          tono="dato-3"
           cargando={cargando}
         />
         <KpiTile
           etiqueta="Laboratorios cargados"
           valor={k?.examenesSubidos ?? 0}
+          secundario={SUBTITULO_PERIODO[periodo]}
+          icono={<IconoMatraz />}
+          tono="dato-4"
           cargando={cargando}
         />
       </div>
