@@ -33,8 +33,9 @@ import { SnapshotModal } from '../components/SnapshotModal'
 import { Timeline } from '../components/Timeline'
 import { MetricasVitales } from '../components/MetricasVitales'
 import { SociodemografiaBloque } from '../components/SociodemografiaBloque'
+import { PlanAlimentarioTab } from '../components/PlanAlimentarioTab'
 
-type Pestana = 'resumen' | 'historial' | 'laboratorios' | 'sociodemografia'
+type Pestana = 'resumen' | 'historial' | 'laboratorios' | 'plan' | 'sociodemografia'
 
 type Estado =
   | { tipo: 'cargando' }
@@ -286,6 +287,9 @@ export function PacienteFicha() {
         <Tab activa={pestana === 'laboratorios'} onClick={() => setPestana('laboratorios')}>
           Laboratorios ({laboratorios.length})
         </Tab>
+        <Tab activa={pestana === 'plan'} onClick={() => setPestana('plan')}>
+          Plan alimentario
+        </Tab>
         <Tab
           activa={pestana === 'sociodemografia'}
           onClick={() => setPestana('sociodemografia')}
@@ -389,6 +393,8 @@ export function PacienteFicha() {
             </div>
           </div>
         </div>
+      ) : pestana === 'plan' ? (
+        <PlanAlimentarioTab pacienteId={p.id} />
       ) : pestana === 'sociodemografia' ? (
         <SociodemografiaBloque pacienteId={p.id} />
       ) : pestana === 'laboratorios' ? (

@@ -667,6 +667,116 @@ select indexname from pg_indexes
 
 ---
 
+# Rebanada 9 · Plan alimentario
+
+**Requiere los dos usuarios**: `ana@vida.cr` (`admin_clinica`) y `luis@vida.cr` (`nutricionista`). El seed **no** trae planes, a propósito: el ciclo se prueba entero desde cero.
+
+Preparación en PowerShell:
+
+```powershell
+$b = @{client_id='nutrismart-web'; grant_type='password'; username='ana@vida.cr'; password='nutrismart-dev'}
+$TOKEN = (Invoke-RestMethod -Method Post -Body $b `
+  -Uri "http://localhost:8080/realms/nutrismart/protocol/openid-connect/token").access_token
+$H = @{ Authorization = "Bearer $TOKEN" }
+$API = "http://localhost:4001"
+$MARIA = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+```
+
+> El token caduca en pocos minutos. Si empiezan a salir **401**, vuelve a pedirlo — y cuidado con reutilizar el nombre `$token`: PowerShell no distingue mayúsculas y lo sobrescribiría.
+
+### CA-09-01 · Crear plan en borrador
+```powershell
+$plan = Invoke-RestMethod "$API/api/pacientes/$MARIA/planes" -Method Post -Headers $H `
+  -ContentType "application/json" `
+  -Body '{"nombre":"Plan de agosto","objetivo":"Bajar 0.5 kg por semana","fechaInicio":"2026-08-17","fechaFin":"2026-09-14"}'
+$plan.estado   # borrador
+```
+
+**Esperado:** **201**, `estado: "borrador"`, y las fechas de vuelta como `AAAA-MM-DD` —no como instante—. Un plan nace siempre en borrador: activarlo es una decisión aparte y todavía no tiene ni una comida.
+
+### CA-09-02 · Validación
+| Prueba | Esperado |
+|---|---|
+| `nombre` vacío o de más de 120 caracteres | **400** |
+| `fechaFin` anterior a `fechaInicio` | **400** |
+| `diaSemana: 8` | **400** |
+| `tipoComida: "brunch"` | **400** |
+| `descripcion` vacía o solo espacios | **400** |
+| `caloriasKcal: 0` | **400** (el `CHECK` exige > 0) |
+| Dos comidas para el mismo día y momento | **400**, indicando qué celda |
+
+El duplicado lo impediría igual el `UNIQUE` de la base, pero llegar hasta ahí devolvería un choque de índice en vez de un mensaje que diga qué celda repite.
+
+### CA-09-03 · Cargar comidas y activar
+```powershell
+Invoke-RestMethod "$API/api/planes/$($plan.id)/comidas" -Method Put -Headers $H `
+  -ContentType "application/json" `
+  -Body '[{"diaSemana":1,"tipoComida":"desayuno","descripcion":"Avena con frutas","caloriasKcal":320},
+          {"diaSemana":1,"tipoComida":"almuerzo","descripcion":"Arroz con pollo","caloriasKcal":580}]'
+# planId + comidas: 2
+
+Invoke-RestMethod "$API/api/planes/$($plan.id)/activar" -Method Put -Headers $H
+# estado: activo
+```
+
+Activar dos veces devuelve **200** con el plan tal cual: reactivar lo que ya está activo no es un error, es que no hay nada que hacer.
+
+**Orden de las comidas:** el `GET` las devuelve **desayuno antes que almuerzo**. Si salen alfabéticamente (almuerzo, cena, desayuno…) hay regresión: el `ORDER BY` estará resolviendo contra el alias `::text` en vez de contra la columna del enum.
+
+### CA-09-04 · Un solo plan activo por paciente
+Crear un segundo plan para el mismo paciente e intentar activarlo.
+
+**Esperado:** **409 `plan_activo_existente`** — *"El paciente ya tiene un plan activo. Archívalo antes de activar este."*
+
+Lo garantiza el índice parcial `idx_plan_activo_por_paciente`, no una comprobación previa en la API: dos peticiones a la vez pasarían las dos por cualquier `select`.
+
+### CA-09-05 · Un plan archivado es inmutable
+Archivar el plan activo y luego intentar editarlo:
+
+| Prueba | Esperado |
+|---|---|
+| `PUT /comidas` | **409 `plan_archivado`** |
+| `PUT` de cabecera | **409 `plan_archivado`** |
+| `PUT /activar` | **409** — no se reactiva |
+| `PUT /archivar` otra vez | **409** — ya lo está |
+
+Es el registro de lo que se prescribió. Si volviera a ser editable, el historial dejaría de probar nada.
+
+### CA-09-06 · Aislamiento y alcance
+| Prueba | Esperado |
+|---|---|
+| Luis (`nutricionista`) sobre un plan de un paciente de Ana | **404** |
+| Sin token | **401** |
+| Plan inexistente | **404** |
+| Luis sobre un plan de un paciente **suyo** | **200** |
+
+**404, no 403.** El plan se ata al paciente y el paciente al nutricionista dentro de la misma consulta; sin ese join bastaría conocer el id del plan.
+
+### CA-09-07 · Descartar solo borradores
+| Prueba | Esperado |
+|---|---|
+| `DELETE` sobre un plan **activo** | **409 `plan_no_eliminable`** |
+| `DELETE` sobre un **borrador** | **204** |
+| El borrador tras el DELETE | Sigue en la base, con `estado = 'archivado'` |
+
+Un plan que llegó a estar activo es historia clínica. Y ni siquiera el borrador se borra: se archiva.
+
+### CA-09-08 · Guardar un plan vacío
+```powershell
+Invoke-RestMethod "$API/api/planes/$($plan.id)/comidas" -Method Put -Headers $H `
+  -ContentType "application/json" -Body '[]'
+# comidas: 0
+```
+
+**Esperado:** **200**. Vaciar la semana entera es una edición legítima, y el reemplazo total es lo que la hace expresable: con un guardado incremental no habría forma de decir "quita el almuerzo del martes".
+
+### CA-09-09 · Macros opcionales
+Crear una comida solo con `descripcion`, sin `caloriasKcal` ni gramos.
+
+**Esperado:** **200**, con los macros a `null`. Obligarlos convertiría cada celda en un ejercicio de cálculo y el profesional acabaría inventando cifras para poder guardar.
+
+---
+
 # Recorrido manual del frontend
 
 Con `npm run dev:web`, en **http://localhost:5173**:
@@ -766,6 +876,29 @@ Con **`ana@vida.cr`** (administradora):
 | Teclear `/admin/dashboard` con Luis | Redirige a Pacientes; la API responde 403 igual |
 
 Con **`luis@vida.cr`**: **Dashboard sigue apagado** en el menú.
+
+### Plan alimentario (Rebanada 9)
+
+En la ficha de un paciente, pestaña **Plan alimentario**:
+
+| Paso | Qué comprobar |
+|---|---|
+| Sin planes | «Aún sin planes registrados.» en la lista lateral |
+| **+ Nuevo plan** | Pide nombre y objetivo; **Crear** deshabilitado sin nombre |
+| Tras crear | Abre el **editor directamente**: el plan nace vacío y lo siguiente es cargarlo |
+| Editor | 7 columnas × 6 filas; el contador dice cuántas comidas llevas |
+| Rellenar desayuno y almuerzo del lunes → **Guardar** | La rejilla de lectura muestra **solo esas dos filas**, no las seis |
+| Orden de las filas | **Desayuno antes que Almuerzo** — si sale alfabético, hay regresión |
+| Al pie de la rejilla | Suma de kilocalorías declaradas |
+| Guardar una comida **sin kcal** | Se guarda; la celda no muestra línea de calorías |
+| **Activar plan** | El chip pasa a verde «Activo» — el mismo verde que «Completada» en la agenda |
+| Crear un 2.º plan y activarlo | Aviso: *«El paciente ya tiene un plan activo. Archívalo antes de activar este.»* |
+| **Descartar** un borrador | Pide confirmación; desaparece de la selección pero sigue en la lista como Archivado |
+| **Archivar** el activo | Pide confirmación explicando que dejará de regir |
+| Plan archivado | Chip **tachado**, aviso de solo lectura y **sin botones de acción** |
+| Vaciar todas las celdas y Guardar | Vuelve el mensaje de «aún no tiene comidas» |
+
+El editor manda la rejilla **entera** y el servidor reemplaza lo que había. Es lo que hace expresable vaciar una celda: con un guardado incremental, quitar el almuerzo del martes no tendría forma de decirse.
 
 ---
 
