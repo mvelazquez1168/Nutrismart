@@ -6,6 +6,7 @@
   "workspaces": [
     "apps/api",
     "apps/web-professional",
+    "apps/web-patient",
     "packages/design-system"
   ],
   "scripts": {

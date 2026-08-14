@@ -1664,6 +1664,71 @@ Barra inferior fija con Inicio · Mi plan · Mensajes, contador de no leídos, y
 
 ---
 
+# Rebanada 19 · La app del paciente en Docker
+
+> **Estado.** El contenedor construye, levanta y sirve. El **cliente `nutrismart-patient` de Keycloak sigue pendiente** (lo crea el equipo por la consola), y con él el recorrido de punta a punta.
+
+## Construcción
+
+```bash
+docker build -f apps/web-patient/Dockerfile \
+  --build-arg VITE_API_URL=http://localhost:4001 \
+  --build-arg VITE_KEYCLOAK_URL=http://localhost:8080 \
+  --build-arg VITE_KEYCLOAK_REALM=nutrismart \
+  --build-arg VITE_KEYCLOAK_CLIENT_ID_PACIENTE=nutrismart-patient \
+  -t nutrismart-web-patient-test .
+```
+
+Imagen resultante: **93 MB**.
+
+> **El primer intento falló.** `apps/web-patient` no estaba en la lista de `workspaces` del `package.json` de la raíz —la Rebanada 17 creó la app sin registrarla— y `npm run build -w @nutrismart/web-patient` no encontraba el paquete. En local no se notaba porque se lanzaba `npx vite` desde dentro de la carpeta.
+
+> **La plantilla del encargo tampoco habría construido:** usaba `npm ci --workspace=…` y nunca copiaba `packages/design-system`, que la app importa para los tokens y el preset de Tailwind.
+
+## Servicio
+
+```bash
+docker compose -f infra/docker-compose.dev.yml up -d web-patient
+```
+
+| Prueba | Esperado |
+|---|---|
+| `GET /` | **200** |
+| `GET /activar` · `/inicio` · `/plan` · `/mensajes` | **200** |
+| `GET /activar?token=abc` | Sirve `index.html` (fallback de SPA) |
+
+**El fallback importa más aquí que en la app profesional**: el enlace de invitación llega por correo a `/activar?token=…`. Sin él, el enlace del correo daría 404 y la invitación sería inservible.
+
+### Variables incrustadas en el bundle
+```
+localhost:4001 · localhost:8080 · nutrismart-patient
+```
+
+Se resuelven **en el build**, no en runtime: cambiar de entorno exige reconstruir la imagen, no reiniciarla.
+
+> **`localhost` es correcto también dentro de Docker.** El encargo sugería `host.docker.internal` ante un error de CORS, razonando que el contenedor llama a la API. No la llama: nginx solo sirve archivos estáticos, y quien hace `fetch` es el navegador del paciente, fuera de Docker.
+
+### Cabeceras de caché
+| Recurso | `Cache-Control` |
+|---|---|
+| `/assets/index-*.js` | `max-age=31536000, public, immutable` |
+| `/index.html` | `no-cache` |
+
+## Dos trampas de puerto
+
+| Síntoma | Causa |
+|---|---|
+| `ports are not available: 0.0.0.0:5175` | Un `npx vite --port 5175` de una prueba anterior sin cerrar. Docker no dice quién ocupa el puerto |
+| Rutas posteriores a la R12 devuelven 404 | El contenedor `nutrismart-api` servía una imagen anterior a la rebanada de IA y competía por el 4001 con `npm run dev`. Se reconstruye la imagen |
+
+## Pendiente: el cliente de Keycloak
+
+Sin `nutrismart-patient` en el realm nadie puede autenticarse. Pasos y —sobre todo— el **mapper de audiencia** que suele olvidarse, en `docs/REBANADA-19.md`.
+
+Sin ese mapper el token no lleva `aud: nutrismart-api` y **la API responde 401 sin decir por qué**.
+
+---
+
 # Recorrido manual del frontend
 
 Con `npm run dev:web`, en **http://localhost:5173**:

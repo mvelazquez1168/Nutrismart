@@ -66,15 +66,26 @@ services:
       - "5173:80"   # nginx sirve en el 80 dentro del contenedor
     networks: [nutrismart]
 
-  # --- App del paciente (PWA) — se activa en la rebanada del paciente ---
-  # Comentada: aún no existe apps/web-patient/Dockerfile y el build rompería
-  # 'docker compose up'. Al reactivar, el 5174 del host lo ocupa vetplatform-frontend-1.
-  # web-patient:
-  #   build: ../apps/web-patient
-  #   container_name: nutrismart-web-pat
-  #   ports:
-  #     - "5174:5173"
-  #   networks: [nutrismart]
+  # --- App del paciente (PWA) ---
+  web-patient:
+    build:
+      context: ..
+      dockerfile: apps/web-patient/Dockerfile
+      # Igual que en la app profesional: se INCRUSTAN en el bundle
+      # durante el build. Son URLs que resuelve el navegador del
+      # paciente —su móvil, fuera de Docker—, así que van con localhost.
+      # nginx aquí solo sirve archivos estáticos: no llama a nada.
+      args:
+        VITE_API_URL: http://localhost:4001
+        VITE_KEYCLOAK_URL: http://localhost:8080
+        VITE_KEYCLOAK_REALM: nutrismart
+        VITE_KEYCLOAK_CLIENT_ID_PACIENTE: nutrismart-patient
+    container_name: nutrismart-web-pat
+    depends_on: [api]
+    ports:
+      # El 5174 lo ocupa vetplatform-frontend-1 en esta máquina.
+      - "5175:80"   # nginx sirve en el 80 dentro del contenedor
+    networks: [nutrismart]
 
 networks:
   nutrismart:
