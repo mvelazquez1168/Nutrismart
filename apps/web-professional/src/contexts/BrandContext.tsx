@@ -122,6 +122,10 @@ function aplicarTokens(brand: Brand): void {
   fijar(root, '--primary-hover', paleta.primaryHover)
   fijar(root, '--primary-tint', paleta.primaryTint)
   fijar(root, '--ring', paleta.ring)
+  // Fondo de las barras de navegación: el mismo color, oscurecido lo
+  // justo para que el texto blanco que va encima se lea. Con la mayoría
+  // de las paletas sale idéntico a --primary. Ver fondoNav().
+  fijar(root, '--nav', paleta.nav)
 
   // El acento no existe en tokens.css: lo declara index.css de esta
   // app, porque hoy solo lo usa la vista previa de la marca. Cuando el

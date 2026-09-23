@@ -11,6 +11,7 @@ import {
   DIAGNOSTICOS,
   RECOMENDACIONES_FRECUENTES,
   RESTRICCIONES,
+  RESTRICCIONES_RETIRADAS,
   getConclusion,
   guardarConclusion,
   type Acuerdo,
@@ -18,7 +19,9 @@ import {
 import { getHistorial } from '../../api/clinico'
 import { macrosEnGramos } from '../../lib/calculadora'
 import { Campo, claseControl } from '../Campo'
-import { PanelCalculadora, type ResultadoCalculadora } from './PanelCalculadora'
+import { PanelCalculadora, type DatosCalculadora } from './PanelCalculadora'
+import { PlanAlimentarioResumen } from './PlanAlimentarioResumen'
+import { PlanAlimentarioCard } from './PlanAlimentarioCard'
 
 const ACUERDOS_INICIALES: Acuerdo[] = [
   { texto: 'Registrar la ingesta diaria', cumplido: false },
@@ -42,9 +45,9 @@ export function FormConclusion({
   onGuardado: () => void | Promise<void>
 }) {
   const [diagnostico, setDiagnostico] = useState('')
-  const [cie10, setCie10] = useState('')
   const [secundario, setSecundario] = useState('')
   const [observaciones, setObservaciones] = useState('')
+  const [objetivos, setObjetivos] = useState('')
   const [recomendaciones, setRecomendaciones] = useState<string[]>([])
   const [personalizada, setPersonalizada] = useState('')
   const [kcal, setKcal] = useState('')
@@ -57,6 +60,7 @@ export function FormConclusion({
   const [fafHistorial, setFafHistorial] = useState<number | null>(null)
 
   const [calculadora, setCalculadora] = useState(false)
+  const [datosCalculadora, setDatosCalculadora] = useState<DatosCalculadora | null>(null)
   const [cargando, setCargando] = useState(true)
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -73,9 +77,9 @@ export function FormConclusion({
         if (conc.status === 'fulfilled') {
           const c = conc.value
           setDiagnostico(c.diagnosticoPrincipal ?? '')
-          setCie10(c.diagnosticoCie10 ?? '')
           setSecundario(c.diagnosticoSecundario ?? '')
           setObservaciones(c.observacionesClinicas ?? '')
+          setObjetivos(c.objetivos ?? '')
           setRecomendaciones(c.recomendaciones ?? [])
           setKcal(c.kcalPrescritas?.toString() ?? '')
           if (c.pctProteina !== null && c.pctCho !== null && c.pctGrasa !== null) {
@@ -88,6 +92,8 @@ export function FormConclusion({
           // Solo se sustituyen los acuerdos si ya había alguno guardado:
           // si no, se dejan los tres de arranque.
           if (c.acuerdos.length > 0) setAcuerdos(c.acuerdos)
+          // Hidrata el encabezado del plan sin reabrir la calculadora.
+          setDatosCalculadora(c.datosCalculadora ?? null)
         }
         // El FAF del historial alimenta la calculadora sin volver a preguntarlo.
         if (hist.status === 'fulfilled') setFafHistorial(hist.value.faf)
@@ -115,9 +121,16 @@ export function FormConclusion({
     setOk(false)
   }
 
-  function recibirDeCalculadora(r: ResultadoCalculadora) {
-    setKcal(String(r.kcal))
-    setPct({ proteina: r.pctProteina, cho: r.pctCho, grasa: r.pctGrasa })
+  function recibirDeCalculadora(r: DatosCalculadora) {
+    setKcal(String(r.metaCalorica))
+    setPct({
+      proteina: r.distribucionMacros.protPct,
+      cho: r.distribucionMacros.choPct,
+      grasa: r.distribucionMacros.grasaPct,
+    })
+    // El bloque completo alimenta el encabezado del plan y se persiste
+    // junto a la conclusión al guardar.
+    setDatosCalculadora(r)
     setCalculadora(false)
     setOk(false)
   }
@@ -129,9 +142,9 @@ export function FormConclusion({
     try {
       await guardarConclusion(pacienteId, consultaId, {
         diagnosticoPrincipal: diagnostico || null,
-        diagnosticoCie10: cie10 || null,
         diagnosticoSecundario: secundario || null,
         observacionesClinicas: observaciones || null,
+        objetivos: objetivos || null,
         recomendaciones,
         kcalPrescritas: kcalNum,
         // Los tres o ninguno: el servidor rechaza un reparto incompleto.
@@ -143,6 +156,7 @@ export function FormConclusion({
         pesoObjetivo: pesoObjetivo.trim() === '' ? null : Number(pesoObjetivo),
         fechaObjetivoPeso: fechaObjetivo || null,
         acuerdos: acuerdos.filter((a) => a.texto.trim() !== ''),
+        datosCalculadora,
       })
       setOk(true)
       await onGuardado()
@@ -170,10 +184,6 @@ export function FormConclusion({
               value={diagnostico}
               onChange={(e) => {
                 setDiagnostico(e.target.value)
-                // Si coincide con uno del catálogo, el código se rellena
-                // solo; sigue siendo editable para los que no están.
-                const encontrado = DIAGNOSTICOS.find((d) => d.nombre === e.target.value)
-                if (encontrado) setCie10(encontrado.cie10)
                 setOk(false)
               }}
               className={claseControl(false)}
@@ -187,27 +197,32 @@ export function FormConclusion({
             ))}
           </datalist>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Campo id="cie" etiqueta="Código CIE-10" ayuda="Editable">
-              <input
-                id="cie"
-                type="text"
-                maxLength={10}
-                value={cie10}
-                onChange={(e) => setCie10(e.target.value)}
-                className={`${claseControl(false)} font-mono`}
-              />
-            </Campo>
-            <Campo id="sec" etiqueta="Diagnóstico secundario" ayuda="Opcional">
-              <input
-                id="sec"
-                type="text"
-                value={secundario}
-                onChange={(e) => setSecundario(e.target.value)}
-                className={claseControl(false)}
-              />
-            </Campo>
-          </div>
+          <Campo id="sec" etiqueta="Diagnóstico secundario" ayuda="Opcional">
+            <input
+              id="sec"
+              type="text"
+              value={secundario}
+              onChange={(e) => setSecundario(e.target.value)}
+              className={claseControl(false)}
+            />
+          </Campo>
+
+          {/* Objetivos antes que observaciones: primero a dónde se va,
+              después qué se vio. Y el objetivo es lo que la consulta de
+              seguimiento va a buscar para comparar. */}
+          <Campo
+            id="objetivos"
+            etiqueta="Objetivos del tratamiento"
+            ayuda="En los términos del paciente: es lo que se revisa en la siguiente visita"
+          >
+            <textarea
+              id="objetivos"
+              rows={3}
+              value={objetivos}
+              onChange={(e) => setObjetivos(e.target.value)}
+              className={`${claseControl(false)} resize-none`}
+            />
+          </Campo>
 
           <Campo id="obs" etiqueta="Observaciones clínicas">
             <textarea
@@ -218,74 +233,6 @@ export function FormConclusion({
               className={`${claseControl(false)} resize-none`}
             />
           </Campo>
-        </section>
-
-        {/* ---- Recomendaciones ---- */}
-        <section className="space-y-3 rounded-lg border border-border bg-surface p-5">
-          <h3 className="font-semibold text-ink">Recomendaciones</h3>
-          <div className="flex flex-wrap gap-2">
-            {RECOMENDACIONES_FRECUENTES.map((r) => (
-              <button
-                key={r}
-                type="button"
-                onClick={() => alternar(recomendaciones, setRecomendaciones, r)}
-                className={`rounded-pill border px-3 py-1 text-sm ${
-                  recomendaciones.includes(r)
-                    ? 'border-primary bg-primary-tint font-medium text-primary'
-                    : 'border-border text-ink hover:bg-surface-2'
-                }`}
-              >
-                {r}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={personalizada}
-              onChange={(e) => setPersonalizada(e.target.value)}
-              placeholder="Recomendación propia…"
-              aria-label="Recomendación personalizada"
-              className={claseControl(false)}
-            />
-            <button
-              type="button"
-              onClick={() => {
-                const t = personalizada.trim()
-                if (t !== '' && !recomendaciones.includes(t)) {
-                  setRecomendaciones([...recomendaciones, t])
-                  setPersonalizada('')
-                }
-              }}
-              className="shrink-0 rounded-md border border-border px-4 text-sm font-medium text-ink hover:bg-surface-2"
-            >
-              Añadir
-            </button>
-          </div>
-
-          {recomendaciones.length > 0 && (
-            <ul className="flex flex-wrap gap-2">
-              {recomendaciones.map((r) => (
-                <li
-                  key={r}
-                  className="flex items-center gap-1 rounded-pill bg-primary-tint px-2.5 py-1 text-xs text-primary"
-                >
-                  {r}
-                  {!bloqueada && (
-                    <button
-                      type="button"
-                      onClick={() => alternar(recomendaciones, setRecomendaciones, r)}
-                      aria-label={`Quitar ${r}`}
-                      className="font-bold"
-                    >
-                      ×
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
         </section>
 
         {/* ---- Prescripción ---- */}
@@ -372,6 +319,24 @@ export function FormConclusion({
                   {r.etiqueta}
                 </button>
               ))}
+
+              {/* Restricciones que ya no se ofrecen pero que esta
+                  conclusión tiene guardadas. Se pintan para poder
+                  quitarlas a mano; sin esto quedarían invisibles y el
+                  profesional creería haberlas borrado. */}
+              {restricciones
+                .filter((c) => RESTRICCIONES_RETIRADAS[c])
+                .map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => alternar(restricciones, setRestricciones, c)}
+                    title="Ya no se ofrece; se conserva porque estaba registrada"
+                    className="rounded-pill border border-dashed border-primary bg-primary-tint px-3 py-1 text-sm font-medium text-primary"
+                  >
+                    {RESTRICCIONES_RETIRADAS[c]} ·
+                  </button>
+                ))}
             </div>
           </div>
 
@@ -419,6 +384,79 @@ export function FormConclusion({
               className={`${claseControl(false)} resize-none`}
             />
           </Campo>
+        </section>
+
+        {/* ---- Plan alimentario ---- */}
+        {/* Encabezado con lo que dejó la calculadora (R39), persistido. */}
+        <PlanAlimentarioCard datos={datosCalculadora} />
+        <PlanAlimentarioResumen pacienteId={pacienteId} />
+
+        {/* ---- Recomendaciones ---- */}
+        <section className="space-y-3 rounded-lg border border-border bg-surface p-5">
+          <h3 className="font-semibold text-ink">Recomendaciones</h3>
+          <div className="flex flex-wrap gap-2">
+            {RECOMENDACIONES_FRECUENTES.map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => alternar(recomendaciones, setRecomendaciones, r)}
+                className={`rounded-pill border px-3 py-1 text-sm ${
+                  recomendaciones.includes(r)
+                    ? 'border-primary bg-primary-tint font-medium text-primary'
+                    : 'border-border text-ink hover:bg-surface-2'
+                }`}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={personalizada}
+              onChange={(e) => setPersonalizada(e.target.value)}
+              placeholder="Recomendación propia…"
+              aria-label="Recomendación personalizada"
+              className={claseControl(false)}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                const t = personalizada.trim()
+                if (t !== '' && !recomendaciones.includes(t)) {
+                  setRecomendaciones([...recomendaciones, t])
+                  setPersonalizada('')
+                }
+              }}
+              className="shrink-0 rounded-md border border-border px-4 text-sm font-medium text-ink hover:bg-surface-2"
+            >
+              Añadir
+            </button>
+          </div>
+
+          {recomendaciones.length > 0 && (
+            <ul className="flex flex-wrap gap-2">
+              {recomendaciones.map((r) => (
+                <li
+                  key={r}
+                  className="flex items-center gap-1 rounded-pill bg-primary-tint px-2.5 py-1 text-xs text-primary"
+                >
+                  {r}
+                  {!bloqueada && (
+                    <button
+                      type="button"
+                      onClick={() => alternar(recomendaciones, setRecomendaciones, r)}
+                      aria-label={`Quitar ${r}`}
+                      className="font-bold"
+                    >
+                      ×
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
 
         {/* ---- Acuerdos ---- */}
@@ -507,6 +545,7 @@ export function FormConclusion({
         edad={edad}
         sexo={sexo}
         fafHistorial={fafHistorial}
+        datosGuardados={datosCalculadora}
         onCerrar={() => setCalculadora(false)}
         onEnviar={recibirDeCalculadora}
       />

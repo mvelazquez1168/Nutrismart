@@ -2,7 +2,7 @@
  * Valoración nutricional ABCD — EVAL-00, contenedor.
  *
  * Las cinco secciones del ABCD, completas desde la Rebanada 15:
- * antropometría, bioquímica, clínico, dietético y conclusiones.
+ * antropometría, laboratorios, clínico, dietético y conclusiones.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
@@ -21,6 +21,7 @@ import { TabsValoracion } from '../components/eval/TabsValoracion'
 import { FormAntropometria } from '../components/eval/FormAntropometria'
 import { PanelBioquimica } from '../components/eval/PanelBioquimica'
 import { FormHistorialClinico } from '../components/eval/FormHistorialClinico'
+import { HabitosClinicos } from '../components/eval/HabitosClinicos'
 import { TabsDietetico } from '../components/eval/TabsDietetico'
 import { FormConclusion } from '../components/eval/FormConclusion'
 import { ResumenPlanPrescrito } from '../components/eval/ResumenPlanPrescrito'
@@ -205,19 +206,26 @@ export function ValoracionPaciente() {
       {tab === 'bioquim' && (
         <PanelBioquimica
           pacienteId={id}
+          sexoPaciente={paciente?.sexoBiologico ?? null}
           consultaId={consultaId}
           bloqueada={finalizada}
           onGuardado={refrescar}
         />
       )}
       {tab === 'clinico' && (
-        <FormHistorialClinico
-          pacienteId={id}
-          consultaId={consultaId}
-          bloqueada={finalizada}
-          fechaAnterior={seguimiento ? (anterior?.consulta.fechaConsulta ?? null) : null}
-          onGuardado={refrescar}
-        />
+        <div className="space-y-6">
+          <FormHistorialClinico
+            pacienteId={id}
+            consultaId={consultaId}
+            bloqueada={finalizada}
+            fechaAnterior={seguimiento ? (anterior?.consulta.fechaConsulta ?? null) : null}
+            onGuardado={refrescar}
+          />
+          {/* Hábitos del paciente (R36). Bloque aparte y con su propio
+              botón: se guardan en la ficha del paciente, no en el
+              historial de esta consulta. */}
+          <HabitosClinicos pacienteId={id} bloqueada={finalizada} />
+        </div>
       )}
       {tab === 'dietetico' && (
         <TabsDietetico

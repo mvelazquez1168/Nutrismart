@@ -13,6 +13,7 @@ import {
   type Periodo,
 } from '../api/admin'
 import { KpiTile } from '../components/KpiTile'
+import { Tendencia } from '../components/admin/Tendencia'
 import { AgendaHoy } from '../components/AgendaHoy'
 import { TablaProfesionales } from '../components/TablaProfesionales'
 import {
@@ -236,6 +237,13 @@ export function DashboardPage() {
           <TablaProfesionales profesionales={datos?.porProfesional ?? []} />
         )}
       </section>
+
+      {/* GAM-03. Va aquí y no en otra entrada de menú: lo de arriba
+          responde «qué pasa hoy» y esto «cómo va la clínica». Dos
+          pantallas llamadas «Dashboard» habrían sido peor. */}
+      <div className="border-t border-border pt-6">
+        <Tendencia />
+      </div>
     </div>
   )
 }

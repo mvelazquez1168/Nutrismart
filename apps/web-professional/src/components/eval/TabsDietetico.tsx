@@ -8,14 +8,23 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError } from '../../api/client'
 import { getDietetico, guardarDietetico, type ComidaR24 } from '../../api/clinico'
-import { FormR24h } from './FormR24h'
+import { TablaDietetica } from './TablaDietetica'
 import { FormFrecuenciaConsumo } from './FormFrecuenciaConsumo'
 import { ResumenDietetico } from './ResumenDietetico'
+import { TotalesRecordatorio } from './TotalesRecordatorio'
 import { AvisoPrecarga } from './BannerSeguimiento'
 
+// Orden R40: Frecuencia → Recordatorio 24h → Consumo Usual → Resumen.
+//
+// R41 pedía una sola pestaña llamada «Recordatorio 24h / Consumo Usual».
+// Ya son dos, que es esa misma pareja con cada mitad accesible por su
+// nombre; juntarlas ahora escondería una detrás de la otra. Lo que sí se
+// unifica es cómo se escriben, para que coincidan con el resto de la
+// aplicación y con el PDF.
 const SUB = [
-  { clave: 'r24', etiqueta: 'Recordatorio 24 h' },
   { clave: 'frecuencia', etiqueta: 'Frecuencia de consumo' },
+  { clave: 'r24', etiqueta: 'Recordatorio 24h' },
+  { clave: 'consumo_usual', etiqueta: 'Consumo Usual' },
   { clave: 'macros', etiqueta: 'Resumen y macros' },
 ] as const
 
@@ -36,7 +45,7 @@ export function TabsDietetico({
   fechaAnterior?: string | null
   onGuardado: () => void | Promise<void>
 }) {
-  const [sub, setSub] = useState<Sub>('r24')
+  const [sub, setSub] = useState<Sub>('frecuencia')
   const [comidas, setComidas] = useState<ComidaR24[]>([])
   const [frecuencia, setFrecuencia] = useState<Record<string, string>>({})
   const [hidratacion, setHidratacion] = useState('')
@@ -132,8 +141,14 @@ export function TabsDietetico({
         ))}
       </div>
 
+      {/* Recordatorio 24 h y Consumo Usual son autónomos: cargan y
+          guardan su propio registro (con IA), aparte del guardado de
+          frecuencia/macros. */}
       {sub === 'r24' && (
-        <FormR24h comidas={comidas} onCambio={setComidas} bloqueada={bloqueada} />
+        <TablaDietetica pacienteId={pacienteId} consultaId={consultaId} tipo="recordatorio_24h" readOnly={bloqueada} />
+      )}
+      {sub === 'consumo_usual' && (
+        <TablaDietetica pacienteId={pacienteId} consultaId={consultaId} tipo="consumo_usual" readOnly={bloqueada} />
       )}
       {sub === 'frecuencia' && (
         <FormFrecuenciaConsumo
@@ -145,51 +160,76 @@ export function TabsDietetico({
         />
       )}
       {sub === 'macros' && (
-        <ResumenDietetico macros={macros} onCambio={setMacros} bloqueada={bloqueada} />
+        <>
+          <ResumenDietetico macros={macros} onCambio={setMacros} bloqueada={bloqueada} />
+          {/* Debajo de lo declarado, no encima: el orden dice cuál manda
+              (R41). Copiar deja los valores en el formulario sin
+              guardarlos — el botón de abajo sigue siendo el que persiste. */}
+          <TotalesRecordatorio
+            pacienteId={pacienteId}
+            consultaId={consultaId}
+            {...(bloqueada
+              ? {}
+              : {
+                  onCopiar: (s) =>
+                    setMacros((m) => ({
+                      ...m,
+                      kcal: s.kcal.toFixed(0),
+                      cho: s.cho.toFixed(1),
+                      proteina: s.prot.toFixed(1),
+                      grasa: s.grasas.toFixed(1),
+                    })),
+                })}
+          />
+        </>
       )}
 
-      <div>
-        <label htmlFor="notas-diet" className="mb-1 block text-sm font-medium text-ink">
-          Notas dietéticas
-        </label>
-        <textarea
-          id="notas-diet"
-          rows={3}
-          value={notas}
-          disabled={bloqueada}
-          onChange={(e) => setNotas(e.target.value)}
-          placeholder="Observaciones sobre los hábitos alimentarios…"
-          className="w-full resize-none rounded-md border border-border bg-surface p-3 text-sm text-ink outline-none placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-[color:var(--ring)]"
-        />
-      </div>
+      {/* La nota y el guardado por lote cubren frecuencia y macros; las
+          tablas dietéticas se guardan solas. */}
+      {(sub === 'frecuencia' || sub === 'macros') && (
+        <>
+          <div>
+            <label htmlFor="notas-diet" className="mb-1 block text-sm font-medium text-ink">
+              Notas dietéticas
+            </label>
+            <textarea
+              id="notas-diet"
+              rows={3}
+              value={notas}
+              disabled={bloqueada}
+              onChange={(e) => setNotas(e.target.value)}
+              placeholder="Observaciones sobre los hábitos alimentarios…"
+              className="w-full resize-none rounded-md border border-border bg-surface p-3 text-sm text-ink outline-none placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-[color:var(--ring)]"
+            />
+          </div>
 
-      {error && (
-        <p
-          role="alert"
-          className="rounded-md border border-[color:var(--status-critical)] bg-surface p-3 text-sm text-ink"
-        >
-          {error}
-        </p>
-      )}
-      {ok && (
-        <p className="rounded-md border border-border bg-primary-tint p-3 text-sm text-primary">
-          Evaluación dietética guardada.
-        </p>
-      )}
+          {error && (
+            <p
+              role="alert"
+              className="rounded-md border border-[color:var(--status-critical)] bg-surface p-3 text-sm text-ink"
+            >
+              {error}
+            </p>
+          )}
+          {ok && (
+            <p className="rounded-md border border-border bg-primary-tint p-3 text-sm text-primary">
+              Evaluación dietética guardada.
+            </p>
+          )}
 
-      {!bloqueada && (
-        <div className="flex justify-end">
-          {/* Un solo botón para las tres sub-secciones: el estado es uno
-              y el guardado también. */}
-          <button
-            type="button"
-            onClick={() => void guardar()}
-            disabled={guardando}
-            className="rounded-md bg-primary px-5 py-2 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-60"
-          >
-            {guardando ? 'Guardando…' : 'Guardar evaluación dietética'}
-          </button>
-        </div>
+          {!bloqueada && (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => void guardar()}
+                disabled={guardando}
+                className="rounded-md bg-primary px-5 py-2 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-60"
+              >
+                {guardando ? 'Guardando…' : 'Guardar evaluación dietética'}
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

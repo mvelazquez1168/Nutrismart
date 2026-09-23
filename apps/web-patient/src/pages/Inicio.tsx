@@ -18,7 +18,10 @@ import {
   type Yo,
 } from '../lib/api'
 import { entrar, initKeycloak, salir } from '../lib/keycloak'
+import { aplicarMarca } from '../lib/marca'
 import { NavBar } from '../components/NavBar'
+import { Avatar } from '../components/Avatar'
+import { usePerfil } from '../hooks/usePerfil'
 
 function Tarjeta({
   titulo,
@@ -58,6 +61,20 @@ const IconPeso = () => (
   <Svg>
     <circle cx="12" cy="12" r="9" />
     <path d="M12 6v6l4 2" />
+  </Svg>
+)
+/** «Buenos dias» a las once de la noche suena a robot. */
+function saludoSegunHora(): string {
+  const h = new Date().getHours()
+  if (h < 12) return 'Buenos días'
+  if (h < 19) return 'Buenas tardes'
+  return 'Buenas noches'
+}
+
+const IconLibro = () => (
+  <Svg>
+    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
   </Svg>
 )
 const IconPlan = () => (
@@ -135,6 +152,7 @@ function fechaLarga(iso: string): string {
 
 export function Inicio() {
   const navegar = useNavigate()
+  const { perfil } = usePerfil()
   const [yo, setYo] = useState<Yo | null>(null)
   const [datos, setDatos] = useState<Dashboard | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -162,10 +180,9 @@ export function Inicio() {
         setTareas(pendientes)
 
         // La app se viste con el color de la clínica del paciente. Es el
-        // white-label de la Rebanada 6 visto desde el otro lado.
-        if (perfil.clinica.colorPrimario) {
-          document.documentElement.style.setProperty('--primary', perfil.clinica.colorPrimario)
-        }
+        // white-label de la Rebanada 6 visto desde el otro lado. Aquí se
+        // aplica sin pedir nada: el perfil ya está en la mano.
+        aplicarMarca(perfil.clinica.colorPrimario)
       } catch (e) {
         if (!vivo) return
         if (e instanceof ApiError && e.codigo === 'sin_vincular') {
@@ -204,15 +221,37 @@ export function Inicio() {
 
   return (
     <main className="min-h-screen bg-background pb-nav">
-      <header className="bg-primary px-4 pb-8 pt-10 text-white">
-        <div className="mb-1 flex items-center justify-between">
-          <p className="text-sm opacity-90">{yo.clinica.nombre}</p>
-          <button type="button" onClick={salir} className="text-xs underline opacity-90">
+      {/* La bienvenida lleva el fondo que eligio el paciente; el resto
+          de cabeceras siguen con el color de la clinica. El nombre sale
+          del perfil (el preferido si lo hay) y no de `yo`. */}
+      <header className="fondo-hero px-4 pb-8 pt-10">
+        <div className="mb-3 flex items-center justify-between">
+          <p className="text-sm text-muted">{yo.clinica.nombre}</p>
+          <button type="button" onClick={salir} className="text-xs text-muted underline">
             Salir
           </button>
         </div>
-        <h1 className="text-2xl font-bold">Hola, {yo.nombre.split(' ')[0]}</h1>
-        <p className="mt-1 text-sm capitalize opacity-90">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => navegar('/perfil')}
+            aria-label="Mi perfil"
+            className="shrink-0"
+          >
+            <Avatar
+              nombre={perfil?.nombre ?? yo.nombre}
+              fotoUrl={perfil?.fotoUrl}
+              size="md"
+            />
+          </button>
+          <div className="min-w-0">
+            <p className="text-xs text-muted">{saludoSegunHora()}</p>
+            <h1 className="truncate text-2xl font-bold text-ink">
+              {(perfil?.nombre ?? yo.nombre).split(' ')[0]}
+            </h1>
+          </div>
+        </div>
+        <p className="mt-2 text-sm capitalize text-muted">
           {new Date().toLocaleDateString('es-CR', { weekday: 'long', day: 'numeric', month: 'long' })}
         </p>
       </header>
@@ -382,6 +421,32 @@ export function Inicio() {
             className="text-sm font-medium text-primary hover:underline"
           >
             Ver cómo vas hacia tu meta →
+          </button>
+        </Tarjeta>
+
+        <Tarjeta titulo="Mis dispositivos" icono={<IconPeso />}>
+          <p className="text-sm text-muted">
+            Conecta tu pulsera o reloj y tus pasos, tu pulso y tu sueño llegarán solos.
+          </p>
+          <button
+            type="button"
+            onClick={() => navegar('/dispositivos')}
+            className="mt-2 text-sm font-medium text-primary hover:underline"
+          >
+            Conectar un dispositivo →
+          </button>
+        </Tarjeta>
+
+        <Tarjeta titulo="Biblioteca" icono={<IconLibro />}>
+          <p className="text-sm text-muted">
+            Material que publica tu nutricionista: recetas, hábitos y cómo leer una etiqueta.
+          </p>
+          <button
+            type="button"
+            onClick={() => navegar('/biblioteca')}
+            className="mt-2 text-sm font-medium text-primary hover:underline"
+          >
+            Abrir la biblioteca →
           </button>
         </Tarjeta>
 

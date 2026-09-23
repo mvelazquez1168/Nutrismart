@@ -1,17 +1,44 @@
 /**
- * Plan alimentario vigente, visto desde la valoración — EVAL-07.
+ * Plan alimentario vigente, visto desde la valoración — EVAL-07, R41.
  *
  * Solo lectura. El plan se edita en su propia pestaña del expediente:
- * dos sitios donde tocar lo mismo acaban discrepando, y aquí lo que
- * hace falta es comprobar qué se le prescribió, no cambiarlo.
+ * dos sitios donde tocar lo mismo acaban discrepando, y aquí lo que hace
+ * falta es comprobar qué se le prescribió, no cambiarlo.
+ *
+ * ── Qué estaba roto (R41) ───────────────────────────────────────────
+ *
+ * Los dos botones enlazaban a `/pacientes/:id` a secas. El expediente
+ * abre siempre en «Resumen», así que pulsar «Crear plan alimentario»
+ * dejaba al profesional en una pantalla que no era la que pidió, sin
+ * plan creado y sin nada que explicara qué había pasado. Parecía que el
+ * botón no hacía nada; en realidad hacía lo que le habían dicho.
+ *
+ * Ahora:
+ *   · con plan vigente  -> se abre ESE plan, en su pestaña
+ *   · sin plan          -> se crea uno y se abre el recién creado
+ *
+ * Crear es una escritura, así que el fallo se cuenta aquí mismo en vez
+ * de navegar a una pestaña donde no habría nada.
  */
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { DIAS, TIPOS_COMIDA, getPlan, getPlanes, type PlanDetalle } from '../../api/planes'
+import { useNavigate } from 'react-router-dom'
+import { ApiError } from '../../api/client'
+import { crearPlan, getPlan, getPlanes, type PlanDetalle } from '../../api/planes'
+import { PlanGrilla } from '../PlanGrilla'
+
+/** Hoy en 'dd/mm/aaaa', para nombrar un plan que nace sin nombre. */
+function hoyCorta(): string {
+  const d = new Date()
+  const dos = (n: number) => String(n).padStart(2, '0')
+  return `${dos(d.getDate())}/${dos(d.getMonth() + 1)}/${d.getFullYear()}`
+}
 
 export function ResumenPlanPrescrito({ pacienteId }: { pacienteId: string }) {
+  const navigate = useNavigate()
   const [plan, setPlan] = useState<PlanDetalle | null>(null)
   const [cargando, setCargando] = useState(true)
+  const [creando, setCreando] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     const ctrl = new AbortController()
@@ -34,6 +61,33 @@ export function ResumenPlanPrescrito({ pacienteId }: { pacienteId: string }) {
     return () => ctrl.abort()
   }, [pacienteId])
 
+  /** Lleva a la pestaña de planes del expediente, con uno abierto. */
+  function abrirEnExpediente(planId: string) {
+    navigate(`/pacientes/${pacienteId}?tab=plan&plan=${planId}`)
+  }
+
+  /**
+   * Sin plan vigente: se crea uno y se abre.
+   *
+   * Nace en borrador y vacío —eso lo decide la API—, que es justo lo que
+   * hace falta: el siguiente paso es cargarle las comidas.
+   */
+  async function crearYAbrir() {
+    if (creando) return
+    setCreando(true)
+    setError(null)
+    try {
+      const nuevo = await crearPlan(pacienteId, {
+        nombre: `Plan alimentario ${hoyCorta()}`,
+        objetivo: null,
+      })
+      abrirEnExpediente(nuevo.id)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'No se pudo crear el plan alimentario')
+      setCreando(false)
+    }
+  }
+
   if (cargando) return <div className="h-40 animate-pulse rounded-lg bg-surface-2" />
 
   if (!plan) {
@@ -42,30 +96,29 @@ export function ResumenPlanPrescrito({ pacienteId }: { pacienteId: string }) {
         <p className="text-sm font-medium text-ink">Sin plan de alimentación activo</p>
         <p className="mx-auto mt-1 max-w-md text-sm text-muted">
           La prescripción de esta valoración indica cuánto y cómo; el plan concreta qué se come
-          cada día.
+          en cada tiempo de comida.
         </p>
-        <Link
-          to={`/pacientes/${pacienteId}`}
-          className="mt-3 inline-block rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-hover"
+
+        {error && (
+          <p
+            role="alert"
+            className="mx-auto mt-3 max-w-md rounded-md border border-[color:var(--status-critical)] bg-surface p-3 text-sm text-ink"
+          >
+            {error}
+          </p>
+        )}
+
+        <button
+          type="button"
+          onClick={() => void crearYAbrir()}
+          disabled={creando}
+          className="mt-3 inline-block rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-60"
         >
-          Crear plan alimentario
-        </Link>
+          {creando ? 'Creando…' : 'Crear plan alimentario'}
+        </button>
       </section>
     )
   }
-
-  const ocupadas = new Set<string>()
-  let totalKcal = 0
-  for (const [dia, comidas] of Object.entries(plan.dias)) {
-    for (const c of comidas) {
-      ocupadas.add(`${dia}_${c.tipoComida}`)
-      totalKcal += c.caloriasKcal ?? 0
-    }
-  }
-
-  // Solo las filas con algo: un plan de desayuno y cena no necesita seis
-  // filas vacías empujando la rejilla, como en la pestaña del plan.
-  const filas = TIPOS_COMIDA.filter((t) => DIAS.some((d) => ocupadas.has(`${d.numero}_${t.clave}`)))
 
   return (
     <section className="space-y-3 rounded-lg border border-border bg-surface p-5">
@@ -82,71 +135,18 @@ export function ResumenPlanPrescrito({ pacienteId }: { pacienteId: string }) {
             Activo
           </span>
         </div>
-        <Link
-          to={`/pacientes/${pacienteId}`}
+        <button
+          type="button"
+          onClick={() => abrirEnExpediente(plan.id)}
           className="text-sm font-medium text-primary hover:underline"
         >
-          Editar el plan completo →
-        </Link>
+          Abrir el plan completo →
+        </button>
       </div>
 
       {plan.objetivo && <p className="text-sm text-muted">{plan.objetivo}</p>}
 
-      {filas.length === 0 ? (
-        <p className="rounded-md border border-border bg-surface-2 p-3 text-sm text-muted">
-          El plan está activo pero aún no tiene comidas cargadas.
-        </p>
-      ) : (
-        <>
-          <div className="overflow-x-auto">
-            <table className="min-w-full border-collapse text-xs">
-              <thead>
-                <tr>
-                  <th className="w-24 px-2 py-1 text-left font-medium text-muted">Comida</th>
-                  {DIAS.map((d) => (
-                    <th key={d.numero} className="px-1 py-1 text-center font-medium text-muted">
-                      {d.corto}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filas.map((t) => (
-                  <tr key={t.clave}>
-                    <th scope="row" className="px-2 py-1 text-left font-medium text-ink">
-                      {t.etiqueta}
-                    </th>
-                    {DIAS.map((d) => {
-                      const hay = ocupadas.has(`${d.numero}_${t.clave}`)
-                      return (
-                        <td key={d.numero} className="px-1 py-1">
-                          {/* Rejilla de presencia, no de contenido: dice
-                              qué días están cubiertos de un vistazo. */}
-                          <span
-                            aria-label={hay ? 'Con comida' : 'Sin comida'}
-                            className={`mx-auto block h-5 rounded-sm ${
-                              hay ? 'bg-primary-tint' : 'border border-dashed border-border'
-                            }`}
-                          />
-                        </td>
-                      )
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {totalKcal > 0 && (
-            <p className="text-right text-xs text-muted">
-              Total declarado en la semana:{' '}
-              <span className="font-semibold tabular-nums text-ink">
-                {totalKcal.toLocaleString('es-CR')} kcal
-              </span>
-            </p>
-          )}
-        </>
-      )}
+      <PlanGrilla comidas={plan.comidas} />
     </section>
   )
 }

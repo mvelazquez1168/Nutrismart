@@ -44,12 +44,32 @@ function optionalPort(name: string, fallback: number): number {
 }
 
 const databaseUrl = required('DATABASE_URL')
+/**
+ * Issuer(s) aceptados en el claim 'iss'.
+ *
+ * Admite una LISTA separada por comas, y no una sola cadena, por un caso
+ * concreto: al probar en un movil de la red local, el telefono se
+ * autentica contra `http://192.168.x.x:8080` y Keycloak firma el token
+ * con ESE issuer. Con un unico valor esperado, todas las peticiones del
+ * telefono devolverian 401 — y el motivo no aparece en ninguna pantalla.
+ *
+ * `jose` acepta un array y exige coincidencia exacta con alguno de los
+ * valores. Sigue siendo una comparacion literal: no se relaja nada, solo
+ * se admite mas de un origen legitimo.
+ */
 const issuer = required('KEYCLOAK_ISSUER')
+  .split(',')
+  .map((s) => s.trim())
+  .filter((s) => s !== '')
 const jwksUrl = required('KEYCLOAK_JWKS_URL')
 const audience = required('KEYCLOAK_AUDIENCE')
 const apiPort = optionalPort('API_PORT', 4000)
 const nodeEnv = process.env['NODE_ENV']?.trim() || 'development'
 const frontendProUrl = optional('FRONTEND_PRO_URL') ?? 'http://localhost:5173'
+// La app del paciente vive en OTRO puerto (5174 lo ocupa vetplatform).
+// Sin este origen el navegador bloquea todas sus peticiones y la app
+// dice "no hay conexion con el servidor" teniendo la API delante.
+const frontendPacUrl = optional('FRONTEND_PAC_URL') ?? 'http://localhost:5175'
 // Los binarios no viven en Postgres: guardarlos como bytea infla cada
 // copia de seguridad y cada replica. En Docker es un volumen montado.
 const archivosDir = optional('ARCHIVOS_DIR') ?? resolve(here, '../../../datos/archivos')
@@ -76,6 +96,37 @@ const resend = resendApiKey
     }
   : undefined
 
+/**
+ * Integracion con pulseras y relojes (RPM-01). OPCIONAL, como la IA y el
+ * correo.
+ *
+ * Las tres piezas tienen que estar para que funcione: sin cualquiera de
+ * ellas la seccion responde 503 y explica que falta, pero **la API
+ * arranca igual**. El encargo lanzaba una excepcion al cargar el modulo
+ * de cifrado si faltaba la clave: eso tumba la API entera, y con ella el
+ * acceso a expedientes y agenda, por una integracion accesoria.
+ *
+ * La clave son 32 bytes en hexadecimal (64 caracteres). Se genera con:
+ *   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+ */
+const wearableKey = optional('WEARABLE_ENCRYPTION_KEY')
+const fitbitId = optional('FITBIT_CLIENT_ID')
+const fitbitSecret = optional('FITBIT_CLIENT_SECRET')
+const googleFitId = optional('GOOGLE_FIT_CLIENT_ID')
+const googleFitSecret = optional('GOOGLE_FIT_CLIENT_SECRET')
+const withingsId = optional('WITHINGS_CLIENT_ID')
+const withingsSecret = optional('WITHINGS_CLIENT_SECRET')
+const appPublicUrl = optional('APP_PUBLIC_URL')
+
+// Una clave mal copiada es peor que ninguna: cifraria y descifraria mal
+// solo a veces. Se comprueba aqui, al arrancar, no al primer uso.
+if (wearableKey !== undefined && !/^[0-9a-f]{64}$/i.test(wearableKey)) {
+  throw new Error(
+    'WEARABLE_ENCRYPTION_KEY debe ser 32 bytes en hexadecimal (64 caracteres). ' +
+      'Generala con: node -e "console.log(require(`crypto`).randomBytes(32).toString(`hex`))"',
+  )
+}
+
 const anthropicApiKey = optional('ANTHROPIC_API_KEY')
 const anthropicModelo = optional('ANTHROPIC_MODELO') ?? 'claude-haiku-4-5'
 
@@ -89,6 +140,11 @@ if (missing.length > 0) {
   )
 }
 
+/** Un proveedor solo esta disponible si tiene sus dos credenciales. */
+function proveedor(id: string | undefined, secreto: string | undefined) {
+  return id && secreto ? { clientId: id, clientSecret: secreto } : null
+}
+
 export const config = {
   nodeEnv,
   isDev: nodeEnv !== 'production',
@@ -100,19 +156,37 @@ export const config = {
   apiPort,
   databaseUrl,
   /**
-   * Origen del front profesional. La API lo usa como unico origen
-   * permitido en CORS: un '*' seria inaceptable en una API que responde
-   * datos clinicos con credenciales.
+   * Origen del front profesional. Junto con `frontendPacUrl` forma la
+   * lista CERRADA de origenes permitidos en CORS: un '*' seria
+   * inaceptable en una API que responde datos clinicos con credenciales.
    */
   frontendProUrl,
+  /** Origen del front del paciente. Va en la MISMA lista de CORS. */
+  frontendPacUrl,
+  /**
+   * Wearables. `null` en cualquiera de sus partes = esa parte no esta
+   * configurada, y las rutas responden 503 diciendo cual falta.
+   */
+  wearables: {
+    claveCifrado: wearableKey ?? null,
+    fitbit: proveedor(fitbitId, fitbitSecret),
+    googleFit: proveedor(googleFitId, googleFitSecret),
+    withings: proveedor(withingsId, withingsSecret),
+    /** Base publica para el callback de OAuth. */
+    urlPublica: appPublicUrl ?? null,
+  },
   /** Raíz del almacén de archivos clínicos. */
   archivosDir,
   keycloak: {
     /**
-     * Issuer LITERAL esperado en el claim 'iss'. NO cambia entre ejecutar
-     * en el host o dentro de Docker: el token lo emite el navegador contra
-     * localhost, asi que 'iss' siempre es localhost. Compararlo con el
-     * hostname interno de Docker es el error que devuelve 401 en todo.
+     * Issuer(s) LITERALES aceptados en el claim 'iss'. NO cambian entre
+     * ejecutar en el host o dentro de Docker: el token lo emite el
+     * navegador, asi que 'iss' es la direccion por la que ese navegador
+     * llego a Keycloak. Compararlo con el hostname interno de Docker es
+     * el error que devuelve 401 en todo.
+     *
+     * Es una lista para admitir tambien la IP de la red local cuando se
+     * prueba en un movil. Ver la nota de arriba.
      */
     issuer,
     /**

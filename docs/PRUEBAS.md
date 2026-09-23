@@ -2091,6 +2091,1416 @@ Rutas servidas: `/inicio`, `/plan`, `/registros`, `/progreso`, `/citas`, `/mensa
 
 ---
 
+# Rebanada 24 — Contador de porciones (PAC-07) y biblioteca (PAC-08)
+
+Migraciones **026** y **027**. El encargo pedía la 025 y la 026, ocupadas por la R23.
+
+## Lo que hay que entender antes de leer las pruebas
+
+En modo detallado, `registro_comida` **no se escribe a mano**: sus totales y su descripción los calcula un trigger a partir de los alimentos. De esa fila leen la ficha del profesional (R22) y la media de calorías del progreso (R23), así que si hubiera dos cuentas ninguna pantalla sabría cuál creer.
+
+## El trigger de totales
+
+Probado en transacción con `rollback`, sobre `registro_comida` real:
+
+| Paso | Esperado | Obtenido |
+|---|---|---|
+| Comida creada, sin alimentos | La descripción provisional intacta | `provisional`, kcal `null` |
+| + Arroz blanco cocido 150 g | `Arroz blanco cocido` · 195,0 kcal | ✔ |
+| + Pechuga de pollo 100 g | `Arroz blanco cocido, Pechuga de pollo` · 360,0 kcal · 35,1 g prot. | ✔ |
+| Se desactiva el arroz (`activo=false`) | `Pechuga de pollo` · 165,0 kcal | ✔ |
+| Se **borra** físicamente el último | La fila no se toca (la ruta la archiva) | ✔ |
+
+> El último caso es el que importa: el trigger estaba escrito con `coalesce(new…, old…)` y en un `DELETE` la variable `NEW` no llega a asignarse — leerla lanza un error. Se distingue por `TG_OP`.
+
+## Cantidades: 1½ porciones de pechuga
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| 150 g de Pechuga de pollo (165 kcal/100 g) | 247,5 kcal · 46,5 g prot. · 5,4 g grasa | ✔ exacto |
+| La comida existía en modo simple («Algo ligero, unas 300 kcal») | Queda sustituida por la derivada | `Pechuga de pollo` · 247,5 |
+| Consulta de la ficha del profesional (R22, sin tocar) | Muestra la lista de alimentos y el total real | ✔ |
+
+## Búsqueda de alimentos
+
+| Se teclea | Esperado | Obtenido |
+|---|---|---|
+| `pech` | Pechuga de pollo | ✔ |
+| `palta` | Aguacate (sinónimo) | ✔ |
+| `platano` sin tilde | Plátano maduro cocido, Banano | ✔ |
+| `jitomate` | Tomate (sinónimo mexicano) | ✔ |
+| `CAFE` en mayúsculas | Café negro | ✔ |
+| categoría `bebidas` | Agua, Café negro, Fresco natural, Gaseosa | ✔ |
+
+> **Fallo encontrado y corregido.** La primera versión normalizaba el término tecleado con la misma función que indexa la tabla. Esa función concatena nombre y sinónimos, así que aplicada a una palabra suelta deja un espacio final: el patrón era `%pech %` y **no encontraba nada**. Las dos primeras pruebas devolvían cero filas. El término se normaliza aparte.
+
+## Catálogo
+
+| Prueba | Esperado |
+|---|---|
+| Total sembrado | **46** alimentos globales (`clinica_id` nulo) |
+| Reejecutar la migración | No duplica (índice único sobre `lower(nombre)`) |
+| Alimento de otra clínica | Invisible: solo se ven los globales y los propios |
+
+## Biblioteca — permisos (con `ana@vida.cr` y `luis@vida.cr`)
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| Ana crea material | **201**, `publicado: false` (nace borrador) | ✔ |
+| Luis lo lista | Lo **ve**, con `mio=false`, `puedeEditar=false` | ✔ |
+| Luis `PATCH` el recurso | **403 `no_es_tuyo`**, con explicación | ✔ |
+| Luis intenta retirarlo | **403 `no_es_tuyo`** | ✔ |
+| Ana lo edita | **200** | ✔ |
+| Id inventado | **404 `no_encontrado`** | ✔ |
+
+> 403 y no 404 cuando es de un compañero: dentro de la misma clínica el recurso sí existe. El 404 se reserva para lo de otra clínica.
+
+## Biblioteca — ciclo de publicación
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| `PATCH …/publicacion {publicado:true}` | Se fija `publicadoEn` | `18:12:39Z` |
+| Retirar y volver a publicar | **La misma fecha original** | `18:12:39Z` en las tres |
+| Filtro `?publicado=false` | 0 borradores | ✔ |
+| Filtro `?publicado=true` | 1 publicado | ✔ |
+| `DELETE` (archivar) | En base: `activo=false`, `publicado=false`, `publicado_en` intacto | ✔ |
+| Listar tras archivar | 0 visibles | ✔ |
+
+> Republicar no convierte material de enero en novedad de agosto.
+
+## Aislamiento entre clínicas
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| Recursos publicados de otra clínica visibles para María | **0** | ✔ |
+| Lista del paciente | Solo lo publicado y activo de su clínica | ✔ |
+
+## Pantallas
+
+**Paciente** — `/biblioteca` y `/biblioteca/:id`, alcanzables desde la tarjeta «Biblioteca» de Inicio. **No** es una sexta pestaña: la barra sigue con cinco.
+
+| Paso | Qué comprobar |
+|---|---|
+| Diario → conmutador **Rápido / Detallado** | Cambia el cuerpo de cada franja y se recuerda |
+| Franja en detallado → «+ Añadir alimento» | Busca, se elige, aparecen ½ · 1 · 1½ · 2 · 3 |
+| «Lo pesé» | Cambia a gramos exactos y vuelve |
+| Alimento que no está en la lista | Se puede apuntar igual, avisando de que va sin calorías |
+| Quitar el último alimento | La comida desaparece del día |
+| Biblioteca | Filtros por categoría, punto en lo no leído, «Ver más» |
+| Abrir un artículo | Al volver, deja de tener el punto |
+
+**Profesional** — menú lateral → **Biblioteca**: nuevo material, filtros por categoría y estado, publicar/retirar, archivar, contador de lecturas.
+
+### Pendiente de verificar en navegador
+
+El cliente `nutrismart-patient` de Keycloak **sigue sin existir** (ver `docs/REBANADA-19.md § El paso que falta`) y ningún paciente tiene `keycloak_user_id`. Las pruebas de esta rebanada del lado del paciente se hicieron ejecutando las consultas de cada endpoint contra la base con datos reales, no a través de HTTP. El lado profesional sí se probó con tokens.
+
+---
+
+# Keycloak · el cliente del paciente (desbloqueo de R17–R24)
+
+Hasta aquí **ninguna pantalla del paciente se había probado por HTTP**: faltaba el cliente `nutrismart-patient` en el realm. Esta sección deja constancia de cómo se creó y de la primera verificación real.
+
+## Lo que faltaba
+
+| Hallazgo | Estado |
+|---|---|
+| Cliente `nutrismart-patient` | No existía |
+| `registrationAllowed` del realm | `false` — el `action: 'register'` de la activación fallaba |
+| Pacientes con `keycloak_user_id` | 0 de 6 |
+| Contraseña de admin de Keycloak | **No es `admin/admin`**: está en `KC_BOOTSTRAP_ADMIN_PASSWORD` del contenedor |
+
+## Cliente creado
+
+```
+clientId      nutrismart-patient
+publicClient  true          PKCE  S256
+redirectUris  http://localhost:5175/*
+webOrigins    http://localhost:5175
+mappers       aud-nutrismart-api          <-- SOLO este
+```
+
+> **El mapper `tenant_id` no se copia de `nutrismart-web`.** `requireAuthPaciente` distingue paciente de profesional por la **ausencia** de ese claim. Copiarlo haría que todo paciente se presentase como profesional de una clínica.
+>
+> **`aud-nutrismart-api` sí es imprescindible**: sin él la API rechaza el token por audiencia.
+
+Token del usuario de prueba, comprobado: `aud=[nutrismart-api, account]`, `tenant_id` **ausente**.
+
+## Vinculación por el flujo real de la R17
+
+En vez de un `UPDATE` a mano sobre `keycloak_user_id`, se usó el flujo que existe. Es la primera vez que se ejercita completo:
+
+| Paso | Resultado |
+|---|---|
+| `POST /api/pacientes/:id/invitar` (token de Ana) | 200 · enlace + caducidad a 7 días |
+| El correo no sale (Resend en sandbox) | La API **degrada bien**: `emailEnviado:false` y devuelve el enlace |
+| `GET /api/invitacion/:token` (pública) | «María Fernández» · «Clínica Nutrición Vida» |
+| `POST /api/invitacion/:token/vincular` (token del paciente) | 200 · invitación pasa a `aceptada` |
+
+## Primera prueba por HTTP de todas las pantallas del paciente
+
+| Endpoint | Rebanada | HTTP |
+|---|---|---|
+| `/api/paciente/yo` · `/dashboard` | R17 | 200 |
+| `/api/paciente/plan` | R20 | 200 |
+| `/api/paciente/citas` | R21 | 200 |
+| `/api/paciente/diario` | R22 | 200 |
+| `/api/paciente/progreso` · `/tareas` | R23 | 200 |
+| `/api/paciente/configuracion` · `/alimentos` · `/recursos` | R24 | 200 |
+
+## Modo detallado (R24), ya por HTTP
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| `PATCH /configuracion {"modoDiario":"detallado"}` | Se guarda | ✔ |
+| `POST /diario/items` — pechuga 150 g, sin comida previa | Crea la comida y el ítem | `registroId` + 247,5 kcal |
+| Segundo ítem — arroz 150 g | Mismo `registroId`, totales sumados | `Pechuga de pollo, Arroz blanco cocido` · 442,5 kcal |
+| Ficha del profesional (R22, sin tocar) | Muestra la lista y el total | ✔ idéntico |
+| `DELETE` de un ítem | `comidaVacia:false`, total baja a 247,5 | ✔ |
+| `DELETE` del último | `comidaVacia:true`, la comida desaparece del día | ✔ |
+
+## Aislamiento entre roles
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| Token de **paciente** en `/api/pacientes` | Rechazo | **401** `unauthorized` |
+| Token de **profesional** en `/api/paciente/yo` | Rechazo explicativo | **403** `solo_pacientes` |
+
+## Credenciales de prueba
+
+```
+usuario   paciente-prueba   (o maria.fernandez@ejemplo.cr)
+clave     Test1234!
+app       http://localhost:5175
+vinculado a  María Fernández · Clínica Nutrición Vida
+```
+
+## Dos avisos
+
+**`directAccessGrants` está activado** en `nutrismart-patient`. El encargo lo ponía en `false`; se activó porque sin él no hay forma de obtener un token del paciente desde la línea de comandos y nada de lo de arriba se podría haber verificado. Es lo mismo que tiene `nutrismart-web` en este realm de desarrollo. **En producción debe ir a `false`**: el navegador solo necesita el flujo de código de autorización.
+
+**La paciente vinculada no tiene datos clínicos.** La base se reinició en algún momento: 0 consultas, 0 mediciones, 0 citas para María. Los endpoints responden 200 con el estado vacío correcto, pero las pantallas del paciente saldrán en blanco hasta que se cargue una consulta con conclusión.
+
+---
+
+# Validación del portal del paciente (con `nutrismart-patient` ya creado)
+
+Primera pasada completa por HTTP sobre las rutas del paciente. Token obtenido habilitando `directAccessGrants` en el cliente, y **deshabilitado otra vez al terminar**.
+
+Paciente de prueba: **María Fernández** (`paciente-prueba` / `Test1234!`).
+
+## Resultados
+
+| Sección | Endpoint real | Resultado |
+|---|---|---|
+| Perfil | `GET /api/paciente/yo` | ✓ 200 |
+| Perfil | `GET /api/paciente/configuracion` | ✓ 200 |
+| Perfil | `PATCH /api/paciente/configuracion` (ida y vuelta simple↔detallado) | ✓ 200 |
+| Agenda | `GET /api/paciente/citas` | ✓ 200 · sin citas |
+| Diario | `GET /api/paciente/diario` · `/diario/semana` | ✓ 200 |
+| Diario | `POST /api/paciente/diario` | ✓ 201 |
+| PAC-07 | `GET /api/paciente/alimentos?q=` — pollo · arroz · palta · jitomate | ✓ 200 los cuatro |
+| PAC-07 | `POST /api/paciente/diario/items` — 1 porción · ½ porción · alimento libre | ✓ 201 los tres |
+| PAC-08 | `GET /api/paciente/recursos` | ✓ 200 |
+| Métricas | `GET /api/paciente/metricas` · `/metricas/resumen` | ✓ 200 |
+| Métricas | `POST` peso 72,5 kg · glucosa 95 · presión 120/80 | ✓ 201 los tres |
+| Progreso | `GET /api/paciente/progreso` · `/tareas` | ✓ 200 |
+| Plan | `GET /api/paciente/plan` | ✓ 200 · sin plan aún |
+| Mensajería | `GET /api/paciente/dashboard` · `/conversacion` | ✓ 200 |
+
+## Validaciones que deben fallar, y fallan
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| Sin token | 401 | ✓ 401 |
+| Token inventado | 401 | ✓ 401 |
+| Token de **profesional** en zona de paciente | 403 explicativo | ✓ 403 `solo_pacientes` |
+| Token de **paciente** en `/api/pacientes` y `/api/recursos` | Rechazo | ✓ 401 |
+| Ítems de una comida ajena | 404, sin distinguir de inexistente | ✓ 404 |
+| Presión invertida (80/120) | Rechazo | ✓ 400 «la primera cifra debe ser mayor» |
+| `tipo_comida` en snake_case | Rechazo | ✓ 400 |
+
+## Los totales derivados, comprobados sobre datos reales
+
+La comida se creó primero **en modo simple** («Avena con fruta», 350 kcal a ojo) y después se le añadieron alimentos. El trigger sustituyó lo tecleado por la suma real:
+
+```
+descripcion : Avena cocida, Avena cocida, Pan casero de la abuela
+kcal        : 266.3     (250 g + 125 g de avena a 71 kcal/100 g; el pan sin estimar)
+```
+
+Es exactamente lo que la R24 buscaba: no quedan dos cuentas para la misma comida.
+
+## Rutas que el guion de validación esperaba y no existen
+
+Ninguna es un fallo del sistema; son nombres o conceptos que el guion daba por hechos.
+
+| Esperada | Realidad |
+|---|---|
+| `GET /api/alimentos/buscar` | `GET /api/paciente/alimentos` |
+| `GET /api/paciente/biblioteca` | `GET /api/paciente/recursos` — y no es una lista de alimentos favoritos, es material educativo |
+| `GET /api/paciente/diario/hoy` | `/api/paciente/diario` ya devuelve hoy por defecto |
+| `GET /api/paciente/plan/activo` | `/api/paciente/plan` ya devuelve el vigente |
+| `GET /api/paciente/metricas/ultimas` | `/api/paciente/metricas/resumen` |
+| `GET /api/paciente/recordatorios` | No existe: los recordatorios de la R21 son correos que envía el servidor, el paciente no los consulta |
+| `PATCH /configuracion {"fondo":…}` | El selector de fondo es de la R25; hoy solo hay `modoDiario` |
+| `tipo: "presion_sistolica"` | `presion_arterial` con `sistolica` y `diastolica` — media presión no es un dato clínico |
+| Tabla `paciente_biblioteca` | No existe |
+| `psql $DATABASE_URL` | La base solo escucha dentro de Docker: `docker exec nutrismart-db psql` |
+
+## Estado del paciente de prueba tras la sesión
+
+```
+registros_diario 1     items_diario 3     metricas 3     configuracion 1
+```
+
+Sigue **sin datos clínicos** (0 consultas, 0 mediciones de consulta, 0 citas, sin plan): las pantallas de Plan, Citas y Progreso saldrán vacías con su mensaje correspondiente. Diario, Registros y Biblioteca sí tienen con qué pintarse.
+
+---
+
+# Rebanada 25 — Perfil y fondo del paciente (PAC-09)
+
+Migración **028**. Los siete temas viven en `packages/design-system/tokens.css` como bloques `[data-fondo="…"]`, el mismo mecanismo que las paletas de marca. En el código de la app no hay ni un color.
+
+## Lo que el fondo NO puede hacer
+
+| Prueba | Esperado |
+|---|---|
+| Elegir cualquiera de los 7 fondos | `--primary`, `--primary-hover` y `--primary-tint` **no cambian** |
+| Clínica con `data-brand="esmeralda"` + paciente con fondo «Calma» | Botones esmeralda sobre fondo azul |
+
+> Los acentos que proponía el encargo eran los mismos valores que las paletas de marca ya curadas. Aplicarlos habría hecho que elegir un fondo cambiase la marca de la clínica.
+
+## Configuración
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| `GET /api/paciente/configuracion` | modo, fondo, foto, nombre visible y nombre de expediente | ✓ 200 |
+| `PATCH {"fondo":"verde"}` | Se guarda | ✓ `{"modoDiario":"simple","fondo":"verde"}` |
+| `PATCH {"fondo":"arcoiris"}` | Rechazo | ✓ 400 «Ese fondo no existe» |
+| `PATCH {"modoDiario":"detallado"}` — solo el modo | **El fondo sobrevive** | ✓ `fondo` sigue `verde` |
+
+> La última es la que importa: si el `PATCH` no fuera parcial, el selector de fondo tendría que reenviar el modo del diario y a la larga uno pisaría al otro.
+
+## Perfil
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| `PATCH {"nombrePreferido":"Mari"}` | `nombre` pasa a Mari | ✓ y `nombreExpediente` sigue «María Fernández» |
+| `PATCH {"nombrePreferido":null}` | Vuelve al del expediente | ✓ |
+| `PATCH` nombre de 60 caracteres | Rechazo | ✓ 400 «entre 1 y 50» |
+| `PATCH {}` | Rechazo | ✓ 400 «No hay nada que cambiar» |
+
+## La foto: solo `https://`
+
+El valor acaba en el atributo `src` de un `<img>` de la aplicación. `new URL()` a secas —lo que pedía el encargo— acepta las tres primeras:
+
+| Se manda | Esperado | Obtenido |
+|---|---|---|
+| `http://ejemplo.cr/f.jpg` | Rechazo | ✓ 400 «debe empezar por https://» |
+| `javascript:alert(1)` | Rechazo | ✓ 400 |
+| `data:image/svg+xml;base64,…` | Rechazo | ✓ 400 |
+| `no es una url` | Rechazo | ✓ 400 «Escribe una dirección web completa» |
+| `https://i.pravatar.cc/200` | Se guarda | ✓ 200 |
+
+## `null` borra, ausente no toca
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| Con foto guardada, `PATCH {"nombrePreferido":"Mari F."}` | La foto **sigue ahí** | ✓ |
+| `PATCH {"fotoUrl":null}` | Se borra | ✓ `fotoUrl: null` |
+
+> Sin distinguir «ausente» de «null» no habría forma de quitar una foto.
+
+## Compilación
+
+| Prueba | Obtenido |
+|---|---|
+| `tsc` en las tres apps | Sin errores |
+| `vite build` de la app del paciente | ✓ en 8,4 s |
+| Los 7 bloques `[data-fondo]` en el CSS compilado | ✓ los siete |
+
+## Pantallas
+
+**Paciente** — `/perfil`, alcanzable desde el **avatar de la cabecera de Inicio**. No es una sexta pestaña.
+
+| Paso | Qué comprobar |
+|---|---|
+| Cabecera de Inicio | Degradado del tema, saludo según la hora, avatar pulsable |
+| Perfil → nombre | Al escribir «Mari», la cabecera saluda «Mari» y debajo dice «En tu expediente: María Fernández» |
+| Perfil → foto | La vista previa cambia al escribir; una URL rota cae a las iniciales, no al icono roto |
+| Perfil → 7 fondos | El cambio se ve **al instante**, y en las otras siete pantallas al navegar |
+| Fondo «Oscuro» | Invierte también tarjetas, bordes y tinta — no es un degradado oscuro con tarjetas blancas |
+| Perfil → expediente | El nombre clínico se ve pero **no se edita** |
+
+## Estado del paciente de prueba
+
+```
+modo_diario  simple      fondo  verde      foto_url  (vacío)      nombre_preferido  (vacío)
+```
+
+---
+
+# Datos de desarrollo — María Fernández
+
+`apps/api/seeds/dev-maria.sql`. Ids fijos y todo con `ON CONFLICT`: **reejecutable sin duplicar** (comprobado). Solo toca la clínica de María; los dos cebos «NO DEBE APARECER» de la clínica 9999 se quedan a cero.
+
+```
+docker exec -i nutrismart-db psql -U nutrismart -d nutrismart < apps/api/seeds/dev-maria.sql
+```
+
+## Qué crea
+
+| Tabla | Contenido |
+|---|---|
+| `consulta` | 2 finalizadas: inicial 13-05-2026, seguimiento 14-07-2026 |
+| `medicion_antropometrica` | 80,0 → 77,6 kg · talla 162 · cintura 92 → 88,5 |
+| `conclusion_valoracion` | 1750 kcal · 25/45/30 · 3 acuerdos · **meta 72 kg para el 15-12-2026** |
+| `plan_alimentario` + `plan_comida` | Plan activo con el lunes completo (5 tiempos) |
+| `cita` | 1 completada (14-07) + 1 programada (21-08) |
+| `registro_metrica` | 6 pesos de casa entre el 16-07 y el 13-08 |
+| `tarea_paciente` | 1 pendiente, vence el 24-08 |
+| `recurso` | 1 publicado, categoría nutrición |
+
+## La aritmética está elegida, no es al azar
+
+| Dato | Valor | Por qué |
+|---|---|---|
+| Avance | **30 %** | 80 → 77,6 de 80 → 72. Es el mismo caso que validó la R23 |
+| IMC | 30,48 → **29,57** | Cruza de obesidad grado I a sobrepeso |
+| Macros | 109,4 / 196,9 / 58,3 g | 1750 kcal al 25/45/30, cuadrado |
+| Peso en casa | 78,1 · 77,8 · 78,0 · 77,5 · 77,3 · 77,1 | Oscila a propósito: una báscula doméstica a horas distintas no da una línea recta, y si la diera la gráfica estaría mintiendo |
+
+## Dos cosas que salieron al comprobarlo
+
+**La media de la última semana daba 75,6 kg.** Arrastraba el peso de 72,5 kg insertado como prueba en la sesión de validación. Se **archivó** (`activo = false`), no se borró: es la regla del proyecto. La media quedó en 77,2.
+
+**El diagnóstico no cuadraba con el IMC.** Decía «Obesidad grado I» cuando el IMC de la segunda consulta es 29,57, que es sobrepeso. Corregido a «Sobrepeso con perímetro de cintura de riesgo» (E66.3), y las observaciones explican el matiz que el dato enseña: el IMC bajó de categoría pero la cintura (88,5 cm) y el ICC (0,859) siguen sobre el umbral de riesgo en mujeres, así que la pauta se mantiene.
+
+## Verificado tras el seed
+
+| Endpoint | Antes | Ahora |
+|---|---|---|
+| `/api/paciente/progreso` | `avance: null` | 30 %, dos series de peso |
+| `/api/paciente/plan` | «todavía no ha cerrado una consulta» | 1750 kcal, macros y 3 acuerdos |
+| `/api/paciente/citas` | Vacío | Próxima 21-08 + historial |
+| `/api/paciente/dashboard` | Todo `null` | Peso, próxima cita y plan |
+| `/api/paciente/diario` → `objetivo` | `null` | 1750 kcal con sus macros |
+| `/api/paciente/tareas` · `/recursos` | Vacíos | 1 y 1 |
+| Lado profesional | — | Expediente, consultas, antropometría, planes, registros, tareas y comparativa: todo 200 |
+
+---
+
+# Rebanada 26 — Bienestar, medidas corporales y monitoreo (RPM-01 / RPM-02)
+
+Migraciones **029** y **030**. Primera rebanada del diferenciador ancla: el seguimiento continuo.
+
+## Lo que habría roto el panel entero
+
+Las cinco consultas del panel leen `registro_metrica.fecha`. **Esa columna no existe**: la tabla tiene `medido_en` (`timestamptz`). Copiado tal cual, el panel habría respondido 500 en su primera petición.
+
+## La fuga entre profesionales
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| Ana (`admin_clinica`) lista el panel | Toda la clínica | ✓ **3 pacientes** |
+| Luis (`nutricionista`) lista el panel | Solo los suyos | ✓ **2 pacientes**, María no aparece |
+| Luis pide el detalle de María | Rechazo indistinguible de «no existe» | ✓ **404** |
+| Ana pide el detalle de María | Adelante | ✓ 200 |
+
+> El encargo consultaba `WHERE p.clinica_id = $1` a secas, lo que habría enseñado a cada nutricionista el peso, los síntomas y las notas de los pacientes de sus compañeros.
+
+## Bienestar
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| `GET` sin partes | Lista vacía, racha 0, catálogo de síntomas | ✓ 200 |
+| `PUT estado 4` + fatiga + insomnio + nota con tildes | Se guarda | ✓ 200 |
+| `PUT` el mismo día con estado 5 | **Corrige**, no duplica | ✓ un solo parte |
+| `PUT estado 9` | Rechazo | ✓ 400 «del 1 al 5» |
+| `PUT sintomas:["jaqueca"]` | Rechazo | ✓ 400 «no reconocemos» |
+| `GET` tras contestar | `racha: 1` | ✓ |
+
+> El catálogo de 13 síntomas lo cierra un `CHECK` en la base, no solo el código. Si fuera texto libre, «jaqueca», «dolor de cabeza» y «me duele la cabeza» serían tres cosas y no se podría contar ninguna.
+
+## Medidas corporales
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| `PUT` cintura 88,5 + cadera 103 + brazo 29,8 | Se guarda | ✓ 201 |
+| `PUT` solo cintura 87 el mismo día | **La cadera sobrevive** | ✓ cadera sigue 103 |
+| `PUT` sin ninguna medida | Rechazo | ✓ 400 «apunta al menos una» |
+| `PUT` cintura 4 cm | Rechazo | ✓ 400 «entre 20 y 300 cm» |
+| `PUT` con fecha anterior (15-07) | Se guarda como otro día | ✓ 201 |
+| `GET` con dos tomas | Cambio calculado | ✓ cintura **−4 cm**, cadera **−2 cm** |
+| Medidas con una sola toma | `null`, no cero | ✓ pecho, muslo y cuello en `null` |
+
+> Un cambio de cero parecería estancamiento; `null` dice la verdad, que es que falta otra toma.
+
+## El detalle del profesional
+
+| Prueba | Obtenido |
+|---|---|
+| `GET /api/rpm/pacientes/:id?meses=3` | 8 métricas, 1 parte, 2 medidas, 1 día de diario |
+| Síntomas agregados | `fatiga ×1`, `insomnio ×1` |
+| Días con comidas sin estimar | Se señalan aparte del total |
+
+### `meses` fuera de rango no rompe la consulta
+
+El encargo interpolaba `INTERVAL '${meses} months'` como texto. Ahora es `make_interval(months => $3)`:
+
+| Se pide | Se aplica |
+|---|---|
+| `meses=99` | 12 (tope) |
+| `meses=abc` | 3 (por defecto) |
+| `meses=-5` | 3 |
+
+## Compilación y despliegue
+
+| Prueba | Obtenido |
+|---|---|
+| `tsc` en las tres apps | Sin errores |
+| App del paciente: pestañas «Cómo estoy» y «Cuerpo» en el bundle | ✓ |
+| App profesional en 5173 | La sirve un **dev server de Vite**, no el contenedor; recoge los cambios por HMR |
+| CORS para 5175 y 5173 | ✓ los dos |
+
+## Pantallas
+
+**Paciente** — Mis registros, ahora con **cuatro** pestañas: `Cómo estoy · Qué comí · Peso y más · Cuerpo`. La barra inferior sigue con cinco.
+
+| Paso | Qué comprobar |
+|---|---|
+| «Cómo estoy» | Cinco caras **con etiqueta** (una fila de caras sin texto se interpreta distinto según quién mire) |
+| Síntomas | Se tocan y se quitan; la nota va plegada |
+| Volver a entrar el mismo día | Aparece lo que ya puso, para corregir en vez de empezar de cero |
+| Tira de 14 días | Los días sin parte son **huecos**, no se rellenan con el valor anterior |
+| «Cuerpo» | Se pueden dejar medidas en blanco; con dos tomas aparece la línea y el cambio |
+
+**Profesional** — menú lateral → **Monitoreo**.
+
+| Paso | Qué comprobar |
+|---|---|
+| Orden por defecto | Los que llevan más sin reportar, y **«Nunca» va primero** |
+| Columna «Sin reportar» | Distingue «Nunca» de «Hace N días»; a partir de 7 días cambia de color |
+| Clic en una fila | Detalle con 1/3/6/12 meses |
+| Detalle | Dice explícitamente que el bienestar **es lo que reporta el paciente**, no una exploración |
+
+---
+
+# Rebanada 27 — Alertas de seguimiento (RPM-03)
+
+Migraciones **031** y **032**.
+
+## Las tres trampas del ruido
+
+Un sistema de alertas mal hecho hace que se dejen de mirar las alertas. Las tres estaban en el encargo.
+
+### La alerta que no se cierra nunca
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| Regla `peso > 75` (María pesa 77,1) | Se abre 1 alerta | ✓ `abiertas: 1` |
+| Se sube el umbral a 90 | La alerta **se cierra sola** | ✓ `resueltas: 1`, `resueltaAuto: true` |
+| Listado de abiertas | Vacío | ✓ 0 |
+
+### El dato viejo que alerta cada día
+
+Juan con **95 kg medidos hace 60 días** y nada más desde entonces:
+
+| Regla | Esperado | Obtenido |
+|---|---|---|
+| `peso > 90`, ventana **14** días | No dispara: el dato es viejo | ✓ `omitidasPorAntiguedad: 1` |
+| `peso > 90`, ventana **90** días | Dispara | ✓ `abiertas: 1` |
+
+> Sin la ventana, ese paciente generaría una alerta nueva **todos los días para siempre** sobre una medición de hace dos meses.
+
+### Dos reglas sobre la misma métrica
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| `peso > 75` y `peso < 60` a la vez | Ambas existen, cada una con su cuenta | ✓ `abiertas: 1` y `abiertas: 0` |
+
+> El encargo ponía la clave única en `(paciente, métrica, día)`: la segunda regla nunca habría alertado, y el `ON CONFLICT DO NOTHING` lo habría hecho en silencio.
+
+## Idempotencia
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| Reevaluar con la misma regla | No duplica | ✓ `abiertas: 0`, sigue habiendo 1 alerta |
+
+## «Vista» y «atendida»
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| `PATCH estado=reconocida` | Sigue abierta | ✓ |
+| Reevaluar tras «vista» | **No** crea otra | ✓ `abiertas: 0`, total sigue 1 |
+| `PATCH estado=resuelta` | Se cierra | ✓ |
+| Reevaluar con el problema aún presente | **Vuelve a abrirse** | ✓ `abiertas: 1` |
+| Cerrar una ya cerrada | Rechazo | ✓ 404 |
+| `estado: "ignorada"` | Rechazo | ✓ 400 |
+
+> «Atendida» que se reabre es correcto: el profesional dijo que estaba resuelta y no lo estaba. Para «la he visto, no me la repitas» está «vista».
+
+## Aislamiento entre profesionales
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| Luis pone una regla a María (paciente de Ana) | Rechazo indistinguible de «no existe» | ✓ **404** |
+| Luis lee las reglas de María | Rechazo | ✓ **404** |
+| Luis lista alertas | Solo las de sus pacientes | ✓ 1 (Juan) |
+| Ana (`admin_clinica`) lista alertas | Toda la clínica | ✓ |
+
+## Validación
+
+| Prueba | Obtenido |
+|---|---|
+| `umbral: 0` en `dias_sin_diario` | 400 «entre 1 y 365» |
+| Umbral de bienestar fuera de 1–5 | Rechazado por `CHECK` y por la API |
+
+## Métricas de silencio
+
+| Caso | Comportamiento |
+|---|---|
+| Apuntó comida hoy | `dias_sin_diario = 0` |
+| Activó cuenta y nunca apuntó nada | Se cuenta **desde la activación** (`invitacion_paciente.usado_en`) |
+| Nunca activó cuenta | No se evalúa: no puede apuntar, y avisar de eso a diario es ruido |
+
+## El panel RPM ya trae el conteo
+
+`GET /api/rpm/pacientes` devuelve `alertasAbiertas`, que la R26 dejó deliberadamente fuera para no enseñar un `0` que hiciera creer que se había comprobado.
+
+## Pantallas
+
+**Profesional** — Monitoreo → clic en un paciente → bloque **«Alertas abiertas» / «Qué vigilar»**.
+
+| Paso | Qué comprobar |
+|---|---|
+| Lista de monitoreo | Ordena por defecto por **alertas abiertas**; sin alertas se pinta «—», no un 0 |
+| Cabecera | «N alertas abiertas» en color de aviso cuando las hay |
+| Poner una regla | Se evalúa **al guardar**, no hay que esperar al día siguiente |
+| Métricas de silencio | No preguntan ventana de frescura: ahí la falta de datos ES la medida |
+| Retirar una regla | Cierra también sus alertas abiertas |
+
+## Dato de prueba que queda en la base
+
+Juan Ramírez tiene un peso de 95 kg fechado 60 días atrás, con la nota `DATO DE PRUEBA (R27)`. Se insertó para verificar la ventana de frescura. Para quitarlo:
+
+```sql
+update registro_metrica set activo = false
+ where id = 'e9000001-0000-4000-8000-000000000001';
+```
+
+---
+
+# Rebanada 28 — Clínica y equipo (GAM-01 / GAM-02)
+
+Migraciones **033** y **034**.
+
+## Lo que ya existía y no se duplicó
+
+| El encargo añadía | Ya existe desde |
+|---|---|
+| `clinica.logo_url`, `color_primario`, `color_secundario` | **R6**, en `brand_config`, con pantalla propia y contraste WCAG |
+| Enum `profesional_rol ('admin','nutricionista')` | Ya existe con **`admin_clinica`**, `nutricionista` |
+| `profesional.email` | `correo` |
+| `profesional.activo` | `estado` (`activo`, `invitacion_pendiente`, `inactivo`) |
+
+> El `DO … EXCEPTION WHEN duplicate_object THEN NULL` del encargo habría pasado de largo en silencio dejando el enum con sus valores reales, y después todo el código que compara `rol = 'admin'` no habría coincidido nunca. Ningún error y ningún administrador.
+
+## Quién es administrador: token Y base
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| Ana (rol en token y en base) | Entra | ✓ 200 |
+| Luis (nutricionista) | Rechazo explicativo | ✓ **403 `solo_administradores`** |
+| Ana degradada **solo en la base**, con el token intacto | Rechazo | ✓ **403** |
+| `GET /api/profesional/yo` en ese estado | Dice cuál falta | ✓ `esAdmin:false, adminEnToken:true, adminEnBase:false` |
+| Se restaura el rol en la base | Vuelve a entrar | ✓ 200 |
+
+> La columna **puede quitar pero nunca dar**. Si bastara ella, cambiar un rol desde esta misma pantalla otorgaría permisos que Keycloak no ha dado.
+
+## Datos de la clínica
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| `PATCH` teléfono y dirección | Se guardan | ✓ 200 |
+| `sitioWeb: "http://…"` | Rechazo | ✓ 400 «debe empezar por https://» |
+| `sitioWeb: "https://…"` | Se guarda | ✓ 200 |
+| `zonaHoraria: "Marte/Olympus"` | Rechazo | ✓ 400 «esa zona horaria no existe» |
+| `zonaHoraria: "America/Panama"` | Se guarda | ✓ 200 |
+| `nombreComercial: ""` | Rechazo | ✓ 400 «la clínica necesita un nombre» |
+| Cuerpo vacío | Rechazo | ✓ 400 |
+
+> La zona horaria se valida contra `pg_timezone_names`, la lista real del servidor. No cabe en un `CHECK` —Postgres no admite subconsultas ahí— así que la comprueba la API.
+
+## Alta de profesionales
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| Correo inválido | Rechazo | ✓ 400 |
+| Alta correcta | **`invitacion_pendiente`**, no activo | ✓ 201 |
+| Mismo correo otra vez | Rechazo | ✓ 409 `correo_repetido` |
+| Rol inventado | Rechazo | ✓ 400 |
+| Correo de bienvenida | Sale por Resend (sandbox lo rechaza) y **no tumba el alta** | ✓ la ficha queda creada |
+
+> Nace en `invitacion_pendiente` porque esta fila **no crea la cuenta**: eso lo hace el administrador de Keycloak. Decir «activo» sería afirmar que ya puede entrar.
+
+## El último administrador
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| Ana se degrada siendo la única admin | Rechazo | ✓ 409 `ultimo_administrador` |
+| Ana se da de baja a sí misma | Rechazo | ✓ 409 |
+
+> Una clínica sin administrador activo no puede recuperarlo desde la aplicación: nadie podría entrar a esta pantalla a arreglarlo.
+
+## Dar de baja a quien tiene pacientes
+
+Esto no estaba en el encargo y es lo que más se nota en una clínica real.
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| Baja de Luis (2 pacientes) sin decir a quién pasan | Se pregunta | ✓ 409 `tiene_pacientes`, `pacientes: 2` |
+| Reasignando a alguien sin cuenta activa | Rechazo | ✓ 400 |
+| Reasignando a Ana | Baja + traspaso en el mismo paso | ✓ 200, Ana pasa de 1 a 3 pacientes |
+
+> Sin esto, `paciente.nutricionista_id` apuntaría a un inactivo y esos pacientes dejarían de verse en la agenda y en el monitoreo de todos menos del administrador, sin que nadie se entere.
+
+## Pantallas
+
+Menú lateral, tres entradas nuevas para administradores: **Clínica · Equipo · Marca** (la última se llamaba «Configuración»).
+
+| Paso | Qué comprobar |
+|---|---|
+| Clínica | Nombre fiscal, país y subdominio se **ven pero no se editan** (los fija el operador) |
+| Clínica → zona horaria | Dice que hoy las agendas siguen usando la hora de Costa Rica, en vez de prometer lo que no hace |
+| Clínica → identidad visual | **Enlaza** a `/ajustes/marca`, no duplica colores ni logo |
+| Equipo | Estado «Sin cuenta todavía» para quien está de alta sin Keycloak |
+| Equipo → dar de baja con pacientes | Aparece la pregunta de a quién pasan, no un error rojo |
+| Equipo → pie | Avisa de que conceder admin necesita además el rol en Keycloak |
+| Entrar como Luis | Las tres entradas no aparecen; tecleando la URL vuelve a Pacientes |
+
+---
+
+# Rebanada 29 — Tendencia y exportación (GAM-03)
+
+Sin migraciones. Va **dentro** del dashboard de la R8, no en una segunda entrada de menú: aquel responde «qué pasa hoy» y esto «cómo va la clínica».
+
+## Estadísticas
+
+| Prueba | Obtenido |
+|---|---|
+| `GET /api/admin/estadisticas` (Ana) | 200 · 3 activos, 1 dado de baja, 3 altas este mes |
+| Serie mensual | **12 meses**, los vacíos con `0` (solo 07 y 08 traen datos) |
+| Por profesional (90 días) | Ana 1 paciente / 2 citas / 1 completada · Luis 2 / 0 / 0 |
+| Luis (nutricionista) | **403 `solo_administradores`** |
+
+## La adherencia, bien medida
+
+| | |
+|---|---|
+| Obtenido | `pct: 14.3, conApp: 1, activos: 3, diasConRegistro: 1` |
+
+> El encargo dividía entre **todos** los pacientes activos. Un paciente sin cuenta activada no puede apuntar nada: contarlo como incumplidor hunde el número por un motivo que no es la adherencia. Se calcula sobre quien tiene la aplicación, y la pantalla dice el denominador. Con nadie activado devuelve `null`, no `0`: un 0 % diría que nadie apunta, y lo que pasa es que nadie puede.
+
+## Exportación
+
+| Prueba | Obtenido |
+|---|---|
+| `GET /exportar/pacientes` | 200 · `text/csv; charset=utf-8` · 4 filas |
+| BOM al principio | ✓ `efbbbf` — sin él Excel abre «Fernández» como «FernÃ¡ndez» |
+| `GET /exportar/citas?desde=&hasta=` | 200 · horas en hora local (09:00 y 10:00, no 15:00Z) |
+| `?desde=ayer` | 400 «las fechas deben ir como AAAA-MM-DD» |
+| `desde` posterior a `hasta` | 400 «la fecha de inicio va antes que la de fin» |
+| Luis en cualquiera de las dos | 403 |
+| Sin token | 401 |
+
+## Fórmulas en el CSV
+
+El `toCSV` del encargo escapaba comillas y saltos de línea, pero no las fórmulas. Excel y LibreOffice **ejecutan** lo que empieza por `=`, `+`, `-` o `@`, y aquí se exportan nombres y motivos que escribe una persona.
+
+| Se guarda como motivo de cita | Sale en el CSV |
+|---|---|
+| `=HYPERLINK("http://malo.example","Ver informe")` | `"'=HYPERLINK(""http://malo.example"",""Ver informe"")"` |
+
+> El apóstrofo es lo que las hojas de cálculo entienden como «esto es texto». No se ve al abrirlo.
+
+## El rastro de la exportación
+
+| Prueba | Obtenido |
+|---|---|
+| Tras exportar, en el log del contenedor | `exportacion de pacientes \| admin: Dra. Ana Rodríguez \| filas: 4` |
+
+> Escrito como `info` no habría servido: en producción el logger está en `warn`, así que el rastro solo existiría en desarrollo — justo donde no hace falta. Va como `warn`. Una tabla de auditoría en condiciones merece su propia rebanada.
+
+## Pantallas
+
+**Profesional (solo administrador)** — menú lateral → **Dashboard**, sección inferior «Cómo va la clínica».
+
+| Paso | Qué comprobar |
+|---|---|
+| Barras de 12 meses | Los meses sin citas aparecen; las completadas van **dentro** de la barra, no al lado |
+| Uso de la aplicación | Dice el denominador, no solo el porcentaje |
+| Por profesional | Sin citas en 90 días **no** se pinta «0 %» |
+| Exportar pacientes | Descarga `pacientes.csv`, se abre con acentos correctos |
+| Exportar citas | Sin fechas sale el último mes; con rango, el rango |
+
+---
+
+# Un bucle de login que costó cinco diagnósticos
+
+Vale la pena dejarlo escrito: el síntoma apuntaba a un sitio y la causa estaba en otro.
+
+## El síntoma
+
+La aplicación profesional parpadeaba y acababa mostrando **«Invalid parameter: redirect_uri»**. El log de Keycloak decía:
+
+```
+The size of OIDC parameter 'redirect_uri' size is longer (4012) than allowed (4000).
+Ignoring the parameter.
+```
+
+## La causa
+
+En `App.tsx`, `useYo()` se llamaba **antes** de comprobar que Keycloak hubiera terminado de inicializar. Su efecto lanza `apiGet('/api/profesional/yo')` nada más montar; esa petición pasa por `tokenVigente()`, que llamaba a `updateToken()` sobre un Keycloak sin inicializar, fallaba, y el `catch` hacía **`keycloak.login()`** — una redirección completa.
+
+Pedir el perfil → redirigir al login → volver → montar → pedir el perfil. **Cuatro o cinco vueltas por segundo.**
+
+El `redirect_uri` de 4012 caracteres era la **consecuencia**, no la causa: `keycloak-js` usa `window.location.href` como destino por defecto, y cada vuelta le pegaba su fragmento. Al pasar de 4000 caracteres Keycloak lo descartaba, y ahí terminaba el bucle con el error.
+
+## Por qué costó encontrarlo
+
+`eventsEnabled` estaba en `false` en el realm. Keycloak solo escribe los **errores** en el log del servidor: como **cada login del bucle era correcto**, no dejaba ni una línea. Se veía un bucle sin ningún error registrado, lo que llevó a tres diagnósticos equivocados (el host de la URL, la caché del navegador, y una «limpieza» de `sessionStorage` que además rompía la vuelta legítima del login).
+
+Al activar el registro de eventos aparecieron **20 `LOGIN` + 20 `CODE_TO_TOKEN` seguidos, sin un solo fallo**. Eso apuntó directo al sitio correcto.
+
+## Lo corregido
+
+| Cambio | Por qué |
+|---|---|
+| `useYo(estado === 'autenticado')` | No pedir datos antes de que haya sesión |
+| `tokenVigente()` comprueba `keycloak.authenticated` primero | El mismo descuido da ahora un **error visible**, no un bucle |
+| `redirectUri` fijado a `origen + ruta` en `init()` y en el relogin | La URL no puede crecer |
+
+## La regla que queda
+
+**Ninguna llamada a la API antes de que `estado === 'autenticado'`.** Toda petición pasa por `tokenVigente()`, y esa función redirige. Un hook que se salte la guarda no da un error: da una aplicación que parpadea y unos registros perfectamente limpios.
+
+## Cómo diagnosticar algo parecido
+
+1. Activar los eventos del realm: `PUT /admin/realms/nutrismart/events/config` con `{"eventsEnabled":true,"enabledEventTypes":[]}`. Sin esto solo se ven los errores.
+2. Leerlos en `GET /admin/realms/nutrismart/events?max=40`.
+3. Contar las cargas en el servidor web: `docker logs nutrismart-web-pro | grep "GET / HTTP"`. Un bucle se ve como decenas por segundo.
+
+---
+
+# Rebanada 30 — Biblioteca con portadas y archivos (BIB-01)
+
+Migración **035**. **No se montó MinIO**: se reutiliza el módulo `almacen` de la R5, que ya existía y ya estaba pensado para esto.
+
+## El fallo que apareció al probar
+
+| | |
+|---|---|
+| Primera subida | **500 `EACCES: permission denied, mkdir '/datos/archivos/...'`** |
+| Causa | Docker crea el punto de montaje como `root`; la API corre como `node` (uid 1000) |
+| Alcance | **También estaba roto para los informes de laboratorio** (R5) |
+| Arreglo | `mkdir` + `chown` en el Dockerfile antes de `USER node`, y corrección del volumen existente |
+
+## Ciclo completo con un PDF real
+
+| Paso | Resultado |
+|---|---|
+| `POST /api/archivos` con un PDF | **201** · mime `application/pdf` detectado, sha256 y tamaño registrados |
+| `POST /api/recursos` tipo `archivo` | 201 · nace borrador |
+| `PATCH .../publicacion` | 200 |
+| Lista del paciente | Sale con `tipo: archivo`, `tieneArchivo: true`, portada |
+| `GET /api/paciente/recursos/:id/archivo` | **200 · 69 bytes**, empieza por `%PDF-1.4` |
+| Cabeceras de la descarga | `content-disposition: attachment`, `x-content-type-options: nosniff`, `cache-control: private, no-store` |
+| En disco | `/datos/archivos/<clinica>/2026/08/<uuid>.pdf` — nombre generado, extensión del tipo **detectado** |
+
+## Coherencia entre tipo y contenido
+
+| Prueba | Obtenido |
+|---|---|
+| `tipo: archivo` sin `archivoId` | 400 «Sube un archivo antes de guardar» |
+| `tipo: enlace` sin URL | 400 |
+| `tipo: enlace` con `http://` | 400 «tiene que empezar por https://» |
+| `tipo: enlace` con `javascript:` | 400 |
+| `tipo: texto` sin contenido | 400 |
+| Portada con `http://` | 400 «debe ser una dirección https://» |
+| `tipo: video` | 400 «Elige un tipo válido» |
+
+> Un `CHECK` en la base sostiene lo mismo: cada tipo trae lo suyo y nada de lo demás. Sin él cabría un recurso de tipo archivo sin archivo — un botón de descarga que no descarga.
+
+## Aislamiento de la descarga
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| Paciente pide el archivo de un recurso **no publicado** | Rechazo | ✓ **404** |
+| Paciente usa la ruta profesional `/api/archivos/:id` | Rechazo | ✓ **401** |
+
+> El encargo servía el archivo con una URL prefirmada de S3 válida cinco minutos. Aquí pasa por la API: **cada descarga vuelve a comprobar el permiso**. Una URL prefirmada, una vez emitida, la abre cualquiera que la reciba — y son documentos de salud.
+
+## Los tres tipos conviven
+
+```
+enlace   Guía alimentaria de la OMS    https://www.who.int/es
+archivo  Guía de porciones en PDF      + portada
+texto    Cómo leer una etiqueta        (el de la R24, intacto)
+```
+
+## Pantallas
+
+**Profesional** — Biblioteca → Nuevo material: selector **Escrito aquí / Enlace / Archivo** que cambia lo que se pregunta debajo, más el campo de portada con vista previa.
+
+| Paso | Qué comprobar |
+|---|---|
+| Cambiar de tipo | El formulario cambia; no se piden campos que no aplican |
+| Subir un archivo | Se sube **antes** de guardar, para no perder lo escrito si el servidor lo rechaza |
+| Portada | La vista previa aparece al escribir; si la URL falla, se oculta |
+| Botón Guardar | Deshabilitado con el motivo en el `title` («Falta el archivo») |
+
+**Paciente** — Biblioteca.
+
+| Paso | Qué comprobar |
+|---|---|
+| Lista | Las portadas se ven; si la imagen falla se oculta entera |
+| Etiqueta del tipo | «enlace externo» o «archivo para descargar» antes de tocar |
+| Enlace | Abre en otra pestaña con `noopener noreferrer` |
+| Archivo | Botón de descarga con el nombre y el tamaño |
+
+---
+
+# Rebanada 31 — Pantalla de acceso propia y paletas curadas (LOGIN-01)
+
+Sin migraciones.
+
+## Comprobado
+
+| Prueba | Resultado |
+|---|---|
+| `GET /silent-check-sso.html` en :5173 y :5175 | 200 en las dos |
+| Bundle del profesional | Contiene la pantalla de acceso y `check-sso` |
+| Selector de paletas | Lee `data-brand` en runtime; **cero hexadecimales** de los que proponía el encargo |
+| `tsc` en las tres apps | Sin errores |
+
+## Lo que la pantalla de acceso no hace
+
+| | Por qué |
+|---|---|
+| No pide usuario ni contraseña | Las verifica Keycloak. Un formulario propio vería las contraseñas de todos — justo lo que el flujo de código de autorización evita |
+| No lleva el logo de la clínica | Sin sesión no hay `tenant_id`: no se sabe de qué clínica es quien mira |
+
+## El caso de Safari
+
+La comprobación silenciosa usa **cookies de terceros**, que Safari bloquea por defecto. Ahí el iframe acaba sin sesión aunque exista, y se ve la pantalla de acceso otra vez.
+
+**No es un fallo**: pulsar el botón lo resuelve y Keycloak no vuelve a pedir la contraseña. Anotado en el código junto al `init`.
+
+## Paletas: una sola fuente de verdad
+
+El encargo definía 10 paletas nuevas con hexadecimales en un `.ts`. El design system **ya trae** las curadas del proyecto como bloques `[data-brand]`.
+
+| Prueba | Esperado |
+|---|---|
+| Retocar un color en `tokens.css` | El selector lo refleja sin tocar código |
+| Elegir una paleta | `brand_config.color_primario` recibe ese valor |
+| Color exacto de marca | Sigue disponible, plegado tras «Usar los colores exactos de mi marca» |
+| Color con contraste bajo | El aviso WCAG de la R6 sigue apareciendo |
+
+> Quitar el color libre habría dejado fuera a las clínicas con manual de marca. La regla del proyecto admite las dos vías; lo que protege de verdad es el aviso de contraste, no prohibir.
+
+## Pantallas
+
+**Profesional** — cerrar sesión y volver a `localhost:5173`.
+
+| Paso | Qué comprobar |
+|---|---|
+| Sin sesión | Sale la pantalla propia, no la de Keycloak |
+| Panel izquierdo | Color primario, o la imagen de `VITE_LOGIN_IMAGE_URL` si se define |
+| En móvil | El panel se oculta; queda el botón, que es lo único que importa |
+| Botón | Lleva a Keycloak y vuelve a la ruta desde la que se salió |
+| Con sesión activa | No se ve: el iframe la detecta y entra directo |
+| Ajustes → Marca | 8 paletas; el color libre plegado debajo |
+
+---
+
+# Rebanada 32 — Pulseras y relojes (RPM-01)
+
+Migraciones **036** y **037**.
+
+> **El intercambio OAuth no se ha probado contra los servidores reales.** Hace falta una aplicación registrada en Fitbit y otra en Google Cloud, y el proyecto todavía no las tiene. Todo lo demás sí está probado.
+
+## Las dos correcciones de seguridad
+
+### El `state` era falsificable
+
+El encargo usaba `base64(pacienteId)`. Base64 no es cifrado: cualquiera puede leerlo **y fabricarlo**. Con eso, alguien construye la URL de callback con el id de otro paciente y su propio código de Fitbit, y deja su cuenta de salud enganchada al expediente ajeno.
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| Dos peticiones de conexión | States distintos | ✓ aleatorios, 64 hex |
+| Callback con `state` inventado (64 × `a`) | Rechazo | ✓ `resultado=enlace_caducado` |
+| Mismo `state` válido usado dos veces | Solo la primera | ✓ 2ª → `enlace_caducado` |
+| Pulsar Conectar dos veces | Un solo intento vivo | ✓ 1 fila en `wearable_oauth_estado` |
+
+### Faltar la clave tumbaba la API
+
+El módulo de cifrado del encargo lanzaba **al cargarse**. Importarlo desde cualquier ruta habría impedido arrancar la API sin la integración configurada — y con ella el acceso a expedientes y agenda.
+
+| Prueba | Obtenido |
+|---|---|
+| API sin ninguna variable de wearables | `/health` **200** — arranca igual |
+| `GET /api/paciente/wearables` | 200 · `disponible: false` y el motivo exacto |
+| `POST …/fitbit/conectar` sin configurar | **503** «Falta WEARABLE_ENCRYPTION_KEY…» |
+| Con clave pero sin proveedor | 503 «Fitbit no está configurado en este servidor» |
+| Proveedor inventado (`garmin`) | 404 |
+
+## Cifrado
+
+| Prueba | Obtenido |
+|---|---|
+| Cifrar y descifrar un token con acentos y símbolos | Idéntico ✓ |
+| Alterar un byte del texto cifrado | **Rechazado** ✓ — GCM autentica, no devuelve basura |
+| Clave con formato inválido | La API no arranca y dice cómo generarla |
+
+## Deduplicación
+
+| Prueba | Esperado | Obtenido |
+|---|---|---|
+| Insertar la misma lectura dos veces | 1 fila | ✓ el 2º INSERT no hace nada |
+| El mismo día, misma métrica, fuente `manual` | Convive | ✓ `fitbit: 8432` y `manual: 9000` |
+
+> `medido_en` se ancla al **mediodía del día medido**, no al instante de sincronizar. Si cambiara en cada pasada, el índice único no serviría de nada y cada sincronización crearía filas nuevas. Mediodía y no medianoche: a las 00:00 los valores se irían al día anterior en cualquier gráfica que agrupe por fecha local.
+
+## Un fallo propio, encontrado al probar
+
+La dirección de vuelta construida (`/wearable/callback/fitbit`, la del encargo) no coincidía con la ruta registrada (`/wearables/:proveedor/callback`). Habría fallado **al final del flujo**, con el usuario ya autorizado. Corregido y verificado.
+
+## Pantallas
+
+**Paciente** — Inicio → tarjeta «Mis dispositivos» → `/dispositivos`. No es una sexta pestaña, como progreso y biblioteca.
+
+| Paso | Qué comprobar |
+|---|---|
+| Sin configurar | Dice **por qué** no está disponible, no solo que no lo está |
+| Conectar | Navegación completa al proveedor, nunca un iframe: tiene que verse su dirección |
+| Nota de Apple Watch | Explica que la vía es Fitbit, que sincroniza con Salud solo |
+| Qué se comparte | Dice también lo que **no** se pide: ni ubicación ni entrenamientos |
+| Tras conectar | El resultado llega por la URL, se muestra una vez y se limpia |
+| Fallo del proveedor | Se enseña en la tarjeta; no se queda «conectado» y mudo |
+| Desconectar | Avisa de que las lecturas ya registradas se conservan |
+
+---
+
+## Rebanada 33 — Básculas conectadas (RPM-02)
+
+### Las métricas nuevas se pueden guardar de verdad
+
+Añadir un valor a un enum y ampliar un CHECK son dos cosas distintas;
+faltar cualquiera de las dos rompe la inserción. Se comprueba junta,
+dentro de una transacción que se deshace:
+
+```sql
+begin;
+insert into registro_metrica (clinica_id, paciente_id, tipo, valor, unidad, medido_en, fuente)
+select p.clinica_id, p.id, t.tipo::tipo_metrica, t.v, t.u, now(), 'withings'
+  from paciente p,
+       (values ('grasa_pct',22.4,'%'),('masa_grasa_kg',17.9,'kg'),
+               ('masa_muscular_kg',54.1,'kg'),('masa_osea_kg',3.1,'kg')) as t(tipo,v,u)
+ where p.correo is not null limit 4;
+select tipo, valor, unidad, fuente from registro_metrica where fuente='withings';
+rollback;
+```
+
+Resultado: las cuatro filas entran con `fuente = withings`.
+
+### El webhook no confirma quién existe
+
+Es una ruta pública, sin token: cualquiera puede llamarla. Lo que se
+comprueba es que **responde igual pase lo que pase**, porque un 404 le
+diría a quien sondee qué identificadores de Withings están dados de alta
+en la plataforma.
+
+```bash
+curl -i -X POST http://localhost:4001/api/wearables/webhook/withings   -H "Content-Type: application/x-www-form-urlencoded"   -d "userid=999999&startdate=1&enddate=2&appli=1"
+
+curl -i -X POST http://localhost:4001/api/wearables/webhook/withings   -H "Content-Type: application/x-www-form-urlencoded" -d "appli=1"
+
+curl -i -X POST http://localhost:4001/api/wearables/webhook/withings   -H "Content-Type: application/x-www-form-urlencoded" -d "userid=1'+OR+1=1--"
+
+curl -I http://localhost:4001/api/wearables/webhook/withings
+```
+
+Los cuatro: **200**, los tres primeros con `{"ok":true}`. El `HEAD` es el
+que Withings usa para dar por buena la URL antes de aceptar la
+suscripción; sin él no llegaría ningún aviso.
+
+Que el tercero no dé error también dice algo: el `userid` se valida
+contra `^\d{1,20}$` antes de tocar la base.
+
+### El aviso no puede ser ambiguo
+
+```sql
+select indexdef from pg_indexes where indexname='uq_conexion_usuario_externo';
+```
+
+Debe salir un índice único sobre `(proveedor, usuario_externo)`. Dos
+pacientes apuntando al mismo usuario de Withings harían imposible saber
+de quién es una pesada.
+
+### Tres proveedores, y se sabe cuál elegir
+
+Con un paciente autenticado:
+
+```bash
+curl -s http://localhost:4001/api/paciente/wearables -H "Authorization: Bearer $TOKEN"
+```
+
+Salen los tres, cada uno diciendo qué aporta y por qué no está
+disponible:
+
+```
+Fitbit      | Pasos, pulso en reposo y horas de sueño
+            | disponible=False · Fitbit no está configurado en este servidor
+Google Fit  | Pasos y pulso
+            | disponible=False · Google Fit no está configurado en este servidor
+Withings    | Peso y composición corporal cada vez que te peses
+            | disponible=False · Withings no está configurado en este servidor
+```
+
+Lo importante es lo que **no** pasa: sin credenciales la API arranca
+igual y el resto de la plataforma funciona. La integración es
+accesoria; el acceso clínico no depende de ella.
+
+### Los nombres de las métricas nuevas
+
+En la app del paciente, **Progreso**; en la ficha del profesional,
+**Registros**. Si aparece `masa_osea_kg` en vez de «Masa ósea», falta la
+etiqueta en el mapa `METRICA` de esa pantalla — el fallback pinta la
+clave cruda.
+
+### Lo que no se puede probar aquí
+
+No hay aplicación registrada en Withings: el intercambio de OAuth nunca
+se ha ejecutado contra sus servidores.
+
+Y los webhooks **no pueden funcionar en local**. Withings solo llama a
+direcciones públicas HTTPS; `localhost` no le llega. Probarlos de
+verdad exige un despliegue accesible desde internet o un túnel.
+
+## Rebanadas 34 y 35b — Navegación con el color de la clínica (APP-BRAND-01)
+
+### El recorrido
+
+1. Entrar como administrador de clínica → **Ajustes → Marca**.
+2. Elegir una paleta y guardar. La barra lateral, la superior y todo el
+   menú cambian de color **al momento, sin recargar**: los tokens se
+   reescriben en `:root`.
+3. En la app del paciente, entrar y recorrer **Inicio → Plan → Apuntar →
+   Citas → Mensajes**. La barra inferior mantiene el color de la clínica
+   en las cinco. Antes solo se aplicaba en Inicio.
+
+**Lo que hay que ver en las dos apps:** todo el texto de las barras en
+blanco —nombre de la clínica, items del menú, correo del pie, iconos— y
+el item activo con un fondo blanco translúcido.
+
+### El fondo no siempre es exactamente el color elegido
+
+Es lo que más se presta a reportarse como fallo, así que conviene saberlo.
+Las barras no usan `--primary` sino `--nav`: el mismo color **oscurecido
+lo justo** para que el blanco de encima llegue a 4.5:1 (WCAG AA). Con
+cinco de las ocho paletas sale idéntico; con teal, esmeralda y ámbar baja
+un punto:
+
+| Paleta | Marca | Barra |
+|---|---|---|
+| teal-fresco | `#0891B2` | `#07809D` |
+| esmeralda | `#059669` | `#05875E` |
+| ámbar | `#D97706` | `#B26205` |
+
+Con blanco fijo sobre el color sin tocar, esas tres se quedaban en 3.68,
+3.77 y 3.19:1.
+
+### Un color inventado también tiene que leerse
+
+La comprobación de verdad no son las ocho paletas —esas están medidas—
+sino un color cualquiera. En **Ajustes → Marca**, escribir un hex a mano:
+
+- `#FFE066` (amarillo claro) → la barra sale oliva. El texto sigue blanco
+  y legible.
+- `#1A1A2E` (casi negro) → sin cambio, ya contrastaba de sobra.
+- `#FFFFFF` (blanco) → la barra sale gris medio. Es el caso extremo: no
+  hay barra blanca con letra blanca.
+
+### Comprobarlo sin abrir el navegador
+
+La regla se puede ejecutar contra el código real:
+
+```bash
+cat > apps/web-professional/src/lib/__probar.ts <<'EOF'
+import { fondoNav, contraste } from './color'
+for (const p of ['#0E7C66','#0891B2','#059669','#D97706','#FFE066','#FFFFFF']) {
+  const f = fondoNav(p)
+  console.log(p, '->', f, contraste('#FFFFFF', f).toFixed(2) + ':1')
+}
+EOF
+npx esbuild apps/web-professional/src/lib/__probar.ts --bundle --platform=node   --format=esm --outfile=/tmp/probar.mjs && node /tmp/probar.mjs
+rm apps/web-professional/src/lib/__probar.ts
+```
+
+Ningún resultado debe bajar de 4.50:1.
+
+### Los rincones que se olvidan
+
+- **Campana de notificaciones** (barra superior): el icono se ve blanco,
+  no un gris apagado sobre el color.
+- **Panel de notificaciones**: al abrirlo, su texto sigue en negro sobre
+  blanco. Cuelga del DOM de la barra, así que hereda el blanco si no lo
+  fija.
+- **Contador de mensajes sin leer** (barra del paciente): va invertido —
+  círculo blanco, número en el color de la barra. En el color de marca se
+  habría fundido con el fondo.
+- **Sin logo**: el cuadrito con la inicial de la clínica sigue visible.
+- **Sección activa**: además del fondo más claro, conserva la barra
+  vertical blanca a la izquierda. Es la pista que no depende del color.
+
+## Rebanada 35c — Dispositivos en la barra del paciente
+
+La sección existía y funcionaba desde la Rebanada 32, pero solo se llegaba
+a ella desde un botón de Inicio. Ahora es la sexta pestaña de la barra.
+
+### El recorrido
+
+Entrar en la app del paciente y tocar **Dispositivos** en la barra
+inferior desde cualquier pantalla. Debe abrir la misma página que el botón
+de Inicio, con los tres proveedores.
+
+### Lo que hay que mirar, y en un móvil de verdad
+
+Seis columnas dejan unos 57 px útiles por sección a 390 px, y
+«Dispositivos» es la etiqueta más larga de las seis con diferencia — 12
+letras frente a las 8 de «Mensajes». A 11 px se pasaba de ancho y se
+partía en dos líneas, dejando esa pestaña más alta que las otras cinco y
+descuadrando la barra.
+
+Por eso la etiqueta bajó a 10 px y lleva `truncate`. Qué comprobar:
+
+- «Dispositivos» cabe **en una línea**.
+- No aparecen puntos suspensivos («Dispositi…»). Si salen, la fuente del
+  sistema es más ancha de lo previsto y la salida es acortar la etiqueta,
+  no volver a permitir el salto de línea.
+- Las seis pestañas tienen **la misma altura**.
+
+Esto no se puede dar por bueno desde el ordenador: el ancho real de la
+letra depende de la fuente del sistema, que en un iPhone no es la del
+escritorio. Comprobarlo con el navegador estrechado no vale.
+
+### Por qué `truncate` y no solo una fuente más pequeña
+
+Achicar la letra hasta que quepa es una medida que caduca: basta un
+idioma nuevo, una fuente distinta o el tamaño de texto grande de
+accesibilidad para volver al mismo sitio. Con `truncate`, el peor caso es
+una etiqueta recortada en una línea — feo pero contenido— en vez de una
+barra rota.
+
+## Rebanada 36 — Reorganización del expediente
+
+### El recorrido
+
+1. **Pacientes → un paciente.** Las pestañas deben ser: Resumen ·
+   Historial · **Sociodemografía** · Plan alimentario · Sus registros ·
+   Notas SOAP. **No** debe haber pestaña «Laboratorios».
+2. **Sociodemografía.** Con consentimiento otorgado, editar. Deben estar
+   **Religión**, **Nacionalidad** y **Lugar de trabajo**; y **no** deben
+   estar actividad física, horas de sueño, fuma ni alcohol.
+3. **Resumen → una consulta → Laboratorios.** La sección se llama así,
+   no «Bioquímica». Arriba, la lectura por grupos de marcadores; abajo,
+   «Estudios cargados» con la lista y el botón de registrar.
+4. **La misma consulta → Clínico.** Al final, bloque **«Hábitos»** con
+   los cuatro campos y su propio botón «Guardar hábitos».
+
+### La prueba que de verdad importa: que no se borre nada
+
+El endpoint de sociodemografía **reemplaza el bloque entero** —lo que no
+se envía queda nulo—. Al repartir sus campos entre dos pantallas, cada
+una tiene que devolver los de la otra intactos. Si eso falla, el síntoma
+es un borrado silencioso que nadie relaciona con haber tocado otro campo.
+
+Hay que probarlo en los dos sentidos:
+
+1. En **Sociodemografía**, rellenar Ocupación, Escolaridad, Religión,
+   Nacionalidad y Lugar de trabajo. Guardar.
+2. En **Valoración → Clínico → Hábitos**, poner actividad «Intensa»,
+   5 horas, fuma «No», alcohol «Nunca». Guardar.
+3. Volver a **Sociodemografía**: ocupación, escolaridad, religión,
+   nacionalidad y lugar de trabajo **siguen ahí**.
+4. Cambiar **solo la Ocupación** y guardar.
+5. Volver a **Clínico → Hábitos**: los cuatro valores del paso 2
+   **siguen ahí**.
+
+Si en el paso 3 o el 5 aparece algo vacío, uno de los dos formularios
+está enviando el bloque incompleto.
+
+### Comprobarlo contra la base, sin navegador
+
+La consulta real se puede ejercitar directamente. Se extrae del código
+—no se transcribe, que es como se prueba otra cosa— y se deshace al
+final:
+
+```bash
+python - <<'PY'
+import io
+s = io.open('apps/api/src/routes/sociodemografico.ts', encoding='utf-8').read()
+q = s.split('const SQL_GUARDAR = `', 1)[1].split('`', 1)[0]
+out = io.open('g.sql', 'w', encoding='utf-8', newline='
+')
+out.write("begin;
+prepare guardar (uuid,uuid,text,smallint,boolean,text,text,"
+          "text,smallint,text,boolean,uuid,boolean,text,text,text) as
+")
+out.write(q.replace('$12::uuid', '$12') + ";
+")
+PY
+```
+
+Después, con `psql`: ejecutar `guardar(...)` con el bloque completo,
+volver a ejecutarlo cambiando **solo** los cuatro hábitos, y comprobar
+que ocupación, escolaridad, religión, nacionalidad y lugar de trabajo
+siguen intactos. Cerrar con `rollback`.
+
+Resultado esperado del último `select`:
+
+```
+   act   | sue | tab |  alc  | ocupacion | religion | nacionalidad  |       lugar_trabajo
+---------+-----+-----+-------+-----------+----------+---------------+----------------------------
+ intensa |   5 | f   | nunca | Docente   | Catolica | Costarricense | Escuela Republica de Chile
+```
+
+### Lo que hay que mirar aunque no lo parezca
+
+- **Registrar un laboratorio sin abrir consulta.** En **Resumen**, bajo
+  «Laboratorios», sigue el botón «+ Registrar laboratorio». Sin él,
+  subir un PDF exigiría abrir una valoración.
+- **Sin consentimiento**, el bloque «Hábitos» del Clínico no enseña
+  formulario: explica que falta y enlaza a Sociodemografía. Es el mismo
+  criterio de la pestaña, y no puede relajarse por estar dentro de una
+  consulta.
+- **Consulta finalizada**: los Hábitos se leen pero no se editan, y no
+  aparece el botón de guardar.
+- **Dos «¿Fuma?» en la misma pantalla.** No es un fallo de esta
+  rebanada: Clínico ya tenía los suyos en `historial_clinico`, y la
+  mudanza los pone al lado de los de `paciente_sociodemografico`. Pueden
+  contradecirse. Consolidarlos es otra rebanada — ver `REBANADA-36.md`.
+- **El PDF del informe** sigue imprimiendo actividad y sueño: los lee de
+  la misma tabla de siempre, que no cambió.
+
+## Rebanada 37 — Conclusiones: objetivos, restricciones y plan
+
+### El recorrido
+
+Ficha del paciente → **Resumen** → una consulta → pestaña
+**Conclusiones**. De arriba abajo debe verse:
+
+1. Diagnóstico nutricional, con **Objetivos del tratamiento** (nuevo) y
+   debajo Observaciones clínicas.
+2. Recomendaciones.
+3. Prescripción dietética, con **Restricciones** dentro.
+4. **Plan alimentario** (nuevo).
+5. Acuerdos con el paciente.
+
+### Restricciones: las quince y las dos que faltan
+
+En Prescripción → Restricciones deben estar, por este orden:
+Hipocalórica · Normocalórica · Hipercalórica · Hiperproteica ·
+Normoproteica · Hipoproteica · Alta en fibra · Fibra soluble · Fibra
+insoluble · Sin gluten · Sin lactosa · Bajo en sodio · Bajo en grasas ·
+Vegetariana · Vegana.
+
+**No** deben ofrecerse «Diabética» ni «Renal».
+
+### La prueba que de verdad importa: que «Renal» no se borre sola
+
+`restricciones` es un `jsonb` sin restricción en la base; valida la API,
+y lo hace **descartando en silencio** lo que no reconoce. Si se hubieran
+quitado del servidor, reguardar una conclusión antigua las habría
+borrado sin avisar.
+
+Para probarlo hace falta una conclusión que ya las tenga. Se fabrica:
+
+```bash
+docker exec -i nutrismart-db psql -U nutrismart -d nutrismart <<'SQL'
+update conclusion_valoracion
+   set restricciones = '["renal","sin_gluten"]'::jsonb
+ where consulta_id = 'PON_AQUI_LA_CONSULTA';
+SQL
+```
+
+Después, en la pantalla:
+
+1. Abrir esa conclusión. «Renal» aparece como ficha **con borde
+   discontinuo**; al pasar el ratón dice que ya no se ofrece y se
+   conserva porque estaba registrada.
+2. Cambiar cualquier otra cosa —por ejemplo las kilocalorías— y
+   **Guardar conclusión**.
+3. Recargar. «Renal» **sigue ahí**.
+
+Si desaparece en el paso 3, la lista del servidor
+(`routes/conclusion.ts`) perdió la clave y está borrando datos clínicos
+al reguardar.
+
+Las dos listas deben cuadrar, y eso se comprueba sin navegador:
+
+```bash
+# ninguna opción del menú puede ser rechazada por el servidor,
+# y ninguna clave aceptada puede quedarse sin etiqueta
+grep -c "clave:" apps/web-professional/src/api/valoracion.ts
+```
+
+Resultado esperado del cruce: **servidor acepta 17, la pantalla ofrece
+15**, y las 2 de diferencia son exactamente `diabetica` y `renal`.
+
+### El encabezado del plan sale de la prescripción, no de la calculadora
+
+Es la parte que más se malinterpreta al probar. El encargo decía «desde
+la calculadora», pero se lee del campo de meta calórica — que es donde la
+calculadora deja su resultado. Así funciona también sin abrirla, que es
+lo normal en una consulta de control.
+
+1. Con la meta calórica **vacía**, el bloque Plan alimentario muestra el
+   aviso y un botón **Abrir calculadora**.
+2. Escribir `2000` a mano en Meta calórica, **sin tocar la calculadora**.
+   El encabezado debe mostrar «2000 kcal/día» y las seis listas de
+   intercambio. Si sigue vacío, está atado a la calculadora y es un
+   fallo.
+3. Abrir la calculadora, pulsar «Usar estos valores». La meta cambia y el
+   encabezado la sigue.
+4. La suma de los intercambios que declara el pie no tiene por qué dar
+   exactamente la meta: el reparto es orientativo y así lo dice.
+
+### Objetivos
+
+Escribir un objetivo largo, guardar, recargar la consulta: debe seguir
+ahí. Se guarda en `conclusion_valoracion.objetivos`, sin límite de
+longitud.
+
+```sql
+select left(objetivos, 60) from conclusion_valoracion;
+```
+
+### Lo que NO se hizo, y es intencionado
+
+- **Restricciones no se movió** fuera de Prescripción, aunque el orden
+  dibujado en el encargo la ponía antes. «Hipocalórica» o «Hiperproteica»
+  describen la prescripción: su sitio es junto a las kilocalorías.
+- **No hay un segundo botón de calculadora** bajo Prescripción: ya había
+  uno en la cabecera de ese bloque, y el que pedía el encargo se puso en
+  el estado vacío del plan, que es donde hace falta.
+- **El plan es un resumen con enlace**, no el gestor completo. Meter la
+  lista de planes, el editor y el archivado dentro de un formulario que se
+  guarda de una vez daría dos botones de guardar compitiendo.
+
 # Recorrido manual del frontend
 
 Con `npm run dev:web`, en **http://localhost:5173**:
@@ -2412,6 +3822,314 @@ Requiere `ANTHROPIC_API_KEY` en el `.env` de la raíz. **Sin ella todo lo demás
 | **Marcar como revisada** | Chip verde, disponible para todo el equipo |
 
 **Lo que hay que mirar con atención**: que el borrador **no aparezca en la lista hasta pulsar Guardar**. Si apareciera antes, el expediente tendría una nota que nadie ha leído.
+
+---
+
+# Rebanada 41 — Ajustes del expediente clínico
+
+Siete retoques sobre pantallas que ya existían. Ninguno añade una función nueva de golpe: casi todos corrigen algo que se preguntaba dos veces, se llamaba de un modo confuso o no llevaba a donde decía.
+
+## Antes de empezar
+
+```
+npm run migrate -w @nutrismart/api        # aplica la 044 y la 045
+docker compose -f infra/docker-compose.dev.yml up -d --build api
+```
+
+Comprobar que las columnas están:
+
+```
+docker exec nutrismart-db psql -U nutrismart -d nutrismart -c "\d paciente_sociodemografico" | grep descanso
+docker exec nutrismart-db psql -U nutrismart -d nutrismart -c "\d paciente" | grep nota_profesional
+```
+
+## 1 · Hábitos: qué desapareció y qué entró
+
+**Dónde:** un paciente → **Nueva consulta** → pestaña **Clínico**, bloque **Hábitos** (al final, debajo de Farmacología).
+
+| Paso | Qué comprobar |
+|---|---|
+| Mirar el bloque Hábitos | **No** están «Nivel de actividad física», «Fuma actualmente» ni «Consumo de alcohol» |
+| Subir a los bloques de arriba | Esos tres siguen ahí: «Actividad física» (con su FAF) y «Sustancias» |
+| Horas de sueño | Sigue donde estaba |
+| **Calificación de descanso** | Deslizante de 1 a 10; al lado se lee el número; debajo «1 = descanso muy malo · 10 = descanso excelente» |
+| Sin haberlo tocado | Dice **«Sin registrar»**, no «5» |
+| Moverlo y pulsar **Quitar** | Vuelve a «Sin registrar» — es la única forma de decir «no lo sé» |
+| **Veces que despierta durante la noche** | Acepta 0; no acepta negativos |
+| **Notas de hábitos** | Textarea, se redimensiona |
+| Guardar hábitos → F5 | Los tres valores vuelven |
+
+**Lo que hay que mirar con atención:** después de guardar aquí, ir a la ficha → pestaña **Sociodemografía** y comprobar que **ocupación, escolaridad y hogar siguen ahí**. Ese endpoint reemplaza el bloque entero; si algo se hubiera quedado sin reenviar, guardar los hábitos lo habría borrado.
+
+**Y al revés:** editar la ocupación en Sociodemografía y volver a Hábitos. La calificación de descanso debe seguir puesta.
+
+**Por qué no se borraron las columnas.** Nivel de actividad, tabaco y alcohol se quedan en la base y **se siguen imprimiendo en el PDF**: hay pacientes con el dato recogido y la trazabilidad clínica del proyecto dice que nada se elimina físicamente. Se leen, ya no se escriben. Salían duplicados dentro de la misma pantalla, y de dos respuestas que no concuerdan no sirve ninguna.
+
+## 2 · Notas del profesional
+
+**Dónde:** ficha del paciente, **al final de la página**, debajo de las pestañas.
+
+| Paso | Qué comprobar |
+|---|---|
+| Valoración → Clínico | El bloque **«Notas»** que había al final **ya no está** |
+| Ficha del paciente, bajar del todo | Sección **«Notas del profesional»**, visible desde cualquier pestaña |
+| Escribir y esperar un segundo | El indicador pasa de «Sin guardar» a «Guardando…» y a «Guardado» |
+| Escribir y salir del campo (tab) | Guarda sin esperar |
+| F5 | El texto vuelve |
+| Vaciarla del todo y guardar | Queda vacía, no con una cadena en blanco |
+| Contador de caracteres | Sube; el tope son 10 000 |
+| Cambiar de paciente | Trae **su** nota, no la del anterior |
+
+**Lo que hay que mirar con atención:** entrar con el paciente a su app (`localhost:5174`) y recorrer su perfil y su progreso. **La nota no puede aparecer por ningún lado.** Ninguna ruta del paciente la lee.
+
+**Efecto colateral que conviene conocer:** el panel de interacciones farmacológicas tenía un botón «añadir a notas» que copiaba el aviso al bloque que se ha eliminado. Ese botón ya no aparece. Lo que se quiera conservar de una interacción se escribe en «Notas del profesional».
+
+## 3 · El botón del plan en Conclusiones
+
+**Dónde:** Nueva consulta → pestaña **Conclusiones**, bloque del plan (debajo del formulario).
+
+Era el fallo más desconcertante de los siete: el botón enlazaba a `/pacientes/:id` a secas, y el expediente **abre siempre en Resumen**. Pulsarlo llevaba a una pantalla que no era la pedida, sin plan creado y sin explicación. Parecía que no hacía nada.
+
+| Situación | Paso | Qué comprobar |
+|---|---|---|
+| Paciente **sin** plan activo | **Crear plan alimentario** | El botón dice «Creando…», y **acaba en la pestaña de planes con el plan nuevo abierto** |
+| | Mirar la URL | `…/pacientes/<id>?tab=plan&plan=<id>` |
+| | La lista de la izquierda | El plan recién creado, en **Borrador** |
+| Paciente **con** plan activo | **Abrir el plan completo →** | Misma pestaña, con **ese** plan abierto |
+| Con la API caída | Pulsar crear | Mensaje de error **en el mismo bloque**; no navega a ninguna parte |
+
+**Lo que hay que mirar con atención:** que al llegar, el plan esté abierto **en consulta, no en edición**. Y que pulsar el botón estando ya en el expediente cambie de pestaña igualmente.
+
+## 4 · Histórico de Planes Alimentarios
+
+**Dónde:** ficha del paciente, pestaña renombrada.
+
+| Paso | Qué comprobar |
+|---|---|
+| La pestaña | Dice **«Histórico de Planes Alimentarios»**, no «Plan alimentario» |
+| La lista | Del **más reciente al más antiguo**, sin agrupar por estado |
+| Cada ítem | Nombre + fecha: «Desde dd/mm/aaaa», o «Creado el …» si el plan aún no rige |
+| Pulsar cualquiera | Se abre **en solo lectura** (la grilla, no el editor) |
+| Un plan activo | Botones «Editar comidas» y «Archivar» disponibles |
+| Un plan archivado | Sin botones, con el aviso de que no se edita ni se reactiva |
+| El chip | «Activo» sigue marcando cuál rige hoy |
+
+**Lo que hay que mirar con atención:** el orden. Antes el activo salía primero aunque fuera el más viejo. Una pestaña que se llama «histórico» tiene que leerse como una línea de tiempo; cuál rige lo dice el chip.
+
+## 5 · kcal editable en el recordatorio
+
+**Dónde:** Nueva consulta → **Dietético** → **Recordatorio 24h** (y también **Consumo Usual**).
+
+| Paso | Qué comprobar |
+|---|---|
+| Escribir alimentos en un tiempo de comida y **Analizar IA** | Aparecen CHO / Prot / Grasas como etiquetas y **kcal como casilla** |
+| Escribir otro número en la casilla de kcal | El borde se resalta y al lado sale **«(IA: 420)»** con lo que estimó el modelo |
+| El pie de la tabla | El total **cambia al teclear**, sin esperar a guardar |
+| Guardar y F5 | La corrección vuelve; la estimación de la IA **sigue guardada debajo** |
+| **Vaciar** la casilla y guardar | Vuelve el número de la IA — la corrección se deshace |
+| Cambiar el texto de los alimentos | La corrección **se descarta**: era sobre otro texto |
+| Una fila sin analizar | La casilla de kcal se puede escribir igual y suma en el total |
+| Consulta finalizada | La casilla está deshabilitada |
+
+**Lo que hay que mirar con atención:** que corregir kcal **no borre los gramos** de CHO, proteína y grasas. Siguen siendo los de la IA: corregirlos uno a uno sin recalcular el conjunto daría un reparto que no cuadra.
+
+**Por qué no hay tabla de alimento/cantidad/unidad.** El encargo la pedía, pero la R40 ya había sustituido esa forma por texto libre analizado por Claude con el método ADA, con caché por tiempo de comida. Rehacerla habría tirado esa rebanada y obligado a migrar lo capturado. Se conservó el análisis y se añadió lo que faltaba: la corrección manual.
+
+### Totales en «Resumen y macros»
+
+**Dónde:** Dietético → **Resumen y macros**, debajo del reparto energético.
+
+| Paso | Qué comprobar |
+|---|---|
+| Entrar con el recordatorio analizado | Fila **«Total CHO · Total Proteína · Total Grasas · Total kcal»** |
+| Las dos fuentes | Recordatorio de 24 horas y Consumo Usual, **por separado** |
+| Sin analizar nada | Dice que no hay análisis, no «0» |
+| **Copiar a los macros declarados** | Rellena las casillas de arriba, **sin guardar** |
+| Pulsar «Guardar evaluación dietética» | Ahora sí persiste |
+
+**Lo que hay que mirar con atención:** que copiar no guarde solo. Lo declarado es lo que firma el profesional; esto es una estimación de un modelo, y la regla del proyecto es que la IA sugiere y el profesional decide.
+
+## 6 · Recordatorio 24h / Consumo Usual
+
+El encargo pedía renombrar una pestaña a «Recordatorio 24h / Consumo Usual». **Ya son dos pestañas**, que es esa misma pareja con cada mitad accesible por su nombre — las separó la R40. Aplicar el cambio al pie de la letra habría dejado una pestaña «Recordatorio 24h / Consumo Usual» **junto a** otra llamada «Consumo usual».
+
+Lo que sí se unificó es cómo se escriben: **«Recordatorio 24h»** y **«Consumo Usual»**, igual que en el resto de la aplicación y en el PDF.
+
+| Paso | Qué comprobar |
+|---|---|
+| Sub-pestañas de Dietético | Frecuencia de consumo · **Recordatorio 24h** · **Consumo Usual** · Resumen y macros |
+
+## 7 · Circunferencia de pantorrilla
+
+**Dónde:** Nueva consulta → **Antropometría** → Medidas básicas.
+
+| Paso | Qué comprobar |
+|---|---|
+| El sexto campo | Dice **«Circunferencia de pantorrilla (cm)»**, no «Pierna» |
+| Guardar y F5 | El valor vuelve: la columna sigue siendo `pierna_cm` |
+| Antropometría → Pliegues | El pliegue **«Pierna»** sigue llamándose así |
+
+**Lo que hay que mirar con atención:** el pliegue no se tocó a propósito. Es otra medición —un pliegue cutáneo, no un perímetro— y renombrar los dos igual los volvería indistinguibles en la gráfica de composición.
+
+---
+
+# Rebanada 42 — Cunningham, gasto por ejercicio y disponibilidad energética
+
+Un quinto método de GEB que no se parece a los otros cuatro: en vez de multiplicar el basal por un factor de actividad, suma el gasto del ejercicio actividad por actividad. De ahí salen la tabla GEE y la lectura de disponibilidad energética.
+
+**Dónde:** Nueva consulta → **Conclusiones** → botón de la calculadora → panel lateral, **Sección A**.
+
+## Antes de empezar
+
+No hay migración: todo vive en el JSONB `datos_calculadora` de la conclusión. Basta con reconstruir la API para que acepte los campos nuevos.
+
+```
+docker compose -f infra/docker-compose.dev.yml up -d --build api
+```
+
+## 1 · El selector de GEB
+
+| Paso | Qué comprobar |
+|---|---|
+| Abrir el selector con un paciente adulto | Schofield · Mifflin St. Jeor · **Harris-Benedict** · **Cunningham** |
+| Con un paciente de 18 años o menos | Aparece además **FAO/OMS**, como antes |
+| Elegir Harris-Benedict | Se calcula con peso, talla, edad y género; FA/FT/FE siguen visibles |
+| Elegir Cunningham | **FA, FT y FE desaparecen**; aparece la sección GEE |
+| Volver a Mifflin | FA/FT/FE reaparecen y la sección GEE se va |
+
+**Comprobación aritmética** (60 kg de MLG): GER debe decir **1820 kcal** — es `500 + 22 × 60`.
+
+**Lo que hay que mirar con atención:** que con Cunningham no queden factores de actividad a la vista. El ejercicio ya se cuenta entero en la tabla GEE; dejar el FA visible invita a sumarlo dos veces.
+
+## 2 · Masa libre de grasa
+
+Campo nuevo en la rejilla de antropometría, al lado de «% de grasa».
+
+| Paso | Qué comprobar |
+|---|---|
+| Paciente con bioimpedancia en el expediente | La MLG se precarga de la medición |
+| Paciente con peso y % de grasa, sin MLG medida | La etiqueta del campo dice «kg · **XX.X estimada**» y ese valor es el que se usa |
+| Escribir una MLG a mano | Manda sobre la estimada |
+| Cunningham sin peso ni % de grasa | Mensaje: _«Se requiere la masa libre de grasa (MLG). Ingresa el peso y % de grasa corporal.»_ |
+
+**Por qué la estimada no rellena la casilla:** un número que aparece solo en un campo editable no se distingue de uno medido. Se muestra como estimación en la etiqueta y solo se usa si nadie escribió nada.
+
+## 3 · Tabla de Gasto Energético por Ejercicio
+
+| Paso | Qué comprobar |
+|---|---|
+| **+ Agregar actividad** | Fila nueva; el peso se precarga con el peso actual del paciente |
+| Desplegar el selector | 18 actividades del catálogo, cada una con sus METS, más «Actividad libre» |
+| Elegir «Trotar / jogging» | METS se pone en **7** |
+| Editar los METS a mano | Se acepta: el catálogo precarga, no impone |
+| Elegir «Actividad libre (ingresar METS)» | METS queda **en blanco** para escribirlo |
+| Escribir 70 kg · 45 min · 7 METS | GEE de la fila = **385.9** (`0.0175 × 70 × 45 × 7`) |
+| Agregar una segunda actividad | **GEE Total** suma las dos |
+| Pulsar la ✕ de una fila | Desaparece y el total baja |
+
+**Lo que hay que mirar con atención:** el peso es **por fila** y editable. Una sesión de pesas con chaleco lastrado no se calcula con el peso del paciente, y una tabla guardada hace tres meses tiene que seguir sumando lo que sumaba aunque el paciente pese otra cosa hoy.
+
+## 4 · GET y disponibilidad energética
+
+Con MLG 60 kg y una sola actividad de 70 kg · 45 min · 7 METS:
+
+| Lectura | Valor esperado |
+|---|---|
+| GER | 1820 kcal |
+| Efecto térmico de los alimentos (×1.1) | 182 kcal |
+| GEE total | 385.9 kcal |
+| **GET (GER × 1.1 + GEE)** | **2388 kcal** |
+| Disponibilidad energética | **33.4 kcal/kg MLG/día** |
+| Nivel | **Deficiencia energética leve / moderada** (ámbar) |
+
+Los cortes, para probarlos moviendo los minutos:
+
+| DE | Nivel | Color |
+|---|---|---|
+| < 30 | Deficiencia energética severa | rojo (`--status-critical`) |
+| 30 – 44.9 | Deficiencia leve / moderada | ámbar (`--status-alert`) |
+| 45 – 60 | Disponibilidad óptima | verde (`--status-normal`) |
+| > 60 | Excedente energético | neutro |
+
+| Paso | Qué comprobar |
+|---|---|
+| Sin actividades | El GET se calcula igual, y aparece la nota «GEE = 0. Agrega actividades para un cálculo más preciso.» |
+| Quitar la MLG | El bloque dice que se requiere la MLG, sin número inventado |
+| El nivel | Va **escrito**, no solo en color: quien no distingue tonos lo lee igual |
+
+## 5 · El REQ sigue al método
+
+| Paso | Qué comprobar |
+|---|---|
+| Con Mifflin, mirar «REQ a utilizar» en la Sección B | Trae el VET, con la ayuda «kcal · VET de la Sección A» |
+| Cambiar a Cunningham | El REQ **pasa al GET**, y la ayuda dice «kcal · GET de la Sección A» |
+| Escribir un REQ a mano y cambiar de método | Lo escrito **no se pisa** |
+
+**Por qué se tocó esto.** Antes el REQ solo se rellenaba estando vacío: al cambiar de método, la Sección A enseñaba un GET de Cunningham mientras la B repartía el VET de Mifflin, sin que nada lo señalara. Ahora el autorrelleno se compara con lo último que puso él mismo, así que sigue al método pero respeta cualquier cifra escrita a mano.
+
+## 6 · Persistencia
+
+| Paso | Qué comprobar |
+|---|---|
+| Aplicar con Cunningham y actividades cargadas | Vuelve al formulario de conclusiones con la meta calórica |
+| Guardar la conclusión y recargar (F5) | Al reabrir la calculadora: método Cunningham, MLG y **todas las actividades** |
+| Abrir una conclusión **anterior a la R42** | Se abre sin errores; método por defecto y sin actividades |
+
+**Lo que hay que mirar con atención:** el servidor **recalcula** el GEE de cada fila con la misma fórmula en vez de creerse el número que manda el navegador. Para verlo, guardar y comprobar en base que el `gee` guardado cuadra con sus propios kg/minutos/METS:
+
+```
+docker exec nutrismart-db psql -U nutrismart -d nutrismart -c \
+  "select jsonb_pretty(datos_calculadora->'geeEntradas') from conclusion_valoracion order by updated_at desc limit 1;"
+```
+
+`sanearDatosCalculadora` es una **lista blanca**: lo que no se nombra ahí no se guarda. Al añadir un campo a `DatosCalculadora` hay que añadirlo también en `apps/api/src/routes/conclusion.ts`, o se pierde en silencio al guardar.
+
+## Comprobación de las fórmulas
+
+Ejecutables contra el módulo real (`apps/web-professional/src/lib/calculadoraNutricion.ts`):
+
+| Entrada | Salida |
+|---|---|
+| `gerCunningham(60)` | 1820 |
+| `gebHarrisBenedict(70, 175, 30, 'masculino')` | 1696 |
+| `gebHarrisBenedict(60, 165, 30, 'femenino')` | 1384 |
+| `calcularGEE(70, 45, 7)` | 385.9 |
+| `getCunningham(1820, 385.9)` | 2388 |
+| `disponibilidadEnergetica(2388, 385.9, 60)` | 33.4 |
+| `disponibilidadEnergetica(…, 0)` | `null` |
+| `calcularGeb({metodo:'cunningham', mlg:60, resto null})` | 1820 |
+| `calcularGeb({metodo:'cunningham', mlg:null, …})` | `null` |
+
+Cunningham no exige peso, talla, edad ni género: la composición corporal ya los recoge, y pedírselos la dejaría en `null` con todos sus datos puestos.
+
+## 7 · Corrección de Schofield en mujer adulta
+
+Apareció al comprobar la aritmética de la R42, pero el fallo venía de la **R39**: la ecuación de Schofield para mujer de 18 años o más llevaba `23.8 × talla` en vez de `2.83 × talla`. La ecuación publicada usa la talla en **metros** con coeficiente 283; pasarla a centímetros lo divide entre 100, y alguien transcribió 23.8.
+
+Schofield es la primera opción del selector, así que el error salía por defecto.
+
+| Caso | Antes | Ahora |
+|---|---|---|
+| Mujer 60 kg · 165 cm · 30 a | **4843 kcal** | **1383 kcal** |
+| Contraste Harris-Benedict, mismo caso | — | 1384 kcal |
+
+Comprobación de no regresión (las bandas infantiles y las de hombre no se tocaron):
+
+| Caso | GEB |
+|---|---|
+| Mujer 70 kg · 160 cm · 45 a | 1505 |
+| Hombre 70 kg · 175 cm · 30 a | 1935 |
+| Niña 12 kg · 85 cm · 2 a | 651 |
+| Niña 25 kg · 125 cm · 6 a | 998 |
+| Niña 50 kg · 160 cm · 14 a | 1362 |
+
+**Lo que hay que mirar con atención:** las conclusiones ya guardadas con Schofield en pacientes mujeres adultas tienen una meta calórica calculada sobre el valor viejo. No se recalculan solas —son registro de lo que se prescribió— así que conviene revisarlas a mano.
+
+**La lección para el siguiente coeficiente que se copie:** contrastar el resultado con otra ecuación del mismo panel. Un GEB de 4843 kcal para una mujer de 60 kg se ve a simple vista; el problema es que nadie lo miró.
+
+## Decisión de nomenclatura
+
+El encargo definía el bloque persistido en `snake_case` (`metodo_ger`, `gee_entradas`, `get_cunningham`). Se guardó en **camelCase** (`metodoGer`, `geeEntradas`, `getCunningham`) para no tener dos convenciones dentro del mismo JSONB: los campos que ya había —`metaCalorica`, `metodoDieta`, `listasIntercambio`— son camelCase.
 
 ---
 

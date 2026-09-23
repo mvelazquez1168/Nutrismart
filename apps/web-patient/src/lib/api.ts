@@ -374,3 +374,336 @@ export function marcarTarea(id: string, completada: boolean): Promise<Tarea> {
     body: JSON.stringify({ completada }),
   })
 }
+
+/* ------------------------------------------------------------------ */
+/* PAC-07 — contador de porciones                                      */
+/* ------------------------------------------------------------------ */
+
+export type ModoDiario = 'simple' | 'detallado'
+
+export interface Alimento {
+  id: string
+  nombre: string
+  categoria: string
+  kcalPor100g: number
+  proteinaPor100g: number
+  choPor100g: number
+  grasaPor100g: number
+  porcionTipicaG: number
+  unidadPorcion: 'g' | 'ml' | 'pza'
+  propio: boolean
+}
+
+export interface ItemComida {
+  id: string
+  alimentoId: string | null
+  nombre: string
+  cantidadG: number
+  kcal: number | null
+  proteinaG: number | null
+  choG: number | null
+  grasaG: number | null
+  apuntadoEn: string
+}
+
+export function getModoDiario(): Promise<{ modoDiario: ModoDiario }> {
+  return pedir('/api/paciente/configuracion', { conAuth: true })
+}
+
+export function setModoDiario(modoDiario: ModoDiario): Promise<{ modoDiario: ModoDiario }> {
+  return pedir('/api/paciente/configuracion', {
+    method: 'PATCH',
+    conAuth: true,
+    body: JSON.stringify({ modoDiario }),
+  })
+}
+
+export function buscarAlimentos(q: string, categoria?: string): Promise<Alimento[]> {
+  const p = new URLSearchParams()
+  if (q.trim() !== '') p.set('q', q.trim())
+  if (categoria) p.set('categoria', categoria)
+  const cola = p.toString()
+  return pedir(`/api/paciente/alimentos${cola ? `?${cola}` : ''}`, { conAuth: true })
+}
+
+export function getItems(registroId: string): Promise<ItemComida[]> {
+  return pedir(`/api/paciente/diario/${registroId}/items`, { conAuth: true })
+}
+
+export function anadirItem(datos: {
+  fecha: string
+  tipoComida: Franja
+  alimentoId?: string
+  nombre?: string
+  cantidadG: number
+}): Promise<ItemComida & { registroId: string }> {
+  return pedir('/api/paciente/diario/items', {
+    method: 'POST',
+    conAuth: true,
+    body: JSON.stringify(datos),
+  })
+}
+
+export async function quitarItem(registroId: string, itemId: string): Promise<void> {
+  await pedir(`/api/paciente/diario/${registroId}/items/${itemId}`, {
+    method: 'DELETE',
+    conAuth: true,
+  })
+}
+
+/* ------------------------------------------------------------------ */
+/* PAC-08 — biblioteca                                                 */
+/* ------------------------------------------------------------------ */
+
+export const CATEGORIAS_RECURSO = [
+  { clave: 'nutricion', etiqueta: 'Nutrición' },
+  { clave: 'recetas', etiqueta: 'Recetas' },
+  { clave: 'ejercicio', etiqueta: 'Ejercicio' },
+  { clave: 'habitos', etiqueta: 'Hábitos' },
+  { clave: 'otro', etiqueta: 'Otros' },
+] as const
+
+export type TipoRecurso = 'texto' | 'enlace' | 'archivo'
+
+export interface RecursoResumen {
+  id: string
+  titulo: string
+  resumen: string | null
+  categoria: string
+  tipo: TipoRecurso
+  imagenPortadaUrl: string | null
+  urlExterna: string | null
+  tieneArchivo: boolean
+  autor: string
+  publicadoEn: string
+  leido: boolean
+}
+
+export interface Recurso extends Omit<RecursoResumen, 'leido' | 'tieneArchivo'> {
+  contenido: string | null
+  archivo: { nombre: string; mime: string; tamanoBytes: number } | null
+}
+
+/**
+ * Descarga el archivo de un recurso.
+ *
+ * No sirve un `<a href>`: la API exige la cabecera Authorization y un
+ * enlace normal no la envía. Se pide con fetch y se entrega al navegador
+ * como descarga.
+ */
+export async function descargarArchivoRecurso(id: string, nombre: string): Promise<void> {
+  const token = await tokenVigente()
+  const r = await fetch(`${BASE}/api/paciente/recursos/${id}/archivo`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!r.ok) throw new ApiError(r.status, 'No se pudo descargar el archivo')
+  const blob = await r.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = nombre
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  // Sin esto el blob se queda en memoria hasta recargar la página.
+  URL.revokeObjectURL(url)
+}
+
+export function getRecursos(
+  categoria?: string,
+  pagina = 1,
+): Promise<{ pagina: number; total: number; hayMas: boolean; recursos: RecursoResumen[] }> {
+  const p = new URLSearchParams({ pagina: String(pagina) })
+  if (categoria) p.set('categoria', categoria)
+  return pedir(`/api/paciente/recursos?${p.toString()}`, { conAuth: true })
+}
+
+export function getRecurso(id: string): Promise<Recurso> {
+  return pedir(`/api/paciente/recursos/${id}`, { conAuth: true })
+}
+
+/* ------------------------------------------------------------------ */
+/* PAC-09 — perfil y fondo                                             */
+/* ------------------------------------------------------------------ */
+
+export interface Perfil {
+  modoDiario: ModoDiario
+  fondo: 'neutro' | 'verde' | 'azul' | 'morado' | 'salmon' | 'cafe' | 'noche'
+  fotoUrl: string | null
+  /** El que se muestra: el preferido si lo hay, si no el del expediente. */
+  nombre: string
+  nombrePreferido: string | null
+  /** El del expediente clínico. No lo cambia el paciente. */
+  nombreExpediente: string
+}
+
+export function getPerfil(): Promise<Perfil> {
+  return pedir('/api/paciente/configuracion', { conAuth: true })
+}
+
+export function guardarFondo(fondo: Perfil['fondo']): Promise<{ fondo: Perfil['fondo'] }> {
+  return pedir('/api/paciente/configuracion', {
+    method: 'PATCH',
+    conAuth: true,
+    body: JSON.stringify({ fondo }),
+  })
+}
+
+export function guardarPerfil(datos: {
+  fotoUrl?: string | null
+  nombrePreferido?: string | null
+}): Promise<{ fotoUrl: string | null; nombrePreferido: string | null }> {
+  return pedir('/api/paciente/perfil', {
+    method: 'PATCH',
+    conAuth: true,
+    body: JSON.stringify(datos),
+  })
+}
+
+/* ------------------------------------------------------------------ */
+/* RPM-01 — bienestar y medidas corporales                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Cinco escalones, no diez. Pedirle a alguien que distinga su ánimo
+ * entre un 6 y un 7 produce un número inventado; cinco se contestan sin
+ * pensar, que es la única forma de que se conteste todos los días.
+ */
+export const ESTADOS_BIENESTAR = [
+  { valor: 1, etiqueta: 'Muy mal', cara: '😞' },
+  { valor: 2, etiqueta: 'Mal', cara: '🙁' },
+  { valor: 3, etiqueta: 'Regular', cara: '😐' },
+  { valor: 4, etiqueta: 'Bien', cara: '🙂' },
+  { valor: 5, etiqueta: 'Excelente', cara: '😄' },
+] as const
+
+export const SINTOMAS_ETIQUETA: Record<string, string> = {
+  dolor_cabeza: 'Dolor de cabeza',
+  fatiga: 'Cansancio',
+  insomnio: 'Dormí mal',
+  ansiedad: 'Ansiedad',
+  estres: 'Estrés',
+  hinchazon: 'Hinchazón',
+  estrenimiento: 'Estreñimiento',
+  diarrea: 'Diarrea',
+  acidez: 'Acidez',
+  nauseas: 'Náuseas',
+  antojos: 'Antojos',
+  mareo: 'Mareo',
+  dolor_muscular: 'Dolor muscular',
+}
+
+export interface ParteBienestar {
+  fecha: string
+  estado: number
+  sintomas: string[]
+  nota: string | null
+}
+
+export interface Bienestar {
+  dias: number
+  hoy: string
+  partes: ParteBienestar[]
+  racha: number
+  sintomasPosibles: string[]
+}
+
+export function getBienestar(dias = 30): Promise<Bienestar> {
+  return pedir(`/api/paciente/bienestar?dias=${dias}`, { conAuth: true })
+}
+
+export function guardarBienestar(datos: {
+  estado: number
+  sintomas?: string[]
+  nota?: string
+  fecha?: string
+}): Promise<ParteBienestar> {
+  return pedir('/api/paciente/bienestar', {
+    method: 'PUT',
+    conAuth: true,
+    body: JSON.stringify(datos),
+  })
+}
+
+export const MEDIDAS_CUERPO = [
+  { clave: 'cinturaCm', etiqueta: 'Cintura' },
+  { clave: 'caderaCm', etiqueta: 'Cadera' },
+  { clave: 'pechoCm', etiqueta: 'Pecho' },
+  { clave: 'brazoCm', etiqueta: 'Brazo' },
+  { clave: 'musloCm', etiqueta: 'Muslo' },
+  { clave: 'cuelloCm', etiqueta: 'Cuello' },
+] as const
+
+export type ClaveMedida = (typeof MEDIDAS_CUERPO)[number]['clave']
+
+export type MedidaCorporal = { fecha: string; nota: string | null } & {
+  [K in ClaveMedida]: number | null
+}
+
+export interface Cambio {
+  primero: number
+  ultimo: number
+  delta: number
+}
+
+export interface MedidasCorporales {
+  dias: number
+  registros: MedidaCorporal[]
+  cambios: Record<ClaveMedida, Cambio | null>
+}
+
+export function getMedidasCorporales(dias = 180): Promise<MedidasCorporales> {
+  return pedir(`/api/paciente/medidas-corporales?dias=${dias}`, { conAuth: true })
+}
+
+export function guardarMedidasCorporales(
+  datos: Partial<Record<ClaveMedida, number>> & { fecha?: string; nota?: string },
+): Promise<MedidaCorporal> {
+  return pedir('/api/paciente/medidas-corporales', {
+    method: 'PUT',
+    conAuth: true,
+    body: JSON.stringify(datos),
+  })
+}
+
+/* ------------------------------------------------------------------ */
+/* RPM-01 — pulseras y relojes                                         */
+/* ------------------------------------------------------------------ */
+
+export interface EstadoWearable {
+  proveedor: 'fitbit' | 'google_fit' | 'withings'
+  etiqueta: string
+  /** Que datos aporta, para poder elegir entre bascula y pulsera. */
+  queTrae: string
+  /** `false` = este servidor no ofrece ese proveedor. Distinto de «no conectado». */
+  disponible: boolean
+  motivoNoDisponible: string | null
+  conectado: boolean
+  ultimoSync: string | null
+  ultimoError: string | null
+  lecturas: number
+}
+
+export function getWearables(): Promise<EstadoWearable[]> {
+  return pedir('/api/paciente/wearables', { conAuth: true })
+}
+
+export function conectarWearable(proveedor: string): Promise<{ url: string }> {
+  return pedir(`/api/paciente/wearables/${proveedor}/conectar`, {
+    method: 'POST',
+    conAuth: true,
+  })
+}
+
+export function sincronizarWearable(
+  proveedor: string,
+): Promise<{ nuevas: number; dias: number }> {
+  return pedir(`/api/paciente/wearables/${proveedor}/sincronizar`, {
+    method: 'POST',
+    conAuth: true,
+  })
+}
+
+export async function desconectarWearable(proveedor: string): Promise<void> {
+  await pedir(`/api/paciente/wearables/${proveedor}`, { method: 'DELETE', conAuth: true })
+}

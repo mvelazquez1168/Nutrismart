@@ -5,7 +5,7 @@
  * precarga lo que ya hay: nadie debería reescribir los antecedentes
  * familiares en cada visita.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError } from '../../api/client'
 import {
   CONDICIONES,
@@ -49,7 +49,20 @@ export function FormHistorialClinico({
   const [sintomas, setSintomas] = useState<string[]>([])
   const [giDetalle, setGiDetalle] = useState('')
   const [likert, setLikert] = useState<Record<string, number>>({})
-  const [notas, setNotas] = useState('')
+
+  /**
+   * Las notas del historial ya no tienen campo (R41).
+   *
+   * El bloque «Notas» que había aquí se fue al pie del expediente, como
+   * «Notas del profesional»: una por paciente en vez de una por
+   * consulta. Pero la columna `notas_adicionales` sigue teniendo lo que
+   * se escribió antes, y el guardado de esta pantalla **reemplaza la
+   * fila entera**: si no viajara de vuelta, la primera vez que alguien
+   * tocara un antecedente borraría esas notas sin pedirlo.
+   *
+   * Se carga, no se enseña, y se devuelve tal cual.
+   */
+  const notasPrevias = useRef<string | null>(null)
 
   const [cargando, setCargando] = useState(true)
   const [guardando, setGuardando] = useState(false)
@@ -72,7 +85,7 @@ export function FormHistorialClinico({
         setOtrasSustancias(h.otrasSustancias ?? '')
         setSintomas(h.sintomasGi ?? [])
         setGiDetalle(h.giDetalle ?? '')
-        setNotas(h.notasAdicionales ?? '')
+        notasPrevias.current = h.notasAdicionales ?? null
         setLikert(
           Object.fromEntries(
             LIKERT.map((l) => [l.clave, h[l.clave]]).filter(([, v]) => v !== null),
@@ -123,7 +136,7 @@ export function FormHistorialClinico({
         sintomasGi: sintomas,
         giDetalle: giDetalle || null,
         ...likert,
-        notasAdicionales: notas || null,
+        notasAdicionales: notasPrevias.current,
       })
       setOk(true)
       await onGuardado()
@@ -393,16 +406,6 @@ export function FormHistorialClinico({
           </p>
         </Bloque>
 
-        <Bloque titulo="Notas">
-          <textarea
-            rows={4}
-            value={notas}
-            onChange={(e) => setNotas(e.target.value)}
-            placeholder="Observaciones del historial…"
-            aria-label="Notas del historial"
-            className={`${claseControl(false)} resize-none`}
-          />
-        </Bloque>
       </fieldset>
 
       {error && (
@@ -432,11 +435,11 @@ export function FormHistorialClinico({
         </div>
       )}
 
-      <FormFarmacologia
-        pacienteId={pacienteId}
-        bloqueada={bloqueada}
-        onAnadirANotas={(texto) => setNotas((n) => (n ? `${n}\n\n${texto}` : texto))}
-      />
+      {/* Sin `onAnadirANotas`: el bloque de notas al que copiaba ya no
+          está aquí (R41). El panel de interacciones sigue avisando; lo
+          que se quiera conservar va a «Notas del profesional», al pie
+          del expediente. */}
+      <FormFarmacologia pacienteId={pacienteId} bloqueada={bloqueada} />
     </div>
   )
 }

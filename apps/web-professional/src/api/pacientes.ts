@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut } from './client'
+import { apiGet, apiPatch, apiPost, apiPut } from './client'
 import type {
   Me,
   Paciente,
@@ -48,6 +48,23 @@ export function actualizarPaciente(
   datos: DatosPacienteEnvio,
 ): Promise<PacienteDetalle> {
   return apiPut<PacienteDetalle>(`/api/pacientes/${id}`, datos)
+}
+
+/**
+ * Nota del profesional — R41.
+ *
+ * Endpoint propio, no el PUT del paciente: se escribe al pie del
+ * expediente mientras se consulta, y mandar el paciente entero desde
+ * ahí pisaría lo que se acabe de editar en otra pantalla.
+ */
+export function guardarNotaProfesional(
+  id: string,
+  notaProfesional: string | null,
+): Promise<{ id: string; notaProfesional: string | null }> {
+  return apiPatch<{ id: string; notaProfesional: string | null }>(
+    `/api/pacientes/${id}/nota`,
+    { notaProfesional },
+  )
 }
 
 export interface ResultadoBaja {

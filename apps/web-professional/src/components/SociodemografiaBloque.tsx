@@ -20,25 +20,10 @@ import { ApiError } from '../api/client'
 import { Campo, claseControl } from '../components/Campo'
 import {
   ESCOLARIDADES,
-  FRECUENCIAS_ALCOHOL,
-  NIVELES_ACTIVIDAD,
   TIPOS_HOGAR,
   type DatosSocioEnvio,
   type Sociodemografia,
 } from '../api/tipos'
-
-const ETIQUETA_ACTIVIDAD: Record<string, string> = {
-  sedentario: 'Sedentario',
-  leve: 'Leve',
-  moderada: 'Moderada',
-  intensa: 'Intensa',
-}
-
-const ETIQUETA_ALCOHOL: Record<string, string> = {
-  nunca: 'Nunca',
-  ocasional: 'Ocasional (≤ 2 veces por semana)',
-  frecuente: 'Frecuente',
-}
 
 const ETIQUETA_ESCOLARIDAD: Record<string, string> = {
   ninguna: 'Ninguna',
@@ -60,15 +45,34 @@ const ETIQUETA_HOGAR: Record<string, string> = {
 const TEXTO_CONSENTIMIENTO =
   'El paciente ha autorizado verbalmente la recopilación de esta información con fines de análisis nutricional.'
 
+/**
+ * Ojo con los siete primeros: ya NO se pintan aquí.
+ *
+ * Los hábitos —sueño, descanso, notas, y los históricos de actividad,
+ * tabaco y alcohol— se editan desde Valoración → Clínico, que es donde
+ * tienen sentido clínico. Pero siguen viviendo en este estado, y no por
+ * descuido: el guardado de este bloque **reemplaza el bloque entero**
+ * —omitir un campo lo deja nulo, que es como el formulario vacía una
+ * casilla—, así que si no viajaran de vuelta, tocar «Ocupación»
+ * borraría las horas de sueño del paciente sin que nadie lo pidiera.
+ *
+ * Se cargan de la API y se devuelven tal cual.
+ */
 type Formulario = {
   nivelActividad: string
   horasSueno: string
   tabaco: string
   alcohol: string
+  calificacionDescanso: string
+  vecesDespiertaNoche: string
+  notasHabitos: string
   ocupacion: string
   escolaridad: string
   personasEnHogar: string
   tipoHogar: string
+  religion: string
+  nacionalidad: string
+  lugarTrabajo: string
 }
 
 const VACIO: Formulario = {
@@ -76,10 +80,16 @@ const VACIO: Formulario = {
   horasSueno: '',
   tabaco: '',
   alcohol: '',
+  calificacionDescanso: '',
+  vecesDespiertaNoche: '',
+  notasHabitos: '',
   ocupacion: '',
   escolaridad: '',
   personasEnHogar: '',
   tipoHogar: '',
+  religion: '',
+  nacionalidad: '',
+  lugarTrabajo: '',
 }
 
 function aFormulario(bloque: Sociodemografia | null): Formulario {
@@ -90,10 +100,16 @@ function aFormulario(bloque: Sociodemografia | null): Formulario {
     horasSueno: d.horasSueno?.toString() ?? '',
     tabaco: d.tabaco === null || d.tabaco === undefined ? '' : String(d.tabaco),
     alcohol: d.alcohol ?? '',
+    calificacionDescanso: d.calificacionDescanso?.toString() ?? '',
+    vecesDespiertaNoche: d.vecesDespiertaNoche?.toString() ?? '',
+    notasHabitos: d.notasHabitos ?? '',
     ocupacion: d.ocupacion ?? '',
     escolaridad: d.escolaridad ?? '',
     personasEnHogar: d.personasEnHogar?.toString() ?? '',
     tipoHogar: d.tipoHogar ?? '',
+    religion: d.religion ?? '',
+    nacionalidad: d.nacionalidad ?? '',
+    lugarTrabajo: d.lugarTrabajo ?? '',
   }
 }
 
@@ -107,10 +123,16 @@ function aEnvio(f: Formulario, consentimiento: boolean): DatosSocioEnvio {
     horasSueno: numero(f.horasSueno),
     tabaco: f.tabaco === '' ? null : f.tabaco === 'true',
     alcohol: (texto(f.alcohol) as DatosSocioEnvio['alcohol']) ?? null,
+    calificacionDescanso: numero(f.calificacionDescanso),
+    vecesDespiertaNoche: numero(f.vecesDespiertaNoche),
+    notasHabitos: texto(f.notasHabitos),
     ocupacion: texto(f.ocupacion),
     escolaridad: (texto(f.escolaridad) as DatosSocioEnvio['escolaridad']) ?? null,
     personasEnHogar: numero(f.personasEnHogar),
     tipoHogar: (texto(f.tipoHogar) as DatosSocioEnvio['tipoHogar']) ?? null,
+    religion: texto(f.religion),
+    nacionalidad: texto(f.nacionalidad),
+    lugarTrabajo: texto(f.lugarTrabajo),
   }
 }
 
@@ -292,25 +314,8 @@ export function SociodemografiaBloque({ pacienteId }: { pacienteId: string }) {
       {bloque?.consentimientoOtorgado && !editando && (
         <>
           <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
-            <Dato etiqueta="Nivel de actividad física">
-              {ETIQUETA_ACTIVIDAD[bloque.datos?.nivelActividad ?? ''] ?? '—'}
-            </Dato>
-            <Dato etiqueta="Horas de sueño por noche">
-              {bloque.datos?.horasSueno !== null && bloque.datos?.horasSueno !== undefined
-                ? `${bloque.datos.horasSueno} h`
-                : '—'}
-            </Dato>
-            <Dato etiqueta="Fuma actualmente">
-              {bloque.datos?.tabaco === null || bloque.datos?.tabaco === undefined
-                ? '—'
-                : bloque.datos.tabaco
-                  ? 'Sí'
-                  : 'No'}
-            </Dato>
-            <Dato etiqueta="Consumo de alcohol">
-              {ETIQUETA_ALCOHOL[bloque.datos?.alcohol ?? ''] ?? '—'}
-            </Dato>
             <Dato etiqueta="Ocupación">{bloque.datos?.ocupacion ?? '—'}</Dato>
+            <Dato etiqueta="Lugar de trabajo">{bloque.datos?.lugarTrabajo ?? '—'}</Dato>
             <Dato etiqueta="Escolaridad">
               {ETIQUETA_ESCOLARIDAD[bloque.datos?.escolaridad ?? ''] ?? '—'}
             </Dato>
@@ -318,7 +323,13 @@ export function SociodemografiaBloque({ pacienteId }: { pacienteId: string }) {
             <Dato etiqueta="Tipo de hogar">
               {ETIQUETA_HOGAR[bloque.datos?.tipoHogar ?? ''] ?? '—'}
             </Dato>
+            <Dato etiqueta="Nacionalidad">{bloque.datos?.nacionalidad ?? '—'}</Dato>
+            <Dato etiqueta="Religión">{bloque.datos?.religion ?? '—'}</Dato>
           </dl>
+          <p className="mt-4 text-xs text-muted">
+            Los hábitos —sueño, calidad del descanso y despertares nocturnos— se registran
+            ahora en Valoración → Clínico, junto a la actividad física y las sustancias.
+          </p>
           <p className="mt-4 border-t border-border pt-3 text-xs text-muted">
             Consentimiento registrado el {formatearFecha(bloque.consentimientoFecha)}.
           </p>
@@ -339,52 +350,6 @@ export function SociodemografiaBloque({ pacienteId }: { pacienteId: string }) {
           </label>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Seleccion
-              id="socio-actividad"
-              etiqueta="Nivel de actividad física"
-              valor={form.nivelActividad}
-              opciones={NIVELES_ACTIVIDAD}
-              etiquetas={ETIQUETA_ACTIVIDAD}
-              error={errorCampos['nivelActividad']}
-              onChange={(v) => campo('nivelActividad', v)}
-            />
-
-            <Campo
-              id="socio-sueno"
-              etiqueta="Horas de sueño por noche"
-              {...(errorCampos['horasSueno'] ? { error: errorCampos['horasSueno'] } : {})}
-            >
-              <input
-                id="socio-sueno"
-                type="number"
-                min={1}
-                max={24}
-                value={form.horasSueno}
-                onChange={(e) => campo('horasSueno', e.target.value)}
-                className={claseControl(!!errorCampos['horasSueno'])}
-              />
-            </Campo>
-
-            <Seleccion
-              id="socio-tabaco"
-              etiqueta="Fuma actualmente"
-              valor={form.tabaco}
-              opciones={['true', 'false'] as const}
-              etiquetas={{ true: 'Sí', false: 'No' }}
-              error={errorCampos['tabaco']}
-              onChange={(v) => campo('tabaco', v)}
-            />
-
-            <Seleccion
-              id="socio-alcohol"
-              etiqueta="Consumo de alcohol"
-              valor={form.alcohol}
-              opciones={FRECUENCIAS_ALCOHOL}
-              etiquetas={ETIQUETA_ALCOHOL}
-              error={errorCampos['alcohol']}
-              onChange={(v) => campo('alcohol', v)}
-            />
-
             <Campo
               id="socio-ocupacion"
               etiqueta="Ocupación"
@@ -439,6 +404,61 @@ export function SociodemografiaBloque({ pacienteId }: { pacienteId: string }) {
               error={errorCampos['tipoHogar']}
               onChange={(v) => campo('tipoHogar', v)}
             />
+
+            {/* Texto libre, como la ocupación. Una lista cerrada de
+                religiones o nacionalidades deja fuera a alguien, y lo
+                que queda fuera acaba en «Otro», que no informa de
+                nada. */}
+            <Campo
+              id="socio-trabajo"
+              etiqueta="Lugar de trabajo"
+              {...(errorCampos['lugarTrabajo']
+                ? { error: errorCampos['lugarTrabajo'] }
+                : { ayuda: `${form.lugarTrabajo.length}/120` })}
+            >
+              <input
+                id="socio-trabajo"
+                type="text"
+                maxLength={120}
+                value={form.lugarTrabajo}
+                onChange={(e) => campo('lugarTrabajo', e.target.value)}
+                className={claseControl(!!errorCampos['lugarTrabajo'])}
+              />
+            </Campo>
+
+            <Campo
+              id="socio-nacionalidad"
+              etiqueta="Nacionalidad"
+              {...(errorCampos['nacionalidad']
+                ? { error: errorCampos['nacionalidad'] }
+                : { ayuda: `${form.nacionalidad.length}/60` })}
+            >
+              <input
+                id="socio-nacionalidad"
+                type="text"
+                maxLength={60}
+                value={form.nacionalidad}
+                onChange={(e) => campo('nacionalidad', e.target.value)}
+                className={claseControl(!!errorCampos['nacionalidad'])}
+              />
+            </Campo>
+
+            <Campo
+              id="socio-religion"
+              etiqueta="Religión"
+              {...(errorCampos['religion']
+                ? { error: errorCampos['religion'] }
+                : { ayuda: 'Opcional · útil para restricciones alimentarias' })}
+            >
+              <input
+                id="socio-religion"
+                type="text"
+                maxLength={60}
+                value={form.religion}
+                onChange={(e) => campo('religion', e.target.value)}
+                className={claseControl(!!errorCampos['religion'])}
+              />
+            </Campo>
           </div>
 
           <p className="text-xs text-muted">

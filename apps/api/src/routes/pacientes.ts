@@ -18,6 +18,7 @@ import {
   obtenerDetalle,
   crear,
   actualizar,
+  actualizarNotaProfesional,
   darDeBaja,
   DocumentoDuplicadoError,
   ExpedienteEnCarreraError,
@@ -37,6 +38,13 @@ interface ParamsId {
 interface CuerpoBaja {
   motivo?: string
 }
+
+interface CuerpoNota {
+  notaProfesional?: string | null
+}
+
+/** Tope de la nota del profesional. Generoso, pero no ilimitado. */
+const LIMITE_NOTA = 10_000
 
 function noEncontrado() {
   return { error: 'paciente_no_encontrado', message: 'No se encontró el paciente' }
@@ -180,6 +188,52 @@ export async function registerPacientesRoutes(app: FastifyInstance): Promise<voi
         }
         throw error
       }
+    },
+  )
+
+  /* ---------------------------------------------------------------- */
+  /* PATCH /api/pacientes/:id/nota — nota del profesional (R41)        */
+  /*                                                                   */
+  /* Aparte del PUT del paciente porque se escribe en otro momento y   */
+  /* desde otra pantalla: el PUT exige el paciente completo y validado,*/
+  /* y esto es un textarea al pie del expediente que se guarda solo.   */
+  /* ---------------------------------------------------------------- */
+  app.patch<{ Params: ParamsId; Body: CuerpoNota }>(
+    '/api/pacientes/:id/nota',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { tenantId, sub, roles } = request.auth
+      const { id } = request.params
+      if (!esUuid(id)) return reply.code(404).send(noEncontrado())
+
+      const alcance = await resolverAlcance(tenantId, sub, roles)
+      if (!alcance) return reply.code(403).send(sinProfesional())
+
+      const bruta = request.body?.notaProfesional
+      if (bruta !== undefined && bruta !== null && typeof bruta !== 'string') {
+        return reply.code(400).send({
+          error: 'validacion',
+          message: 'La nota del profesional debe ser texto',
+          errores: [{ campo: 'notaProfesional', mensaje: 'Debe ser texto' }],
+        })
+      }
+      if (typeof bruta === 'string' && bruta.length > LIMITE_NOTA) {
+        return reply.code(400).send({
+          error: 'validacion',
+          message: `La nota no puede superar ${LIMITE_NOTA} caracteres`,
+          errores: [
+            { campo: 'notaProfesional', mensaje: `Máximo ${LIMITE_NOTA} caracteres` },
+          ],
+        })
+      }
+
+      // Vaciar el textarea es borrar la nota: se guarda null, no ''.
+      const nota = typeof bruta === 'string' && bruta.trim() !== '' ? bruta.trim() : null
+
+      const resultado = await actualizarNotaProfesional(tenantId, id, alcance.restringirA, nota)
+      if (!resultado) return reply.code(404).send(noEncontrado())
+
+      return { id, ...resultado }
     },
   )
 

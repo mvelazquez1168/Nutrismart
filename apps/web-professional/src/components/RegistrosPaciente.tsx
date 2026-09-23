@@ -22,6 +22,15 @@ const METRICA: Record<string, string> = {
   presion_arterial: 'Presión arterial',
   glucosa: 'Glucosa',
   otro: 'Otra medida',
+  // Del dispositivo, no del paciente (RPM-01 y RPM-02). Sin etiqueta
+  // aparecía la clave cruda en pantalla: "masa_osea_kg".
+  pasos: 'Pasos',
+  frecuencia_cardiaca: 'Frecuencia cardíaca',
+  sueno_horas: 'Horas de sueño',
+  grasa_pct: 'Grasa corporal',
+  masa_grasa_kg: 'Masa grasa',
+  masa_muscular_kg: 'Masa muscular',
+  masa_osea_kg: 'Masa ósea',
 }
 
 interface Comida {

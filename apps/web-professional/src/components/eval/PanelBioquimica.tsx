@@ -1,15 +1,32 @@
 /**
- * Bioquímica de la valoración — EVAL-02.
+ * Laboratorios de la valoración — EVAL-02, reorganizado en R36.
  *
- * Relee los laboratorios ya cargados; no se capturan valores aquí. Los
- * grupos son los del catálogo de biomarcadores, no una clasificación
- * propia de esta pantalla: así el informe y la valoración hablan de lo
+ * ── Por qué esta sección se llamaba «Bioquímica» ────────────────────
+ *
+ * Nunca fueron dos cosas distintas: esta pantalla ya leía los mismos
+ * estudios de laboratorio del expediente —`/labs/nutricional`—, solo
+ * que filtrados a los marcadores de interés nutricional de los últimos
+ * 90 días. Dos nombres para un dato invitan a buscar en el sitio
+ * equivocado, así que se unifican bajo «Laboratorios».
+ *
+ * Ahora la sección tiene las dos mitades juntas: arriba la lectura
+ * clínica por grupos de biomarcadores, abajo los estudios cargados, con
+ * su descarga y el botón para registrar uno nuevo. Antes eso último
+ * vivía en una pestaña aparte de la ficha y obligaba a salir de la
+ * consulta para subir un PDF que se acababa de recibir.
+ *
+ * Los grupos son los del catálogo de biomarcadores, no una
+ * clasificación propia: así el informe y la valoración hablan de lo
  * mismo.
  */
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { getBioquimica, marcarSeccion, type Bioquimica, type EstadoMarcador } from '../../api/valoracion'
+import { getLaboratorios } from '../../api/laboratorios'
+import type { EstudioLab, SexoBiologico } from '../../api/tipos'
+import { ListaLaboratorios } from '../ListaLaboratorios'
+import { LaboratorioModal } from '../LaboratorioModal'
 
 const COLOR: Record<EstadoMarcador, string> = {
   normal: 'var(--status-normal)',
@@ -50,11 +67,14 @@ export function PanelBioquimica({
   pacienteId,
   consultaId,
   bloqueada,
+  sexoPaciente,
   onGuardado,
 }: {
   pacienteId: string
   consultaId: string
   bloqueada: boolean
+  /** Decide qué rangos se ofrecen al capturar un estudio nuevo. */
+  sexoPaciente: SexoBiologico | null
   onGuardado: () => void | Promise<void>
 }) {
   const [datos, setDatos] = useState<Bioquimica | null>(null)
@@ -62,6 +82,30 @@ export function PanelBioquimica({
   const [abiertos, setAbiertos] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
   const [marcando, setMarcando] = useState(false)
+  // Los estudios cargados, que antes vivían en la pestaña Laboratorios
+  // de la ficha. Se piden aparte de la lectura por marcadores: son la
+  // misma fuente vista de dos maneras, y una puede fallar sin la otra.
+  const [estudios, setEstudios] = useState<EstudioLab[]>([])
+  const [modal, setModal] = useState(false)
+
+  const cargarEstudios = useCallback(
+    (signal?: AbortSignal) =>
+      getLaboratorios(pacienteId, signal)
+        .then((e) => {
+          if (!signal?.aborted) setEstudios(e)
+        })
+        .catch(() => {
+          // Que no se pueda listar los estudios no puede tapar la
+          // lectura de marcadores, que es lo que se mira en consulta.
+        }),
+    [pacienteId],
+  )
+
+  useEffect(() => {
+    const ctrl = new AbortController()
+    void cargarEstudios(ctrl.signal)
+    return () => ctrl.abort()
+  }, [cargarEstudios])
 
   useEffect(() => {
     const ctrl = new AbortController()
@@ -76,7 +120,7 @@ export function PanelBioquimica({
       })
       .catch((e) => {
         if (!ctrl.signal.aborted) {
-          setError(e instanceof ApiError ? e.message : 'No se pudo cargar la bioquímica')
+          setError(e instanceof ApiError ? e.message : 'No se pudieron cargar los laboratorios')
         }
       })
       .finally(() => {
@@ -118,15 +162,33 @@ export function PanelBioquimica({
       >
         <p className="text-sm font-medium text-ink">Sin laboratorios en los últimos 90 días</p>
         <p className="mx-auto mt-1 max-w-md text-sm text-muted">
-          La bioquímica de la valoración se construye con los estudios ya cargados en el
-          expediente; aquí no se capturan valores.
+          La lectura por marcadores se construye con los estudios cargados en el expediente.
+          Se puede registrar uno aquí mismo.
         </p>
-        <Link
-          to={`/pacientes/${pacienteId}`}
-          className="mt-3 inline-block rounded-md border border-border px-4 py-2 text-sm font-medium text-ink hover:bg-surface-2"
-        >
-          Ir a Laboratorios
-        </Link>
+        {!bloqueada && (
+          <button
+            type="button"
+            onClick={() => setModal(true)}
+            className="mt-3 rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
+          >
+            + Registrar laboratorio
+          </button>
+        )}
+        <p className="mt-3 text-xs text-muted">
+          O revisar el <Link to={`/pacientes/${pacienteId}`} className="text-primary hover:underline">expediente completo</Link>.
+        </p>
+
+        <LaboratorioModal
+          abierto={modal}
+          pacienteId={pacienteId}
+          sexoPaciente={sexoPaciente}
+          onCerrar={() => setModal(false)}
+          onGuardado={() => {
+            setModal(false)
+            void cargarEstudios()
+            void onGuardado()
+          }}
+        />
       </div>
     )
   }
@@ -263,6 +325,30 @@ export function PanelBioquimica({
         «Bajo» y «alto» son aritmética contra el rango declarado por la clínica, no un diagnóstico.
       </p>
 
+      {/* ---- Estudios cargados (antes: pestaña Laboratorios) ---- */}
+      <section className="space-y-3 rounded-lg border border-border bg-surface p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="font-semibold text-ink">Estudios cargados</h3>
+            <p className="mt-0.5 text-xs text-muted">
+              {estudios.length === 0
+                ? 'Ninguno todavía.'
+                : `${estudios.length} ${estudios.length === 1 ? 'estudio' : 'estudios'} en el expediente.`}
+            </p>
+          </div>
+          {!bloqueada && (
+            <button
+              type="button"
+              onClick={() => setModal(true)}
+              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
+            >
+              + Registrar laboratorio
+            </button>
+          )}
+        </div>
+        {estudios.length > 0 && <ListaLaboratorios estudios={estudios} />}
+      </section>
+
       {!bloqueada && (
         <div className="flex justify-end">
           <button
@@ -271,10 +357,24 @@ export function PanelBioquimica({
             disabled={marcando}
             className="rounded-md bg-primary px-5 py-2 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-60"
           >
-            {marcando ? 'Guardando…' : 'Marcar bioquímica revisada'}
+            {marcando ? 'Guardando…' : 'Marcar laboratorios revisados'}
           </button>
         </div>
       )}
+
+      <LaboratorioModal
+        abierto={modal}
+        pacienteId={pacienteId}
+        sexoPaciente={sexoPaciente}
+        onCerrar={() => setModal(false)}
+        onGuardado={() => {
+          setModal(false)
+          // Recargar las dos mitades: un estudio nuevo cambia la lista y
+          // puede cambiar la lectura por marcadores.
+          void cargarEstudios()
+          void onGuardado()
+        }}
+      />
     </div>
   )
 }

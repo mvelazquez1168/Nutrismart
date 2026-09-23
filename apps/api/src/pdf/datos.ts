@@ -47,7 +47,7 @@ export interface PlanDatos {
   objetivo: string | null
   fechaInicio: string | null
   fechaFin: string | null
-  dias: Record<string, { tipoComida: string; descripcion: string; caloriasKcal: number | null }[]>
+  comidas: { tipoComida: string; patron: string | null; ejemploMenu: string | null }[]
 }
 
 export interface SocioDatos {
@@ -55,6 +55,9 @@ export interface SocioDatos {
   horasSueno: number | null
   tabaco: boolean | null
   alcohol: string | null
+  calificacionDescanso: number | null
+  vecesDespiertaNoche: number | null
+  notasHabitos: string | null
   ocupacion: string | null
   escolaridad: string | null
   personasEnHogar: number | null
@@ -204,37 +207,30 @@ export async function recopilarDatos(opciones: {
     const cabecera = planes[0]
     if (cabecera) {
       const { rows: comidas } = await pool.query<{
-        dia_semana: number
         tipo_comida: string
-        descripcion: string
-        calorias_kcal: number | null
+        patron: string | null
+        ejemplo_menu: string | null
       }>(
         // El ORDER BY va contra la columna del enum, no contra el alias
         // ::text: con el alias ordena alfabéticamente y el almuerzo sale
         // antes que el desayuno.
-        `select pc.dia_semana, pc.tipo_comida::text as tipo_comida,
-                pc.descripcion, pc.calorias_kcal
+        `select pc.tipo_comida::text as tipo_comida, pc.patron, pc.ejemplo_menu
            from plan_comida pc
           where pc.plan_id = $1 and pc.clinica_id = $2
-          order by pc.dia_semana, pc.tipo_comida`,
+          order by pc.tipo_comida`,
         [cabecera.id, tenantId],
       )
-
-      const dias: PlanDatos['dias'] = {}
-      for (const c of comidas) {
-        ;(dias[String(c.dia_semana)] ??= []).push({
-          tipoComida: c.tipo_comida,
-          descripcion: c.descripcion,
-          caloriasKcal: c.calorias_kcal,
-        })
-      }
 
       plan = {
         nombre: cabecera.nombre,
         objetivo: cabecera.objetivo,
         fechaInicio: cabecera.fecha_inicio,
         fechaFin: cabecera.fecha_fin,
-        dias,
+        comidas: comidas.map((c) => ({
+          tipoComida: c.tipo_comida,
+          patron: c.patron,
+          ejemploMenu: c.ejemplo_menu,
+        })),
       }
     }
   }
@@ -256,7 +252,8 @@ export async function recopilarDatos(opciones: {
       // promesa hecha al paciente no puede depender de un `if` en la
       // capa de presentación.
       `select nivel_actividad::text as nivel_actividad, horas_sueno, tabaco,
-              alcohol::text as alcohol, ocupacion, escolaridad::text as escolaridad,
+              alcohol::text as alcohol, calificacion_descanso, veces_despierta_noche,
+              notas_habitos, ocupacion, escolaridad::text as escolaridad,
               personas_en_hogar, tipo_hogar::text as tipo_hogar
          from paciente_sociodemografico
         where paciente_id = $1 and clinica_id = $2 and consentimiento_otorgado = true`,
@@ -269,6 +266,9 @@ export async function recopilarDatos(opciones: {
         horasSueno: (s['horas_sueno'] as number | null) ?? null,
         tabaco: (s['tabaco'] as boolean | null) ?? null,
         alcohol: (s['alcohol'] as string | null) ?? null,
+        calificacionDescanso: (s['calificacion_descanso'] as number | null) ?? null,
+        vecesDespiertaNoche: (s['veces_despierta_noche'] as number | null) ?? null,
+        notasHabitos: (s['notas_habitos'] as string | null) ?? null,
         ocupacion: (s['ocupacion'] as string | null) ?? null,
         escolaridad: (s['escolaridad'] as string | null) ?? null,
         personasEnHogar: (s['personas_en_hogar'] as number | null) ?? null,

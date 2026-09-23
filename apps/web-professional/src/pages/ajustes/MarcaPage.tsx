@@ -11,6 +11,7 @@ import { apiDelete, apiPut, apiUpload, API_BASE, ApiError } from '../../api/clie
 import { Campo, claseControl } from '../../components/Campo'
 import { useBrand, urlLogo, type Brand } from '../../contexts/BrandContext'
 import { contraste, esHex } from '../../lib/color'
+import { PaletaSelector } from '../../components/PaletaSelector'
 
 /**
  * Umbral AA de la WCAG para texto normal. Los botones de la aplicación
@@ -197,22 +198,46 @@ export function MarcaPage() {
             />
           </Campo>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <SelectorColor
-              id="color-primario"
-              etiqueta="Color primario"
-              ayuda="Botones, enlaces y elementos activos"
-              valor={primario}
-              onChange={setPrimario}
-            />
-            <SelectorColor
-              id="color-acento"
-              etiqueta="Color de acento"
-              ayuda="Realces secundarios"
-              valor={acento}
-              onChange={setAcento}
+          {/* Las paletas primero. Elegir de una lista verificada es lo
+              que evita el caso real: un color de marca precioso sobre el
+              que el texto blanco no se lee. */}
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-muted">Paleta</p>
+            <PaletaSelector
+              primarioActual={primario}
+              onSeleccionar={(pal) => {
+                setPrimario(pal.primario)
+                setAcento(pal.acento)
+              }}
             />
           </div>
+
+          {/* El color propio NO se quita. La regla del proyecto admite
+              las dos vías —paleta curada o color inyectado— y hay
+              clínicas con un manual de marca que cumplir. Va plegado
+              porque es el camino menos frecuente y el que puede salir
+              mal; el aviso de contraste de abajo sigue vigilándolo. */}
+          <details className="rounded-md border border-border p-3">
+            <summary className="cursor-pointer text-xs font-medium text-muted">
+              Usar los colores exactos de mi marca
+            </summary>
+            <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <SelectorColor
+                id="color-primario"
+                etiqueta="Color primario"
+                ayuda="Botones, enlaces y elementos activos"
+                valor={primario}
+                onChange={setPrimario}
+              />
+              <SelectorColor
+                id="color-acento"
+                etiqueta="Color de acento"
+                ayuda="Realces secundarios"
+                valor={acento}
+                onChange={setAcento}
+              />
+            </div>
+          </details>
         </div>
 
         {/* ---- Logo ---- */}

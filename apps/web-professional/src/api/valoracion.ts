@@ -1,9 +1,15 @@
 /** Valoración ABCD — EVAL-00, EVAL-01, EVAL-02. */
 import { apiGet, apiPost, apiPut } from './client'
+import type { DatosCalculadora } from '../lib/calculadoraNutricion'
 
 export const SECCIONES = [
   { clave: 'antrop', etiqueta: 'Antropometría' },
-  { clave: 'bioquim', etiqueta: 'Bioquímica' },
+  // La clave sigue siendo 'bioquim': la valida el servidor
+  // (routes/consultas.ts) y está escrita en las filas de
+  // `consulta_seccion` ya guardadas. Cambiarla obligaría a migrar datos
+  // para renombrar una etiqueta. Lo que ve el profesional es
+  // «Laboratorios», que es lo que la sección enseña de verdad.
+  { clave: 'bioquim', etiqueta: 'Laboratorios' },
   { clave: 'clinico', etiqueta: 'Clínico' },
   { clave: 'dietetico', etiqueta: 'Dietético' },
   { clave: 'conclusion', etiqueta: 'Conclusiones' },
@@ -148,16 +154,44 @@ export function getBioquimica(
 /* Conclusiones (EVAL-05)                                              */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Lo que se puede marcar en la prescripción.
+ *
+ * Agrupadas, porque quince fichas seguidas sin orden se leen peor que
+ * cuatro: primero el tipo de dieta —densidad calórica, fibra, proteína—
+ * y después las exclusiones.
+ */
 export const RESTRICCIONES = [
+  { clave: 'hipocalorica', etiqueta: 'Hipocalórica' },
+  { clave: 'normocalorica', etiqueta: 'Normocalórica' },
+  { clave: 'hipercalorica', etiqueta: 'Hipercalórica' },
+  { clave: 'hiperproteica', etiqueta: 'Hiperproteica' },
+  { clave: 'normoproteica', etiqueta: 'Normoproteica' },
+  { clave: 'hipoproteica', etiqueta: 'Hipoproteica' },
+  { clave: 'alta_fibra', etiqueta: 'Alta en fibra' },
+  { clave: 'fibra_soluble', etiqueta: 'Fibra soluble' },
+  { clave: 'fibra_insoluble', etiqueta: 'Fibra insoluble' },
   { clave: 'sin_gluten', etiqueta: 'Sin gluten' },
   { clave: 'sin_lactosa', etiqueta: 'Sin lactosa' },
   { clave: 'bajo_sodio', etiqueta: 'Bajo en sodio' },
   { clave: 'bajo_grasa', etiqueta: 'Bajo en grasas' },
-  { clave: 'diabetica', etiqueta: 'Diabética' },
   { clave: 'vegetariana', etiqueta: 'Vegetariana' },
   { clave: 'vegana', etiqueta: 'Vegana' },
-  { clave: 'renal', etiqueta: 'Renal' },
 ] as const
+
+/**
+ * Ya no se ofrecen, pero pueden venir guardadas.
+ *
+ * «Diabética» y «Renal» salieron del menú en la R37. Una conclusión
+ * anterior puede tenerlas, y el servidor las sigue aceptando para no
+ * borrarlas al reguardar. Aquí están solo para poder PINTARLAS con su
+ * nombre: sin esto aparecería la clave cruda, «renal», en el
+ * expediente.
+ */
+export const RESTRICCIONES_RETIRADAS: Record<string, string> = {
+  diabetica: 'Diabética',
+  renal: 'Renal',
+}
 
 /** Diagnósticos nutricionales frecuentes, con su código CIE-10. */
 export const DIAGNOSTICOS = [
@@ -198,6 +232,7 @@ export interface Conclusion {
   diagnosticoCie10: string | null
   diagnosticoSecundario: string | null
   observacionesClinicas: string | null
+  objetivos: string | null
   recomendaciones: string[]
   kcalPrescritas: number | null
   pctProteina: number | null
@@ -212,6 +247,8 @@ export interface Conclusion {
   pesoObjetivo: number | null
   fechaObjetivoPeso: string | null
   acuerdos: Acuerdo[]
+  /** Bloque persistido de la calculadora (R39); null si nunca se aplicó. */
+  datosCalculadora: DatosCalculadora | null
 }
 
 export function getConclusion(

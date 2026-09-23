@@ -133,12 +133,70 @@ export function contraste(hexA: string, hexB: string): number {
   return (claro + 0.05) / (oscuro + 0.05)
 }
 
-/** Los cuatro valores que BrandContext escribe en :root. */
+/**
+ * Fondo de la navegación: el color de marca, oscurecido lo justo.
+ *
+ * ── El problema ─────────────────────────────────────────────────────
+ *
+ * Desde que las barras se visten con el color de la clínica, ese color
+ * pasa a ser el fondo de la navegación entera y el texto blanco encima
+ * deja de ser gratis. Tres de las ocho paletas del propio design system
+ * no llegan al 4.5:1 que pide WCAG AA para texto normal: teal-fresco
+ * (3.68:1), esmeralda (3.77:1) y ámbar (3.19:1). Y la clínica puede
+ * inyectar cualquier color, así que la lista no se cierra nunca.
+ *
+ * ── Por qué se toca el fondo y no la tinta ──────────────────────────
+ *
+ * Hay dos formas de arreglarlo: oscurecer el texto donde el blanco no
+ * llega, o oscurecer el fondo hasta que llegue. Se elige la segunda.
+ * Una barra de navegación que cambia de color de letra según la clínica
+ * se lee como un fallo, y el texto blanco sobre color es lo que
+ * cualquiera espera de una barra. Oscurecer el fondo mantiene el blanco
+ * en todas partes y el tono de la marca intacto.
+ *
+ * ── Cómo ────────────────────────────────────────────────────────────
+ *
+ * Se escala hacia el negro en pasos del 2 % hasta alcanzar el contraste.
+ * Escalar los tres canales por el mismo factor conserva el TONO exacto
+ * —lo que define el tono son las proporciones entre canales, y una
+ * multiplicación no las cambia—, a diferencia de restar una cantidad
+ * fija a cada uno, que desatura. Termina siempre: en el peor caso llega
+ * al negro, que contrasta 21:1.
+ *
+ * En la práctica apenas se nota. Cinco de las ocho paletas salen
+ * intactas; teal pasa de #0891B2 a #07809D. Solo un color de partida muy
+ * claro cambia de verdad —un amarillo #FFE066 acaba en un oliva—, y ahí
+ * no hay alternativa: sobre amarillo claro el blanco no se lee.
+ */
+const CONTRASTE_MINIMO = 4.5
+
+function escalar(hex: string, k: number): string {
+  const dos = (n: number) =>
+    Math.round(Math.min(255, Math.max(0, n)))
+      .toString(16)
+      .padStart(2, '0')
+  const r = parseInt(hex.slice(1, 3), 16) * k
+  const g = parseInt(hex.slice(3, 5), 16) * k
+  const b = parseInt(hex.slice(5, 7), 16) * k
+  return `#${dos(r)}${dos(g)}${dos(b)}`
+}
+
+export function fondoNav(colorPrimario: string): string {
+  for (let k = 1; k > 0.04; k -= 0.02) {
+    const candidato = escalar(colorPrimario, k)
+    if (contraste('#FFFFFF', candidato) >= CONTRASTE_MINIMO) return candidato
+  }
+  return '#000000'
+}
+
+/** Los valores que BrandContext escribe en :root. */
 export interface PaletaMarca {
   primary: string
   primaryHover: string
   primaryTint: string
   ring: string
+  /** Fondo de las barras de navegación. Ver fondoNav(). */
+  nav: string
 }
 
 export function derivarPaleta(colorPrimario: string): PaletaMarca {
@@ -147,5 +205,6 @@ export function derivarPaleta(colorPrimario: string): PaletaMarca {
     primaryHover: ajustarLuz(colorPrimario, -0.12),
     primaryTint: conLuz(colorPrimario, 0.93),
     ring: rgba(colorPrimario, 0.35),
+    nav: fondoNav(colorPrimario),
   }
 }

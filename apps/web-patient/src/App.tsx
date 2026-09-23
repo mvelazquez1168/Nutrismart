@@ -6,6 +6,9 @@ import { Plan } from './pages/Plan'
 import { Citas } from './pages/Citas'
 import { Registros } from './pages/Registros'
 import { Progreso } from './pages/Progreso'
+import { Biblioteca, RecursoDetalle } from './pages/Biblioteca'
+import { Perfil } from './pages/Perfil'
+import { Dispositivos } from './pages/Dispositivos'
 
 export function App() {
   return (
@@ -17,6 +20,10 @@ export function App() {
         <Route path="/citas" element={<Citas />} />
         <Route path="/registros" element={<Registros />} />
         <Route path="/progreso" element={<Progreso />} />
+        <Route path="/biblioteca" element={<Biblioteca />} />
+        <Route path="/biblioteca/:id" element={<RecursoDetalle />} />
+        <Route path="/perfil" element={<Perfil />} />
+        <Route path="/dispositivos" element={<Dispositivos />} />
         <Route path="/mensajes" element={<Mensajes />} />
         {/* Cualquier otra ruta va a /activar: si ya hay sesion, esa
             pantalla redirige sola a /inicio. */}

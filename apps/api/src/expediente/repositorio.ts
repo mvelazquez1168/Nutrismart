@@ -41,7 +41,10 @@ export interface SnapshotResumen {
   fecha: string
   estado: string
   profesional: string | null
+  /** Nota de Consulta (la histórica). */
   nota: string | null
+  /** Nota Clínica (R40); va primero en la interfaz. */
+  notaClinica: string | null
   metricas: MetricaValor[]
   corrigeA: string | null
   corregidoPor: SnapshotResumen | null
@@ -261,6 +264,7 @@ interface FilaSnapshot {
   estado: string
   profesional: string | null
   nota: string | null
+  nota_clinica: string | null
   corrige_a_id: string | null
 }
 
@@ -277,11 +281,13 @@ const SQL_SNAPSHOTS = `
     to_char(s.fecha, 'YYYY-MM-DD') as fecha,
     s.estado::text                 as estado,
     prof.nombre                    as profesional,
-    n.texto                        as nota,
+    -- Dos notas por snapshot (R40): subconsultas en vez de join, para no
+    -- duplicar la fila del snapshot por cada tipo de nota.
+    (select texto from clinical_note where snapshot_id = s.id and tipo = 'consulta') as nota,
+    (select texto from clinical_note where snapshot_id = s.id and tipo = 'clinica')  as nota_clinica,
     s.corrige_a_id
   from clinical_snapshot s
   left join profesional  prof on prof.id = s.profesional_id
-  left join clinical_note n    on n.snapshot_id = s.id
   where s.paciente_id = $1 and s.clinica_id = $2
   order by s.fecha desc, s.created_at desc
 `
@@ -341,6 +347,7 @@ export async function obtenerTimeline(
     estado: f.estado,
     profesional: f.profesional,
     nota: f.nota,
+    notaClinica: f.nota_clinica,
     metricas: porSnapshot.get(f.id) ?? [],
     corrigeA: f.corrige_a_id,
     corregidoPor: null,
@@ -419,9 +426,16 @@ async function escribirContenido(
 
   if (datos.nota) {
     await cliente.query(
-      `insert into clinical_note (clinica_id, snapshot_id, profesional_id, texto)
-       values ($1, $2, $3, $4)`,
+      `insert into clinical_note (clinica_id, snapshot_id, profesional_id, texto, tipo)
+       values ($1, $2, $3, $4, 'consulta')`,
       [tenantId, snapshotId, profesionalId, datos.nota],
+    )
+  }
+  if (datos.notaClinica) {
+    await cliente.query(
+      `insert into clinical_note (clinica_id, snapshot_id, profesional_id, texto, tipo)
+       values ($1, $2, $3, $4, 'clinica')`,
+      [tenantId, snapshotId, profesionalId, datos.notaClinica],
     )
   }
 }
@@ -650,8 +664,8 @@ export async function corregirSnapshot(
       [snapshotId, nuevoId],
     )
     await cliente.query(
-      `insert into clinical_note (clinica_id, snapshot_id, profesional_id, texto)
-       select clinica_id, $2, profesional_id, texto
+      `insert into clinical_note (clinica_id, snapshot_id, profesional_id, texto, tipo)
+       select clinica_id, $2, profesional_id, texto, tipo
        from clinical_note where snapshot_id = $1`,
       [snapshotId, nuevoId],
     )

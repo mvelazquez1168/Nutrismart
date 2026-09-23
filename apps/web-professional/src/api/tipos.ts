@@ -43,6 +43,8 @@ export interface PacienteDetalle {
   estado: EstadoPaciente
   estadoClinico: EstadoClinico
   motivoConsulta: string | null
+  /** Nota libre del profesional. Nunca viaja a la app del paciente. R41. */
+  notaProfesional: string | null
   diagnosticos: { descripcion: string }[]
   alergias: { descripcion: string }[]
   nutricionista: string | null
@@ -111,7 +113,10 @@ export interface SnapshotResumen {
   fecha: string
   estado: EstadoSnapshot
   profesional: string | null
+  /** Nota de Consulta (la histórica). */
   nota: string | null
+  /** Nota Clínica (R40); va primero en la interfaz. */
+  notaClinica: string | null
   metricas: MetricaValor[]
   corrigeA: string | null
   /** Versión anterior, anidada bajo la que la reemplaza. */
@@ -134,6 +139,7 @@ export interface DatosSnapshotEnvio {
   fecha: string
   metricas: Record<string, number>
   nota: string | null
+  notaClinica: string | null
 }
 
 /* ---------------------- Rebanada 4 · agenda ---------------------- */
@@ -294,14 +300,27 @@ export const TIPOS_HOGAR = [
 export type TipoHogar = (typeof TIPOS_HOGAR)[number]
 
 export interface DatosSocio {
+  /**
+   * Los tres primeros ya no tienen formulario (R41): se recogen en
+   * Valoración → Clínico. Siguen en el tipo porque hay pacientes con el
+   * dato guardado, el PDF lo imprime, y el PUT reemplaza el bloque
+   * entero — omitirlos al guardar los borraría.
+   */
   nivelActividad: NivelActividad | null
   horasSueno: number | null
   tabaco: boolean | null
   alcohol: FrecuenciaAlcohol | null
+  /** Percepción del descanso, 1 (muy malo) a 10 (excelente). R41. */
+  calificacionDescanso: number | null
+  vecesDespiertaNoche: number | null
+  notasHabitos: string | null
   ocupacion: string | null
   escolaridad: Escolaridad | null
   personasEnHogar: number | null
   tipoHogar: TipoHogar | null
+  religion: string | null
+  nacionalidad: string | null
+  lugarTrabajo: string | null
 }
 
 export interface Sociodemografia {

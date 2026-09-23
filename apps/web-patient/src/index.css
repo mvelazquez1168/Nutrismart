@@ -34,4 +34,14 @@
   .pb-nav {
     padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
   }
+
+  /* Degradado de bienvenida (PAC-09). Los dos extremos los pone el tema
+     elegido en el design system; aqui solo se dice como se dibujan. */
+  .fondo-hero {
+    background-image: linear-gradient(
+      135deg,
+      var(--fondo-desde, var(--surface-2)),
+      var(--fondo-hasta, var(--border))
+    );
+  }
 }

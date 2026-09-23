@@ -20,3 +20,9 @@ datos/
 
 # configuracion local de Claude Code
 .claude/settings.local.json
+
+# Certificados de desarrollo (mkcert). Nunca al repositorio.
+certs/
+
+# CA de mkcert copiada aqui solo para pasarla al movil.
+rootCA.*

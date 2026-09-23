@@ -50,7 +50,7 @@ function mensajeSegunEstado(status: number, delServidor?: string): string {
 }
 
 interface Opciones {
-  metodo?: 'GET' | 'POST' | 'PUT' | 'DELETE'
+  metodo?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   cuerpo?: unknown
   signal?: AbortSignal
 }
@@ -122,6 +122,10 @@ export function apiPost<T>(ruta: string, cuerpo: unknown, signal?: AbortSignal):
 
 export function apiPut<T>(ruta: string, cuerpo: unknown, signal?: AbortSignal): Promise<T> {
   return peticion<T>(ruta, { metodo: 'PUT', cuerpo, ...(signal ? { signal } : {}) })
+}
+
+export function apiPatch<T>(ruta: string, cuerpo: unknown, signal?: AbortSignal): Promise<T> {
+  return peticion<T>(ruta, { metodo: 'PATCH', cuerpo, ...(signal ? { signal } : {}) })
 }
 
 export function apiDelete<T = void>(ruta: string, signal?: AbortSignal): Promise<T> {

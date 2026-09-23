@@ -1,9 +1,9 @@
 /**
- * Plan alimentario semanal — CLI-09.
+ * Plan alimentario — CLI-09 / R38.
  *
- * Un plan es la prescripción de una semana: 7 días × 6 momentos de
- * comida. La rejilla es fija para que el lunes de un plan se pueda
- * comparar con el lunes de otro.
+ * Un plan es un PATRÓN DIARIO: seis tiempos de comida fijos, cada uno con
+ * un «patrón» (qué grupos de alimentos lo componen) y un «ejemplo de
+ * menú» concreto. No hay dimensión semanal ni macros por comida.
  *
  * Ciclo de vida: `borrador` → `activo` → `archivado`. Solo puede haber
  * UN plan activo por paciente, y lo garantiza un índice parcial en la
@@ -26,11 +26,11 @@ import { resolverAlcance, type Alcance } from '../pacientes/acceso.js'
 
 const TIPOS_COMIDA = [
   'desayuno',
-  'media_manana',
+  'merienda_am',
   'almuerzo',
-  'merienda',
+  'merienda_pm',
   'cena',
-  'extra',
+  'colacion_nocturna',
 ] as const
 
 /* ------------------------------------------------------------------ */
@@ -84,16 +84,15 @@ const SQL_PACIENTE_VISIBLE = `
  * alias de salida.
  *
  * Sin el prefijo, Postgres resuelve el nombre contra la columna
- * proyectada —que es `::text`— y ordena alfabéticamente: almuerzo,
- * cena, desayuno… Con el enum ordena por el orden en que se declararon
- * los valores, que es el cronológico del día.
+ * proyectada —que es `::text`— y ordena alfabéticamente. Con el enum
+ * ordena por el orden en que se declararon los valores, que es el
+ * cronológico del día.
  */
 const SQL_COMIDAS = `
-  select pc.id, pc.dia_semana, pc.tipo_comida::text as tipo_comida, pc.descripcion,
-         pc.calorias_kcal, pc.proteinas_g, pc.carbohidratos_g, pc.grasas_g, pc.notas
+  select pc.id, pc.tipo_comida::text as tipo_comida, pc.patron, pc.ejemplo_menu
     from plan_comida pc
    where pc.plan_id = $1
-   order by pc.dia_semana, pc.tipo_comida
+   order by pc.tipo_comida
 `
 
 interface FilaPlan extends Record<string, unknown> {
@@ -124,19 +123,11 @@ function aPlan(f: FilaPlan) {
 }
 
 function aComida(c: Record<string, unknown>) {
-  // numeric llega como string desde pg para no perder precisión; los
-  // macros son cantidades pequeñas y el cliente los quiere como número.
-  const num = (v: unknown) => (v === null || v === undefined ? null : Number(v))
   return {
     id: c['id'] as string,
-    diaSemana: c['dia_semana'] as number,
     tipoComida: c['tipo_comida'] as string,
-    descripcion: c['descripcion'] as string,
-    caloriasKcal: num(c['calorias_kcal']),
-    proteinasG: num(c['proteinas_g']),
-    carbohidratosG: num(c['carbohidratos_g']),
-    grasasG: num(c['grasas_g']),
-    notas: (c['notas'] as string | null) ?? null,
+    patron: (c['patron'] as string | null) ?? null,
+    ejemploMenu: (c['ejemplo_menu'] as string | null) ?? null,
   }
 }
 
@@ -233,14 +224,9 @@ function validarCabecera(cuerpo: unknown, exigirNombre: boolean): {
 }
 
 interface ComidaEntrada {
-  diaSemana: number
   tipoComida: string
-  descripcion: string
-  caloriasKcal: number | null
-  proteinasG: number | null
-  carbohidratosG: number | null
-  grasasG: number | null
-  notas: string | null
+  patron: string | null
+  ejemploMenu: string | null
 }
 
 function validarComidas(
@@ -262,12 +248,6 @@ function validarComidas(
     const c = (crudo ?? {}) as Record<string, unknown>
     const donde = `comidas[${i}]`
 
-    const dia = c['diaSemana']
-    if (typeof dia !== 'number' || !Number.isInteger(dia) || dia < 1 || dia > 7) {
-      errores.push({ campo: `${donde}.diaSemana`, mensaje: 'Debe ser un entero de 1 (lunes) a 7 (domingo)' })
-      return
-    }
-
     const tipo = c['tipoComida']
     if (typeof tipo !== 'string' || !TIPOS_COMIDA.includes(tipo as (typeof TIPOS_COMIDA)[number])) {
       errores.push({ campo: `${donde}.tipoComida`, mensaje: `Debe ser uno de: ${TIPOS_COMIDA.join(', ')}` })
@@ -275,50 +255,37 @@ function validarComidas(
     }
 
     // La restricción UNIQUE de la base lo impediría igual, pero un
-    // duplicado dentro del mismo envío es un error del cliente y
-    // merece un mensaje que diga qué celda, no un choque de índice.
-    const clave = `${dia}_${tipo}`
-    if (vistas.has(clave)) {
-      errores.push({ campo: donde, mensaje: 'Hay dos comidas para el mismo día y momento' })
+    // duplicado dentro del mismo envío es un error del cliente y merece
+    // un mensaje que diga qué tiempo de comida, no un choque de índice.
+    if (vistas.has(tipo)) {
+      errores.push({ campo: donde, mensaje: 'Hay dos entradas para el mismo tiempo de comida' })
       return
     }
-    vistas.add(clave)
+    vistas.add(tipo)
 
-    const desc = typeof c['descripcion'] === 'string' ? c['descripcion'].trim() : ''
-    if (desc.length === 0) {
-      errores.push({ campo: `${donde}.descripcion`, mensaje: 'La descripción es obligatoria' })
-      return
-    }
-    if (desc.length > 1000) {
-      errores.push({ campo: `${donde}.descripcion`, mensaje: 'No puede superar 1000 caracteres' })
-      return
-    }
-
-    /** Los macros son opcionales; si vienen, tienen que ser números válidos. */
-    function macro(campo: string, min: number, entero = false): number | null {
+    /** Texto opcional de hasta 1000; '' se normaliza a null. */
+    function texto(campo: string): string | null {
       const v = c[campo]
       if (v === undefined || v === null || v === '') return null
-      const n = Number(v)
-      if (!Number.isFinite(n) || n < min || (entero && !Number.isInteger(n))) {
-        errores.push({
-          campo: `${donde}.${campo}`,
-          mensaje: entero ? `Debe ser un entero mayor que ${min - 1}` : `Debe ser un número >= ${min}`,
-        })
+      if (typeof v !== 'string') {
+        errores.push({ campo: `${donde}.${campo}`, mensaje: 'Debe ser texto' })
         return null
       }
-      return n
+      const limpio = v.trim()
+      if (limpio.length > 1000) {
+        errores.push({ campo: `${donde}.${campo}`, mensaje: 'No puede superar 1000 caracteres' })
+        return null
+      }
+      return limpio === '' ? null : limpio
     }
 
-    comidas.push({
-      diaSemana: dia,
-      tipoComida: tipo,
-      descripcion: desc,
-      caloriasKcal: macro('caloriasKcal', 1, true),
-      proteinasG: macro('proteinasG', 0),
-      carbohidratosG: macro('carbohidratosG', 0),
-      grasasG: macro('grasasG', 0),
-      notas: typeof c['notas'] === 'string' && c['notas'].trim() !== '' ? c['notas'].trim() : null,
-    })
+    const patron = texto('patron')
+    const ejemploMenu = texto('ejemploMenu')
+
+    // Una fila totalmente vacía es «sin prescribir»: no se guarda.
+    if (patron === null && ejemploMenu === null) return
+
+    comidas.push({ tipoComida: tipo, patron, ejemploMenu })
   })
 
   if (errores.length > 0) return { ok: false, errores }
@@ -386,10 +353,15 @@ export async function registerPlanesRoutes(app: FastifyInstance): Promise<void> 
         `select ${CAMPOS_PLAN}, pa.paciente_id
            from plan_alimentario pa
           where pa.clinica_id = $1 and pa.paciente_id = $2
-          order by
-            -- El activo primero: es el que el paciente sigue hoy.
-            case pa.estado when 'activo' then 0 when 'borrador' then 1 else 2 end,
-            pa.created_at desc`,
+          -- Orden cronológico inverso, del más reciente al más antiguo
+          -- (R41): la pestaña es el HISTÓRICO de planes y una lista que
+          -- reordena por estado deja de leerse como una línea de tiempo.
+          -- Cuál rige hoy sigue diciéndolo el chip «Activo».
+          --
+          -- La fecha de prescripción es fecha_inicio cuando la hay; un
+          -- borrador sin fechas se ordena por cuándo se creó.
+          order by coalesce(pa.fecha_inicio, pa.created_at::date) desc,
+                   pa.created_at desc`,
         [tenantId, id],
       )
       return reply.send(rows.map(aPlan))
@@ -461,16 +433,11 @@ export async function registerPlanesRoutes(app: FastifyInstance): Promise<void> 
       if (!plan) return reply.code(404).send(noEncontradoPlan())
 
       const { rows } = await pool.query(SQL_COMIDAS, [plan.id])
+      // Lista plana ordenada por tiempo de comida: el cliente reconstruye
+      // las seis filas fijas rellenando las que falten.
+      const comidas = rows.map(aComida)
 
-      // Agrupadas por día: la rejilla se pinta por columnas y así el
-      // cliente no tiene que reagrupar 42 celdas en cada render.
-      const dias: Record<string, ReturnType<typeof aComida>[]> = {}
-      for (const c of rows) {
-        const clave = String(c['dia_semana'])
-        ;(dias[clave] ??= []).push(aComida(c))
-      }
-
-      return reply.send({ ...aPlan(plan), pacienteId: plan.paciente_id, dias })
+      return reply.send({ ...aPlan(plan), pacienteId: plan.paciente_id, comidas })
     },
   )
 
@@ -563,10 +530,10 @@ export async function registerPlanesRoutes(app: FastifyInstance): Promise<void> 
       /*
        * Borrar e insertar dentro de UNA transacción.
        *
-       * El cliente envía la rejilla entera, así que el reemplazo total
-       * es la operación honesta: una celda que el profesional vació
-       * tiene que desaparecer. Fuera de transacción, un fallo a mitad
-       * dejaría el plan con media semana.
+       * El cliente envía el patrón entero, así que el reemplazo total es
+       * la operación honesta: un tiempo de comida que el profesional
+       * vació tiene que desaparecer. Fuera de transacción, un fallo a
+       * mitad dejaría el plan con medio patrón.
        */
       const cliente = await pool.connect()
       try {
@@ -576,21 +543,9 @@ export async function registerPlanesRoutes(app: FastifyInstance): Promise<void> 
         for (const c of v.comidas) {
           await cliente.query(
             `insert into plan_comida
-               (clinica_id, plan_id, dia_semana, tipo_comida, descripcion,
-                calorias_kcal, proteinas_g, carbohidratos_g, grasas_g, notas)
-             values ($1,$2,$3,$4::tipo_comida,$5,$6,$7,$8,$9,$10)`,
-            [
-              tenantId,
-              plan.id,
-              c.diaSemana,
-              c.tipoComida,
-              c.descripcion,
-              c.caloriasKcal,
-              c.proteinasG,
-              c.carbohidratosG,
-              c.grasasG,
-              c.notas,
-            ],
+               (clinica_id, plan_id, tipo_comida, patron, ejemplo_menu)
+             values ($1,$2,$3::tiempo_comida_plan,$4,$5)`,
+            [tenantId, plan.id, c.tipoComida, c.patron, c.ejemploMenu],
           )
         }
         await cliente.query('commit')

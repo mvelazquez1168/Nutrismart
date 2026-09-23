@@ -1,29 +1,23 @@
-/** Plan alimentario semanal — CLI-09. */
+/** Plan alimentario — CLI-09 / R38: patrón diario de seis tiempos fijos. */
 import { apiDelete, apiGet, apiPost, apiPut } from './client'
 
 export type EstadoPlan = 'borrador' | 'activo' | 'archivado'
 
+/**
+ * Los seis tiempos del día, en orden cronológico. Fijos: un plan es este
+ * patrón, con o sin contenido en cada franja. Las claves coinciden con el
+ * enum `tipo_comida` de la base (sin acentos ni eñes).
+ */
 export const TIPOS_COMIDA = [
   { clave: 'desayuno', etiqueta: 'Desayuno' },
-  { clave: 'media_manana', etiqueta: 'Media mañana' },
+  { clave: 'merienda_am', etiqueta: 'Merienda AM' },
   { clave: 'almuerzo', etiqueta: 'Almuerzo' },
-  { clave: 'merienda', etiqueta: 'Merienda' },
+  { clave: 'merienda_pm', etiqueta: 'Merienda PM' },
   { clave: 'cena', etiqueta: 'Cena' },
-  { clave: 'extra', etiqueta: 'Extra' },
+  { clave: 'colacion_nocturna', etiqueta: 'Colación nocturna' },
 ] as const
 
 export type TipoComida = (typeof TIPOS_COMIDA)[number]['clave']
-
-/** 1 = lunes … 7 = domingo (ISO-8601), igual que en la base. */
-export const DIAS = [
-  { numero: 1, corto: 'Lun', largo: 'Lunes' },
-  { numero: 2, corto: 'Mar', largo: 'Martes' },
-  { numero: 3, corto: 'Mié', largo: 'Miércoles' },
-  { numero: 4, corto: 'Jue', largo: 'Jueves' },
-  { numero: 5, corto: 'Vie', largo: 'Viernes' },
-  { numero: 6, corto: 'Sáb', largo: 'Sábado' },
-  { numero: 7, corto: 'Dom', largo: 'Domingo' },
-] as const
 
 export interface Plan {
   id: string
@@ -40,27 +34,21 @@ export interface Plan {
 
 export interface ComidaPlan {
   id: string
-  diaSemana: number
   tipoComida: TipoComida
-  descripcion: string
-  caloriasKcal: number | null
-  proteinasG: number | null
-  carbohidratosG: number | null
-  grasasG: number | null
-  notas: string | null
+  patron: string | null
+  ejemploMenu: string | null
 }
 
 export interface PlanDetalle extends Plan {
   pacienteId: string
-  /** Clave = día como cadena ('1'…'7'). Días sin comidas no aparecen. */
-  dias: Record<string, ComidaPlan[]>
+  /** Lista plana ordenada por tiempo de comida. Franjas sin contenido no aparecen. */
+  comidas: ComidaPlan[]
 }
 
 export interface ComidaEnvio {
-  diaSemana: number
   tipoComida: TipoComida
-  descripcion: string
-  caloriasKcal?: number | null
+  patron: string | null
+  ejemploMenu: string | null
 }
 
 export interface DatosPlanEnvio {

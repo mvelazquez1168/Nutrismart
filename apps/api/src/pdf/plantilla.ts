@@ -13,23 +13,13 @@
  */
 import type { DatosPDF, Seccion } from './datos.js'
 
-const DIAS = [
-  { numero: 1, corto: 'Lun' },
-  { numero: 2, corto: 'Mar' },
-  { numero: 3, corto: 'Mié' },
-  { numero: 4, corto: 'Jue' },
-  { numero: 5, corto: 'Vie' },
-  { numero: 6, corto: 'Sáb' },
-  { numero: 7, corto: 'Dom' },
-] as const
-
 const TIPOS = [
   { clave: 'desayuno', etiqueta: 'Desayuno' },
-  { clave: 'media_manana', etiqueta: 'Media mañana' },
+  { clave: 'merienda_am', etiqueta: 'Merienda AM' },
   { clave: 'almuerzo', etiqueta: 'Almuerzo' },
-  { clave: 'merienda', etiqueta: 'Merienda' },
+  { clave: 'merienda_pm', etiqueta: 'Merienda PM' },
   { clave: 'cena', etiqueta: 'Cena' },
-  { clave: 'extra', etiqueta: 'Extra' },
+  { clave: 'colacion_nocturna', etiqueta: 'Colación nocturna' },
 ] as const
 
 const ETIQUETA_ACTIVIDAD: Record<string, string> = {
@@ -129,25 +119,20 @@ function seccionPerfil(d: DatosPDF): string {
 }
 
 function seccionPlan(plan: NonNullable<DatosPDF['plan']>): string {
-  const mapa = new Map<string, { descripcion: string; caloriasKcal: number | null }>()
-  for (const [dia, comidas] of Object.entries(plan.dias)) {
-    for (const c of comidas) mapa.set(`${dia}_${c.tipoComida}`, c)
-  }
+  const mapa = new Map<string, { patron: string | null; ejemploMenu: string | null }>()
+  for (const c of plan.comidas) mapa.set(c.tipoComida, c)
 
-  const filas = TIPOS.filter((t) => DIAS.some((d) => mapa.has(`${d.numero}_${t.clave}`)))
+  const filas = TIPOS.filter((t) => mapa.has(t.clave))
   if (filas.length === 0) return ''
 
   const cuerpo = filas
     .map((t) => {
-      const celdas = DIAS.map((d) => {
-        const c = mapa.get(`${d.numero}_${t.clave}`)
-        if (!c) return '<td class="vacia"></td>'
-        return `<td class="llena">
-          <div>${esc(c.descripcion)}</div>
-          ${c.caloriasKcal ? `<div class="kcal">${esc(c.caloriasKcal)} kcal</div>` : ''}
-        </td>`
-      }).join('')
-      return `<tr><th class="tipo">${esc(t.etiqueta)}</th>${celdas}</tr>`
+      const c = mapa.get(t.clave)!
+      return `<tr>
+        <th class="tipo">${esc(t.etiqueta)}</th>
+        <td class="llena">${c.patron ? esc(c.patron) : ''}</td>
+        <td class="llena">${c.ejemploMenu ? esc(c.ejemploMenu) : ''}</td>
+      </tr>`
     })
     .join('')
 
@@ -166,7 +151,7 @@ function seccionPlan(plan: NonNullable<DatosPDF['plan']>): string {
     ${rango ? `<p class="sub tenue">${esc(rango)}</p>` : ''}
     <table class="plan">
       <thead>
-        <tr><th class="tipo">Comida</th>${DIAS.map((d) => `<th>${d.corto}</th>`).join('')}</tr>
+        <tr><th class="tipo">Tiempo de comida</th><th>Patrón</th><th>Ejemplo de menú</th></tr>
       </thead>
       <tbody>${cuerpo}</tbody>
     </table>
@@ -239,8 +224,17 @@ function seccionSocio(s: NonNullable<DatosPDF['sociodemografico']>): string {
   const filas = [
     filaDato('Nivel de actividad física', s.nivelActividad ? ETIQUETA_ACTIVIDAD[s.nivelActividad] ?? null : null),
     filaDato('Horas de sueño', s.horasSueno !== null ? `${s.horasSueno} h por noche` : null),
+    filaDato(
+      'Calificación del descanso',
+      s.calificacionDescanso !== null ? `${s.calificacionDescanso} de 10` : null,
+    ),
+    filaDato(
+      'Despertares nocturnos',
+      s.vecesDespiertaNoche !== null ? `${s.vecesDespiertaNoche} por noche` : null,
+    ),
     filaDato('Tabaco', s.tabaco === null ? null : s.tabaco ? 'Fumador activo' : 'No fuma'),
     filaDato('Consumo de alcohol', s.alcohol ? ETIQUETA_ALCOHOL[s.alcohol] ?? null : null),
+    filaDato('Notas de hábitos', s.notasHabitos),
     filaDato('Ocupación', s.ocupacion),
     filaDato('Escolaridad', s.escolaridad ? ETIQUETA_ESCOLARIDAD[s.escolaridad] ?? null : null),
     filaDato('Personas en el hogar', s.personasEnHogar !== null ? String(s.personasEnHogar) : null),

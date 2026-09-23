@@ -33,15 +33,32 @@ function navDe(esAdmin: boolean): ItemNav[] {
     },
     { clave: 'pacientes', etiqueta: 'Pacientes', ruta: '/pacientes' },
     { clave: 'agenda', etiqueta: 'Agenda', ruta: '/agenda' },
+    // El seguimiento continuo es de cualquier profesional: cada uno ve
+    // los suyos, y el servidor decide el alcance.
+    { clave: 'monitoreo', etiqueta: 'Monitoreo', ruta: '/monitoreo' },
     { clave: 'mensajeria', etiqueta: 'Mensajería', ruta: '/mensajeria' },
+    { clave: 'recursos', etiqueta: 'Biblioteca', ruta: '/recursos' },
     { clave: 'laboratorios', etiqueta: 'Laboratorios' },
     { clave: 'estrategias', etiqueta: 'Estrategias' },
     // Las reglas son de la clínica, no del administrador: cualquier
     // profesional necesita ver por qué llegan los avisos que recibe.
     { clave: 'reglas', etiqueta: 'Reglas automáticas', ruta: '/notificaciones/reglas' },
+    // Tres entradas de administración, no una: los datos de la clínica,
+    // el equipo y la identidad visual son cosas distintas y se buscan
+    // por separado.
+    {
+      clave: 'clinica',
+      etiqueta: 'Clínica',
+      ...(esAdmin ? { ruta: '/ajustes/clinica' } : {}),
+    },
+    {
+      clave: 'equipo',
+      etiqueta: 'Equipo',
+      ...(esAdmin ? { ruta: '/ajustes/equipo' } : {}),
+    },
     {
       clave: 'configuracion',
-      etiqueta: 'Configuración',
+      etiqueta: 'Marca',
       ...(esAdmin ? { ruta: '/ajustes/marca' } : {}),
     },
   ]
@@ -71,7 +88,14 @@ export function Shell({
 
   return (
     <div className="flex min-h-full">
-      <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface">
+      {/* La navegación se viste con el color de la clínica (APP-BRAND-01).
+          El color y la tinta salen de las variables, nunca de un valor
+          fijo: cambiar la paleta desde Ajustes → Marca se ve al momento,
+          sin recargar. */}
+      <aside
+        className="flex w-60 shrink-0 flex-col text-white"
+        style={{ backgroundColor: 'var(--nav)' }}
+      >
         <div className="flex items-center gap-2 px-5 py-5">
           {logo ? (
             // object-contain y altura fija: un logo apaisado y uno
@@ -83,11 +107,13 @@ export function Shell({
               className="h-9 w-auto max-w-[7rem] object-contain"
             />
           ) : (
-            <span className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-lg font-bold text-white">
+            // Sobre el fondo de marca, la inicial ya no puede ir en
+            // primario: se volvería invisible.
+            <span className="flex h-9 w-9 items-center justify-center rounded-md bg-white/20 text-lg font-bold">
               {brand.nombreApp.trim().charAt(0).toUpperCase() || 'N'}
             </span>
           )}
-          <span className="truncate text-lg font-bold text-ink">{brand.nombreApp}</span>
+          <span className="truncate text-lg font-bold">{brand.nombreApp}</span>
         </div>
 
         <nav className="flex-1 px-3">
@@ -98,9 +124,11 @@ export function Shell({
               if (activo) {
                 return (
                   <li key={item.clave}>
+                    {/* El borde izquierdo se queda: la sección actual no
+                        puede distinguirse solo por el tono del fondo. */}
                     <span
                       aria-current="page"
-                      className="flex items-center gap-2 rounded-md border-l-4 border-primary bg-primary-tint px-3 py-2 text-sm font-semibold text-primary"
+                      className="flex items-center gap-2 rounded-md border-l-4 border-white bg-white/20 px-3 py-2 text-sm font-semibold"
                     >
                       {item.etiqueta}
                     </span>
@@ -113,7 +141,7 @@ export function Shell({
                   <li key={item.clave}>
                     <Link
                       to={item.ruta}
-                      className="flex items-center gap-2 rounded-md px-3 py-2 pl-4 text-sm text-ink transition-colors hover:bg-surface-2"
+                      className="flex items-center gap-2 rounded-md px-3 py-2 pl-4 text-sm text-white/80 transition-colors hover:bg-white/10 hover:text-white"
                     >
                       {item.etiqueta}
                     </Link>
@@ -131,7 +159,7 @@ export function Shell({
                   <span
                     aria-disabled="true"
                     title="Disponible en una rebanada posterior"
-                    className="flex cursor-not-allowed items-center gap-2 rounded-md px-3 py-2 pl-4 text-sm text-muted opacity-60"
+                    className="flex cursor-not-allowed items-center gap-2 rounded-md px-3 py-2 pl-4 text-sm text-white/50"
                   >
                     {item.etiqueta}
                   </span>
@@ -141,20 +169,20 @@ export function Shell({
           </ul>
         </nav>
 
-        <div className="border-t border-border p-4">
+        <div className="border-t border-white/20 p-4">
           <div className="flex items-center gap-3">
-            <span className="flex h-9 w-9 items-center justify-center rounded-pill bg-primary text-xs font-semibold text-white">
+            <span className="flex h-9 w-9 items-center justify-center rounded-pill bg-white/20 text-xs font-semibold">
               {inicialesDe(perfil?.nombre ?? '')}
             </span>
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-ink">{perfil?.nombre}</p>
-              <p className="truncate text-xs text-muted">{perfil?.correo ?? 'Sin correo'}</p>
+              <p className="truncate text-sm font-semibold">{perfil?.nombre}</p>
+              <p className="truncate text-xs text-white/70">{perfil?.correo ?? 'Sin correo'}</p>
             </div>
           </div>
           <button
             type="button"
             onClick={logout}
-            className="mt-3 w-full rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+            className="mt-3 w-full rounded-md border border-white/35 px-3 py-1.5 text-xs font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white"
           >
             Cerrar sesión
           </button>
@@ -162,13 +190,18 @@ export function Shell({
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between gap-4 border-b border-border bg-surface px-6 py-3">
-          <div className="text-sm text-muted">
+        {/* El filo de abajo: sin el, la barra lateral y la superior se
+            funden en un unico bloque de color. */}
+        <header
+          className="flex items-center justify-between gap-4 border-b border-white/20 px-6 py-3 text-white"
+          style={{ backgroundColor: 'var(--nav)' }}
+        >
+          <div className="text-sm text-white/70">
             {nombreClinica ?? <span className="opacity-0">·</span>}
           </div>
           <div className="flex items-center gap-3">
             <NotificacionesCampana />
-            <span className="text-sm font-medium text-ink">{perfil?.nombre}</span>
+            <span className="text-sm font-medium">{perfil?.nombre}</span>
           </div>
         </header>
 

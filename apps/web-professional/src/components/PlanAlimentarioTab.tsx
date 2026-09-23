@@ -1,9 +1,17 @@
 /**
- * Pestaña «Plan alimentario» de la ficha del paciente — CLI-09.
+ * Pestaña «Histórico de Planes Alimentarios» — CLI-09, R41.
  *
- * Lista de planes a la izquierda, plan seleccionado a la derecha. Las
- * acciones disponibles dependen del estado: un archivado no se edita ni
- * se reactiva, porque es el registro de lo que se prescribió.
+ * Lista de planes a la izquierda, del más reciente al más antiguo, y el
+ * plan seleccionado a la derecha. Se abre SIEMPRE en modo consulta: lo
+ * que se hace aquí el 95 % de las veces es mirar qué se prescribió, y
+ * abrir en edición invita a tocar sin querer un plan que ya rige. Editar
+ * es un clic más, deliberado.
+ *
+ * Las acciones disponibles dependen del estado: un archivado no se edita
+ * ni se reactiva, porque es el registro de lo que se prescribió.
+ *
+ * `planInicial` llega por la URL (`?plan=<id>`): la valoración enlaza
+ * aquí para abrir el plan recién creado sin obligar a buscarlo.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError } from '../api/client'
@@ -34,7 +42,14 @@ function fechaLarga(iso: string | null): string | null {
   return `${dia} de ${MESES[mes - 1]} de ${anio}`
 }
 
-export function PlanAlimentarioTab({ pacienteId }: { pacienteId: string }) {
+export function PlanAlimentarioTab({
+  pacienteId,
+  planInicial = null,
+}: {
+  pacienteId: string
+  /** Plan a abrir nada más entrar, si viene señalado desde otra pantalla. */
+  planInicial?: string | null
+}) {
   const [planes, setPlanes] = useState<Plan[]>([])
   const [plan, setPlan] = useState<PlanDetalle | null>(null)
   const [cargando, setCargando] = useState(true)
@@ -69,6 +84,22 @@ export function PlanAlimentarioTab({ pacienteId }: { pacienteId: string }) {
     void cargarLista(ctrl.signal)
     return () => ctrl.abort()
   }, [cargarLista])
+
+  // Plan señalado desde otra pantalla (?plan=…). Se abre en consulta,
+  // como cualquier otro de la lista. Si ya no existe o no es visible, se
+  // calla: la lista sigue ahí y no hay nada que explicar.
+  useEffect(() => {
+    if (!planInicial) return
+    const ctrl = new AbortController()
+    getPlan(planInicial, ctrl.signal)
+      .then((detalle) => {
+        if (ctrl.signal.aborted) return
+        setPlan(detalle)
+        setEditando(false)
+      })
+      .catch(() => {})
+    return () => ctrl.abort()
+  }, [planInicial])
 
   async function abrir(planId: string) {
     setError(null)
@@ -301,7 +332,7 @@ export function PlanAlimentarioTab({ pacienteId }: { pacienteId: string }) {
             {editando ? (
               <PlanEditor
                 planId={plan.id}
-                dias={plan.dias}
+                comidas={plan.comidas}
                 onGuardado={async () => {
                   await abrir(plan.id)
                   setEditando(false)
@@ -309,7 +340,7 @@ export function PlanAlimentarioTab({ pacienteId }: { pacienteId: string }) {
                 onCancelar={() => setEditando(false)}
               />
             ) : (
-              <PlanGrilla dias={plan.dias} />
+              <PlanGrilla comidas={plan.comidas} />
             )}
           </>
         )}

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <title></title>
+  </head>
+  <body>
+    <!--
+      Comprobacion silenciosa de sesion.
+
+      keycloak-js carga esta pagina en un iframe oculto contra Keycloak.
+      Si hay sesion, Keycloak redirige aqui con el codigo en la URL; este
+      script se lo pasa a la ventana padre y la aplicacion arranca ya
+      autenticada, sin que el usuario vea ninguna redireccion.
+
+      Si no hay sesion, el iframe acaba igual pero sin codigo, y la
+      aplicacion muestra su propia pantalla de acceso.
+
+      El segundo argumento de postMessage acota el destino a este mismo
+      origen: sin el, cualquier pagina que embebiera este iframe leeria
+      el codigo de autorizacion.
+    -->
+    <script>
+      parent.postMessage(location.href, location.origin)
+    </script>
+  </body>
+</html>

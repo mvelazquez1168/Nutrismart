@@ -34,6 +34,8 @@ export interface PacienteDetalle {
   estado: string
   estadoClinico: string
   motivoConsulta: string | null
+  /** Nota libre del profesional sobre el paciente. Nunca sale a la app del paciente. R41. */
+  notaProfesional: string | null
   diagnosticos: { descripcion: string }[]
   alergias: { descripcion: string }[]
   nutricionista: string | null
@@ -110,6 +112,7 @@ const SQL_DETALLE = `
     p.estado::text                             as estado,
     p.estado_clinico::text                     as "estadoClinico",
     p.motivo_consulta                          as "motivoConsulta",
+    p.nota_profesional                         as "notaProfesional",
     p.baja_motivo                              as "bajaMotivo",
     to_char(p.baja_fecha at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as "bajaFecha",
     prof.nombre                                as nutricionista
@@ -152,6 +155,7 @@ interface FilaDetalle {
   estado: string
   estadoClinico: string
   motivoConsulta: string | null
+  notaProfesional: string | null
   bajaMotivo: string | null
   bajaFecha: string | null
   nutricionista: string | null
@@ -198,6 +202,7 @@ export async function obtenerDetalle(
     estado: p.estado,
     estadoClinico: p.estadoClinico,
     motivoConsulta: p.motivoConsulta,
+    notaProfesional: p.notaProfesional,
     diagnosticos: diag.rows,
     alergias: alerg.rows,
     nutricionista: p.nutricionista,
@@ -479,6 +484,33 @@ export async function actualizar(
  * Nunca hay DELETE: la fila permanece por trazabilidad clinica y solo
  * deja de aparecer en la lista.
  */
+/**
+ * Guarda la nota del profesional — R41.
+ *
+ * Solo esa columna: la nota se escribe mientras se lee el expediente y
+ * mandar el paciente entero desde ahí arriesga pisar lo que otra
+ * pestaña acabe de cambiar.
+ *
+ * Devuelve null si el paciente no existe, es de otra clínica o queda
+ * fuera del alcance del solicitante; quien llama responde 404 en los
+ * tres casos.
+ */
+export async function actualizarNotaProfesional(
+  tenantId: string,
+  pacienteId: string,
+  restringirA: string | null,
+  nota: string | null,
+): Promise<{ notaProfesional: string | null } | null> {
+  const { rows } = await pool.query<{ notaProfesional: string | null }>(
+    `update paciente set nota_profesional = $3
+     where id = $1 and clinica_id = $2
+       and ($4::uuid is null or nutricionista_id = $4)
+     returning nota_profesional as "notaProfesional"`,
+    [pacienteId, tenantId, nota, restringirA],
+  )
+  return rows[0] ?? null
+}
+
 export async function darDeBaja(
   tenantId: string,
   pacienteId: string,

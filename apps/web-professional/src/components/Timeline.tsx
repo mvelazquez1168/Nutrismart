@@ -183,8 +183,17 @@ export function Timeline({ snapshots, onEditar, onCerrar, onCorregir, ocupado }:
 
             <Metricas snapshot={s} />
 
+            {s.notaClinica && (
+              <div className="mt-3 border-t border-border pt-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted">Nota Clínica</p>
+                <p className="mt-0.5 text-sm text-ink">{s.notaClinica}</p>
+              </div>
+            )}
             {s.nota && (
-              <p className="mt-3 border-t border-border pt-3 text-sm text-ink">{s.nota}</p>
+              <div className={s.notaClinica ? 'mt-3' : 'mt-3 border-t border-border pt-3'}>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted">Nota de Consulta</p>
+                <p className="mt-0.5 text-sm text-ink">{s.nota}</p>
+              </div>
             )}
 
             {/* Enganches de CLI-04 y CLI-05: se anuncian como pendientes en
@@ -214,6 +223,9 @@ export function Timeline({ snapshots, onEditar, onCerrar, onCorregir, ocupado }:
                       <EstadoChip estado={s.corregidoPor.estado} />
                     </div>
                     <Metricas snapshot={s.corregidoPor} />
+                    {s.corregidoPor.notaClinica && (
+                      <p className="mt-2 text-sm text-muted">{s.corregidoPor.notaClinica}</p>
+                    )}
                     {s.corregidoPor.nota && (
                       <p className="mt-2 text-sm text-muted">{s.corregidoPor.nota}</p>
                     )}

@@ -18,7 +18,10 @@ export interface DatosSnapshot {
   fecha: string
   /** codigo de metrica -> valor. Puede venir vacio. */
   metricas: Record<string, number>
+  /** Nota de Consulta (la histórica). */
   nota: string | null
+  /** Nota Clínica (R40). */
+  notaClinica: string | null
 }
 
 export interface ErrorCampo {
@@ -105,13 +108,17 @@ export function validarSnapshot(cuerpo: unknown, catalogo: MetricaCatalogo[]): V
     }
   }
 
-  // --- nota ---
-  const notaRaw = b['nota']
-  const nota = typeof notaRaw === 'string' && notaRaw.trim() !== '' ? notaRaw.trim() : null
+  // --- notas (Consulta y Clínica) ---
+  const texto = (clave: string) => {
+    const v = b[clave]
+    return typeof v === 'string' && v.trim() !== '' ? v.trim() : null
+  }
+  const nota = texto('nota')
+  const notaClinica = texto('notaClinica')
 
   if (errores.length > 0) return { ok: false, errores }
 
   // Un control sin mediciones es válido: puede ser una consulta de
   // seguimiento en la que solo se conversó.
-  return { ok: true, datos: { fecha, metricas, nota } }
+  return { ok: true, datos: { fecha, metricas, nota, notaClinica } }
 }

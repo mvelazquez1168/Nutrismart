@@ -12,7 +12,7 @@ export interface Perfil {
 }
 
 interface AuthState {
-  estado: 'cargando' | 'autenticado' | 'error'
+  estado: 'cargando' | 'autenticado' | 'anonimo' | 'error'
   perfil: Perfil | null
   error: string | null
   logout: () => void
@@ -60,10 +60,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (cancelado) return
 
         if (!autenticado) {
-          // Con onLoad:'login-required' esto no deberia ocurrir: Keycloak
-          // redirige antes. Se contempla por si cambia la estrategia.
-          setError('Keycloak no autentico la sesion')
-          setEstado('error')
+          // Con `check-sso` esto es lo NORMAL, no un error: significa que
+          // no hay sesion todavia y toca ensenar la pantalla de acceso.
+          // Antes, con `login-required`, no se llegaba aqui nunca porque
+          // Keycloak redirigia antes de que la aplicacion arrancase.
+          setEstado('anonimo')
           return
         }
 

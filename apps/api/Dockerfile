@@ -47,6 +47,17 @@ COPY --from=build /repo/apps/api/dist ./apps/api/dist
 COPY apps/api/migrations ./apps/api/migrations
 COPY apps/api/seed ./apps/api/seed
 
+# El almacén de archivos clínicos, creado ANTES de bajar de privilegios.
+#
+# Docker crea el punto de montaje del volumen como root si no existe. La
+# API corre como 'node' (uid 1000) y entonces no puede escribir: la
+# subida falla con EACCES al intentar crear la carpeta de la clínica.
+#
+# Creándolo aquí con el dueño correcto, Docker respeta ese propietario al
+# montar el volumen encima. Afecta a todo lo que sube archivos: informes
+# de laboratorio (R5) y material de la biblioteca (R30).
+RUN mkdir -p /datos/archivos && chown -R node:node /datos
+
 # Sin privilegios de root: la imagen de node ya trae el usuario 'node'.
 USER node
 

@@ -57,7 +57,11 @@ export function PlanCard({
   seleccionado: boolean
   onClick: () => void
 }) {
+  // Fecha de prescripción: la de inicio si el plan la declara; si no
+  // —un borrador que aún no rige—, el día en que se creó. La lista es un
+  // histórico, y un ítem sin fecha no se sitúa en él (R41).
   const desde = fechaCorta(plan.fechaInicio)
+  const creado = fechaCorta(plan.createdAt.slice(0, 10))
 
   return (
     <button
@@ -76,7 +80,9 @@ export function PlanCard({
           <ChipEstadoPlan estado={plan.estado} />
         </span>
       </div>
-      {desde && <p className="mt-1 text-xs text-muted">Desde {desde}</p>}
+      <p className="mt-1 text-xs text-muted">
+        {desde ? `Desde ${desde}` : creado ? `Creado el ${creado}` : 'Sin fecha'}
+      </p>
     </button>
   )
 }

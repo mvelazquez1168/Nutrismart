@@ -45,14 +45,29 @@ const TIPOS_HOGAR = [
 ] as const
 
 interface DatosSocio {
+  /**
+   * Los tres primeros ya no se editan desde ningún formulario (R41).
+   *
+   * Nivel de actividad, tabaco y alcohol se recogen en Valoración →
+   * Clínico, en los bloques «Actividad física» y «Sustancias». Aquí
+   * siguen viajando porque hay pacientes con el dato guardado y el PDF
+   * del expediente lo imprime: se leen, ya no se escriben.
+   */
   nivelActividad: string | null
   horasSueno: number | null
   tabaco: boolean | null
   alcohol: string | null
+  /** Percepción del descanso, 1 (muy malo) a 10 (excelente). R41. */
+  calificacionDescanso: number | null
+  vecesDespiertaNoche: number | null
+  notasHabitos: string | null
   ocupacion: string | null
   escolaridad: string | null
   personasEnHogar: number | null
   tipoHogar: string | null
+  religion: string | null
+  nacionalidad: string | null
+  lugarTrabajo: string | null
 }
 
 interface Fila extends Record<string, unknown> {
@@ -61,10 +76,16 @@ interface Fila extends Record<string, unknown> {
   horas_sueno: number | null
   tabaco: boolean | null
   alcohol: string | null
+  calificacion_descanso: number | null
+  veces_despierta_noche: number | null
+  notas_habitos: string | null
   ocupacion: string | null
   escolaridad: string | null
   personas_en_hogar: number | null
   tipo_hogar: string | null
+  religion: string | null
+  nacionalidad: string | null
+  lugar_trabajo: string | null
   consentimiento_otorgado: boolean | null
   consentimiento_fecha: Date | null
 }
@@ -97,10 +118,16 @@ const CAMPOS_CONTENIDO = [
   'horasSueno',
   'tabaco',
   'alcohol',
+  'calificacionDescanso',
+  'vecesDespiertaNoche',
+  'notasHabitos',
   'ocupacion',
   'escolaridad',
   'personasEnHogar',
   'tipoHogar',
+  'religion',
+  'nacionalidad',
+  'lugarTrabajo',
 ] as const
 
 type Validacion = { ok: true; datos: Entrada } | { ok: false; errores: ErrorCampo[] }
@@ -183,10 +210,21 @@ function validar(cuerpo: unknown): Validacion {
     horasSueno: entero('horasSueno', 1, 24),
     tabaco: booleano('tabaco'),
     alcohol: enumerado('alcohol', FRECUENCIAS_ALCOHOL),
+    calificacionDescanso: entero('calificacionDescanso', 1, 10),
+    // Sin tope superior clínico, pero sí uno que descarte el teclazo:
+    // nadie se despierta cuarenta veces, y aceptarlo ensucia la gráfica.
+    vecesDespiertaNoche: entero('vecesDespiertaNoche', 0, 30),
+    notasHabitos: texto('notasHabitos', 4000),
     ocupacion: texto('ocupacion', 80),
     escolaridad: enumerado('escolaridad', ESCOLARIDADES),
     personasEnHogar: entero('personasEnHogar', 1, 20),
     tipoHogar: enumerado('tipoHogar', TIPOS_HOGAR),
+    // Texto libre, como la ocupación: una lista cerrada de religiones o
+    // nacionalidades deja fuera a alguien, y lo que queda fuera acaba en
+    // «Otro», que no informa de nada.
+    religion: texto('religion', 60),
+    nacionalidad: texto('nacionalidad', 60),
+    lugarTrabajo: texto('lugarTrabajo', 120),
   }
 
   if (errores.length > 0) return { ok: false, errores }
@@ -212,10 +250,16 @@ const SQL_LEER = `
     s.horas_sueno,
     s.tabaco,
     s.alcohol::text,
+    s.calificacion_descanso,
+    s.veces_despierta_noche,
+    s.notas_habitos,
     s.ocupacion,
     s.escolaridad::text,
     s.personas_en_hogar,
     s.tipo_hogar::text,
+    s.religion,
+    s.nacionalidad,
+    s.lugar_trabajo,
     s.consentimiento_otorgado,
     s.consentimiento_fecha
   from paciente p
@@ -229,12 +273,16 @@ const SQL_GUARDAR = `
   insert into paciente_sociodemografico (
     paciente_id, clinica_id,
     nivel_actividad, horas_sueno, tabaco, alcohol,
+    calificacion_descanso, veces_despierta_noche, notas_habitos,
     ocupacion, escolaridad, personas_en_hogar, tipo_hogar,
+    religion, nacionalidad, lugar_trabajo,
     consentimiento_otorgado, consentimiento_profesional_id
   ) values (
     $1, $2,
     $3::nivel_actividad_fisica, $4, $5, $6::frecuencia_alcohol,
+    $17, $18, $19,
     $7, $8::nivel_escolaridad, $9, $10::tipo_hogar,
+    $14, $15, $16,
     $11, case when $11 then $12::uuid else null end
   )
   on conflict (paciente_id) do update set
@@ -261,6 +309,15 @@ const SQL_GUARDAR = `
     alcohol           = case when $13::boolean
                              then excluded.alcohol
                              else paciente_sociodemografico.alcohol end,
+    calificacion_descanso = case when $13::boolean
+                             then excluded.calificacion_descanso
+                             else paciente_sociodemografico.calificacion_descanso end,
+    veces_despierta_noche = case when $13::boolean
+                             then excluded.veces_despierta_noche
+                             else paciente_sociodemografico.veces_despierta_noche end,
+    notas_habitos     = case when $13::boolean
+                             then excluded.notas_habitos
+                             else paciente_sociodemografico.notas_habitos end,
     ocupacion         = case when $13::boolean
                              then excluded.ocupacion
                              else paciente_sociodemografico.ocupacion end,
@@ -273,6 +330,15 @@ const SQL_GUARDAR = `
     tipo_hogar        = case when $13::boolean
                              then excluded.tipo_hogar
                              else paciente_sociodemografico.tipo_hogar end,
+    religion          = case when $13::boolean
+                             then excluded.religion
+                             else paciente_sociodemografico.religion end,
+    nacionalidad      = case when $13::boolean
+                             then excluded.nacionalidad
+                             else paciente_sociodemografico.nacionalidad end,
+    lugar_trabajo     = case when $13::boolean
+                             then excluded.lugar_trabajo
+                             else paciente_sociodemografico.lugar_trabajo end,
     consentimiento_otorgado = excluded.consentimiento_otorgado,
     -- Solo se reasigna cuando se está otorgando. Si ya estaba otorgado,
     -- el registro debe seguir apuntando a quien lo recogió, no a quien
@@ -287,7 +353,9 @@ const SQL_GUARDAR = `
   returning
     paciente_id,
     nivel_actividad::text, horas_sueno, tabaco, alcohol::text,
+    calificacion_descanso, veces_despierta_noche, notas_habitos,
     ocupacion, escolaridad::text, personas_en_hogar, tipo_hogar::text,
+    religion, nacionalidad, lugar_trabajo,
     consentimiento_otorgado, consentimiento_fecha
 `
 
@@ -313,10 +381,16 @@ function aRespuesta(fila: Fila | undefined) {
           horasSueno: fila?.horas_sueno ?? null,
           tabaco: fila?.tabaco ?? null,
           alcohol: fila?.alcohol ?? null,
+          calificacionDescanso: fila?.calificacion_descanso ?? null,
+          vecesDespiertaNoche: fila?.veces_despierta_noche ?? null,
+          notasHabitos: fila?.notas_habitos ?? null,
           ocupacion: fila?.ocupacion ?? null,
           escolaridad: fila?.escolaridad ?? null,
           personasEnHogar: fila?.personas_en_hogar ?? null,
           tipoHogar: fila?.tipo_hogar ?? null,
+          religion: fila?.religion ?? null,
+          nacionalidad: fila?.nacionalidad ?? null,
+          lugarTrabajo: fila?.lugar_trabajo ?? null,
         } satisfies DatosSocio)
       : null,
   }
@@ -411,6 +485,12 @@ export async function registerSociodemograficoRoutes(app: FastifyInstance): Prom
         // la tabla profesional — la clave foránea lo rechazaría.
         alcance.profesionalId,
         d.traeContenido,
+        d.religion,
+        d.nacionalidad,
+        d.lugarTrabajo,
+        d.calificacionDescanso,
+        d.vecesDespiertaNoche,
+        d.notasHabitos,
       ])
 
       return reply.send(aRespuesta(rows[0]))

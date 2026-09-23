@@ -29,6 +29,7 @@ import { registerAntropometriaRoutes } from './routes/antropometria.js'
 import { registerBioquimicaRoutes } from './routes/bioquimica.js'
 import { registerHistorialRoutes } from './routes/historial.js'
 import { registerDieteticoRoutes } from './routes/dietetico.js'
+import { registerRegistroDieteticoRoutes } from './routes/registroDietetico.js'
 import { registerConclusionRoutes } from './routes/conclusion.js'
 import { registerSeguimientoRoutes } from './routes/seguimiento.js'
 import { registerIaRoutes } from './routes/ia.js'
@@ -37,6 +38,16 @@ import { registerPacienteRoutes } from './routes/paciente.js'
 import { registerPacienteMensajeriaRoutes } from './routes/paciente-mensajeria.js'
 import { registerPacienteRegistrosRoutes } from './routes/paciente-registros.js'
 import { registerPacienteProgresoRoutes } from './routes/paciente-progreso.js'
+import { registerAlimentosRoutes } from './routes/alimentos.js'
+import { registerRecursosRoutes } from './routes/recursos.js'
+import { registerBienestarRoutes } from './routes/bienestar.js'
+import { registerRpmRoutes } from './routes/rpm.js'
+import { registerAlertasRoutes } from './routes/alertas.js'
+import { registerEquipoRoutes } from './routes/equipo.js'
+import { registerEstadisticasRoutes } from './routes/estadisticas.js'
+import { registerWearablesRoutes } from './routes/wearables.js'
+import { evaluarAlertas } from './rpm/evaluar-alertas.js'
+import { enviarAlertasPendientes } from './rpm/email-alerta.js'
 import cron from 'node-cron'
 import { correoConfigurado, procesarRecordatorios } from './agenda/recordatorios.js'
 import { cerrarNavegador } from './pdf/generar.js'
@@ -93,11 +104,15 @@ async function start(): Promise<void> {
     // registerAuth declara la propiedad `auth` en el request y tiene que
     // correr sobre la instancia raiz ANTES de registrar cualquier ruta
     // que la use; si no, el decorador no existe cuando llega la peticion.
-    // Origen unico y explicito, no '*'. Esta API responde datos clinicos
-    // con cabecera Authorization; abrirla a cualquier origen permitiria a
-    // otra pagina leer expedientes con el token del usuario.
+    // Lista CERRADA de origenes, no '*'. Esta API responde datos
+    // clinicos con cabecera Authorization; abrirla a cualquier origen
+    // permitiria a otra pagina leer expedientes con el token del usuario.
+    //
+    // Son dos porque son dos aplicaciones: la profesional en 5173 y la
+    // del paciente en 5175. Con un solo origen, la del paciente recibe
+    // un fallo de red en cada peticion.
     await app.register(cors, {
-      origin: config.frontendProUrl,
+      origin: [config.frontendProUrl, config.frontendPacUrl],
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
       allowedHeaders: ['Authorization', 'Content-Type'],
     })
@@ -109,6 +124,28 @@ async function start(): Promise<void> {
     await app.register(multipart, {
       limits: { fileSize: TAMANO_MAXIMO_BYTES, files: 1, fields: 10 },
     })
+
+    /**
+     * Formularios codificados en la URL.
+     *
+     * Solo lo usa el webhook de Withings, que POSTea
+     * `application/x-www-form-urlencoded`. Fastify no trae ese parser y
+     * sin el la peticion falla con 415 antes de llegar a la ruta.
+     *
+     * Se resuelve con seis lineas en vez de anadir @fastify/formbody:
+     * ninguna otra ruta del proyecto usa ese tipo de contenido.
+     */
+    app.addContentTypeParser(
+      'application/x-www-form-urlencoded',
+      { parseAs: 'string' },
+      (_req, cuerpo, hecho) => {
+        try {
+          hecho(null, Object.fromEntries(new URLSearchParams(cuerpo as string)))
+        } catch (e) {
+          hecho(e as Error, undefined)
+        }
+      },
+    )
 
     registerAuth(app)
 
@@ -134,6 +171,7 @@ async function start(): Promise<void> {
     await registerBioquimicaRoutes(app)
     await registerHistorialRoutes(app)
     await registerDieteticoRoutes(app)
+    await registerRegistroDieteticoRoutes(app)
     await registerConclusionRoutes(app)
     await registerSeguimientoRoutes(app)
     await registerIaRoutes(app)
@@ -142,6 +180,14 @@ async function start(): Promise<void> {
     await registerPacienteMensajeriaRoutes(app)
     await registerPacienteRegistrosRoutes(app)
     await registerPacienteProgresoRoutes(app)
+    await registerAlimentosRoutes(app)
+    await registerRecursosRoutes(app)
+    await registerBienestarRoutes(app)
+    await registerRpmRoutes(app)
+    await registerAlertasRoutes(app)
+    await registerEquipoRoutes(app)
+    await registerEstadisticasRoutes(app)
+    await registerWearablesRoutes(app)
 
     // ---- Recordatorios de cita (AGE-03) ----
     //
@@ -159,6 +205,29 @@ async function start(): Promise<void> {
       { correo: correoConfigurado() ? 'resend' : 'consola' },
       'recordatorios de cita: cada 15 minutos',
     )
+
+    // Alertas: una vez al dia, a las 7 de la manana en Costa Rica. El
+    // contenedor corre en UTC, asi que son las 13:00 UTC.
+    //
+    // A esa hora porque lo que se mira son datos del dia anterior y el
+    // profesional lo lee al empezar la consulta. Correr cada hora no
+    // aportaria nada: el paciente no se pesa doce veces al dia, y una
+    // alerta que aparece a las 3 de la madrugada nadie la ve antes.
+    cron.schedule('0 13 * * *', () => {
+      void (async () => {
+        try {
+          const r = await evaluarAlertas()
+          app.log.info(r, 'alertas evaluadas')
+          if (r.abiertas > 0) {
+            const n = await enviarAlertasPendientes()
+            app.log.info({ enviados: n }, 'avisos de alerta enviados')
+          }
+        } catch (err) {
+          app.log.error({ err }, 'fallo evaluando alertas')
+        }
+      })()
+    })
+    app.log.info('alertas de seguimiento: cada dia a las 07:00 (Costa Rica)')
 
     // host 0.0.0.0: dentro de Docker, escuchar solo en localhost dejaria
     // el puerto publicado inalcanzable desde fuera del contenedor.

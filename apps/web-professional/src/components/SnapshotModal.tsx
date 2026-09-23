@@ -47,6 +47,7 @@ export function SnapshotModal({
 
   const [fecha, setFecha] = useState(hoyISO())
   const [valores, setValores] = useState<Record<string, string>>({})
+  const [notaClinica, setNotaClinica] = useState('')
   const [nota, setNota] = useState('')
   const [errores, setErrores] = useState<Record<string, string>>({})
   const [errorGeneral, setErrorGeneral] = useState<string | null>(null)
@@ -70,10 +71,12 @@ export function SnapshotModal({
         v[m.codigo] = String(m.valor)
       }
       setValores(v)
+      setNotaClinica(snapshot.notaClinica ?? '')
       setNota(snapshot.nota ?? '')
     } else {
       setFecha(hoyISO())
       setValores({})
+      setNotaClinica('')
       setNota('')
     }
     setErrores({})
@@ -101,7 +104,12 @@ export function SnapshotModal({
       const n = Number(limpio)
       if (Number.isFinite(n)) metricas[codigo] = n
     }
-    return { fecha, metricas, nota: nota.trim() === '' ? null : nota.trim() }
+    return {
+      fecha,
+      metricas,
+      notaClinica: notaClinica.trim() === '' ? null : notaClinica.trim(),
+      nota: nota.trim() === '' ? null : nota.trim(),
+    }
   }
 
   async function enviar(e: FormEvent, cerrarTambien: boolean) {
@@ -263,8 +271,22 @@ export function SnapshotModal({
           </p>
         </fieldset>
 
+        {/* Nota Clínica primero (R40), luego la Nota de Consulta. */}
         <fieldset disabled={guardando}>
-          <Campo id="nota-control" etiqueta="Nota de la consulta" error={errores['nota']}>
+          <Campo id="nota-clinica" etiqueta="Nota Clínica" error={errores['notaClinica']}>
+            <textarea
+              id="nota-clinica"
+              rows={4}
+              value={notaClinica}
+              onChange={(e) => setNotaClinica(e.target.value)}
+              className={claseControl(Boolean(errores['notaClinica']))}
+              placeholder="Hallazgos clínicos, exploración, impresión diagnóstica…"
+            />
+          </Campo>
+        </fieldset>
+
+        <fieldset disabled={guardando}>
+          <Campo id="nota-control" etiqueta="Nota de Consulta" error={errores['nota']}>
             <textarea
               id="nota-control"
               rows={4}

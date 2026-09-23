@@ -13,6 +13,14 @@
   --primary-tint:   #E7F1EE;
   --on-primary:     #FFFFFF;
 
+  /* Fondo de la navegacion (barras lateral, superior e inferior).
+     Es el color de marca OSCURECIDO lo justo para que el texto blanco
+     que va encima llegue a 4.5:1 (WCAG AA). Con la paleta por defecto
+     no hace falta tocar nada y coincide con --primary; con las claras
+     -teal, esmeralda, ambar- baja un punto. Lo calcula la app al
+     cargar la marca: ver fondoNav() en web-professional/lib/color.ts. */
+  --nav:            #0E7C66;
+
   /* ---- Superficies y texto ---- */
   --background:     #F7FAF9;
   --surface:        #FFFFFF;
@@ -61,6 +69,38 @@
 [data-brand="coral-calido"]{ --primary:#E11D48; --primary-hover:#BE123C; --primary-tint:#FCE8EC; --ring:rgba(225,29,72,.35); }
 [data-brand="ambar"]       { --primary:#D97706; --primary-hover:#B45309; --primary-tint:#FBF0E0; --ring:rgba(217,119,6,.35); }
 [data-brand="grafito"]     { --primary:#334155; --primary-hover:#1E293B; --primary-tint:#EEF1F5; --ring:rgba(51,65,85,.35); }
+
+/* ============================================================
+   Fondos del paciente (PAC-09). Se activan con:
+   <html data-fondo="verde"> …
+
+   NO son paletas de marca y NO tocan --primary: la marca es de la
+   clínica y el fondo es del paciente. Si el fondo pisara --primary,
+   elegir "Calma" convertiría una clínica esmeralda en una azul.
+
+   Cada tema mueve --background (el tinte de página, que ya usan las
+   siete pantallas vía bg-background) y el par --fondo-desde/--fondo-hasta
+   del degradado de bienvenida. Nada más.
+   ============================================================ */
+[data-fondo="verde"]  { --background:#F1F8F4; --fondo-desde:#ECFDF5; --fondo-hasta:#CCFBF1; }
+[data-fondo="azul"]   { --background:#F1F6FB; --fondo-desde:#F0F9FF; --fondo-hasta:#DBEAFE; }
+[data-fondo="morado"] { --background:#F5F3FB; --fondo-desde:#F5F3FF; --fondo-hasta:#EDE9FE; }
+[data-fondo="salmon"] { --background:#FDF4F3; --fondo-desde:#FFF1F2; --fondo-hasta:#FFEDD5; }
+[data-fondo="cafe"]   { --background:#FBF7F0; --fondo-desde:#FFFBEB; --fondo-hasta:#FEF3C7; }
+
+/* El neutro es el de fábrica; se declara igualmente para que quitar la
+   elección sea poner data-fondo="neutro" y no borrar el atributo. */
+[data-fondo="neutro"] { --background:#F7FAF9; --fondo-desde:#F4F6F5; --fondo-hasta:#E6ECEA; }
+
+/* "Noche" no es un degradado oscuro con tarjetas blancas encima: eso
+   sería ilegible. Es el modo oscuro completo, con sus superficies y su
+   tinta invertidas. */
+[data-fondo="noche"] {
+  --background:#0E1613; --surface:#141C19; --surface-2:#1A2420; --border:#26302B;
+  --ink:#F3F7F5; --muted:#9AA6A1;
+  --fondo-desde:#1E293B; --fondo-hasta:#0F172A;
+  --chart-grid:#26302B; --chart-axis:#4B5A53;
+}
 
 /* ---- Modo oscuro base (se afina más adelante) ---- */
 :root[data-theme="dark"]{

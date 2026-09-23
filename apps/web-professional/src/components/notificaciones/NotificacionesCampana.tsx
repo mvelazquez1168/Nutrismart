@@ -49,7 +49,9 @@ export function NotificacionesCampana() {
           noLeidas > 0 ? `Notificaciones, ${noLeidas} sin leer` : 'Notificaciones'
         }
         aria-expanded={abierto}
-        className="relative rounded-md p-2 text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+        // Blanco como el resto de la barra: sobre el color de marca, un
+        // icono en gris apenas se distingue del fondo.
+        className="relative rounded-md p-2 text-white/80 transition-colors hover:bg-white/10 hover:text-white"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"

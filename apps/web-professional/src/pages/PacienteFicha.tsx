@@ -6,7 +6,7 @@
  * CLI-03 y se resuelve desde la Agenda.
  */
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
-import { useNavigate, useParams, Link } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams, Link } from 'react-router-dom'
 import { getPaciente } from '../api/pacientes'
 import {
   getExpediente,
@@ -26,7 +26,7 @@ import type { EstudioLab } from '../api/tipos'
 import { EstadoBadge } from '../components/EstadoBadge'
 import { Avatar } from '../components/Avatar'
 import { LaboratorioModal } from '../components/LaboratorioModal'
-import { ListaLaboratorios, UltimosLaboratorios } from '../components/ListaLaboratorios'
+import { UltimosLaboratorios } from '../components/ListaLaboratorios'
 import { PacienteModal } from '../components/PacienteModal'
 import { BajaModal } from '../components/BajaModal'
 import { SnapshotModal } from '../components/SnapshotModal'
@@ -38,16 +38,36 @@ import { ListaSOAP } from '../components/ia/ListaSOAP'
 import { InvitarPaciente } from '../components/InvitarPaciente'
 import { RegistrosPaciente } from '../components/RegistrosPaciente'
 import { ExportarPDFModal } from '../components/ExportarPDFModal'
+import { NotaProfesional } from '../components/NotaProfesional'
 import { ListaConsultas } from '../components/eval/ListaConsultas'
 
 type Pestana =
   | 'resumen'
   | 'historial'
-  | 'laboratorios'
   | 'plan'
   | 'registros'
   | 'sociodemografia'
   | 'soap'
+
+const PESTANAS: readonly Pestana[] = [
+  'resumen',
+  'historial',
+  'plan',
+  'registros',
+  'sociodemografia',
+  'soap',
+]
+
+/**
+ * Pestaña pedida por la URL (`?tab=plan`), si es una de verdad.
+ *
+ * Existe para que se pueda enlazar a una sección concreta desde fuera —
+ * la valoración manda aquí para abrir el plan alimentario— en vez de
+ * dejar al usuario en Resumen preguntándose qué pasó al pulsar (R41).
+ */
+function pestanaDeUrl(valor: string | null): Pestana | null {
+  return PESTANAS.find((p) => p === valor) ?? null
+}
 
 type Estado =
   | { tipo: 'cargando' }
@@ -83,6 +103,9 @@ function formatearFecha(iso: string | null): string {
 export function PacienteFicha() {
   const { id = '' } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const [params] = useSearchParams()
+  const tabPedida = pestanaDeUrl(params.get('tab'))
+  const planPedido = params.get('plan')
 
   const [estado, setEstado] = useState<Estado>({ tipo: 'cargando' })
   const [expediente, setExpediente] = useState<Expediente | null>(null)
@@ -92,7 +115,7 @@ export function PacienteFicha() {
   const [labModal, setLabModal] = useState(false)
   const [exportando, setExportando] = useState(false)
 
-  const [pestana, setPestana] = useState<Pestana>('resumen')
+  const [pestana, setPestana] = useState<Pestana>(tabPedida ?? 'resumen')
   const [editando, setEditando] = useState(false)
   const [dandoBaja, setDandoBaja] = useState(false)
   const [snapshotModal, setSnapshotModal] = useState<{ abierto: boolean; snapshot: SnapshotResumen | null }>(
@@ -139,6 +162,13 @@ export function PacienteFicha() {
     cargar(ctrl.signal)
     return () => ctrl.abort()
   }, [cargar])
+
+  // Llegar desde otra pantalla con ?tab=… debe cambiar de pestaña aunque
+  // esta página ya estuviera montada: el estado inicial solo se lee al
+  // montar, y volver aquí desde la valoración no remonta.
+  useEffect(() => {
+    if (tabPedida) setPestana(tabPedida)
+  }, [tabPedida])
 
   // El catálogo cambia rara vez: se pide una sola vez, no en cada recarga.
   useEffect(() => {
@@ -320,23 +350,21 @@ export function PacienteFicha() {
         <Tab activa={pestana === 'historial'} onClick={() => setPestana('historial')}>
           Historial ({timeline.length})
         </Tab>
-        <Tab activa={pestana === 'laboratorios'} onClick={() => setPestana('laboratorios')}>
-          Laboratorios ({laboratorios.length})
-        </Tab>
-        <Tab activa={pestana === 'plan'} onClick={() => setPestana('plan')}>
-          Plan alimentario
-        </Tab>
+        {/* Los laboratorios ya no son pestaña propia: viven dentro de
+            Valoración → Laboratorios, junto a la lectura por marcadores
+            que se hacía con los mismos datos (R36). El Resumen sigue
+            enseñando los últimos. */}
         <Tab
           activa={pestana === 'sociodemografia'}
           onClick={() => setPestana('sociodemografia')}
         >
           Sociodemografía
         </Tab>
+        <Tab activa={pestana === 'plan'} onClick={() => setPestana('plan')}>
+          Histórico de Planes Alimentarios
+        </Tab>
         <Tab activa={pestana === 'registros'} onClick={() => setPestana('registros')}>
           Sus registros
-        </Tab>
-        <Tab activa={pestana === 'soap'} onClick={() => setPestana('soap')}>
-          Notas SOAP
         </Tab>
         <TabApagada>Citas</TabApagada>
       </div>
@@ -427,7 +455,19 @@ export function PacienteFicha() {
 
               <ListaConsultas pacienteId={p.id} />
 
-              <UltimosLaboratorios estudios={laboratorios} />
+              <div className="space-y-2">
+                <UltimosLaboratorios estudios={laboratorios} />
+                {/* La pestaña Laboratorios desapareció en la R36. Sin
+                    este botón, registrar un estudio obligaría a abrir
+                    una consulta, y un laboratorio llega cuando llega. */}
+                <button
+                  type="button"
+                  onClick={() => setLabModal(true)}
+                  className="w-full rounded-md border border-border px-4 py-2 text-sm font-medium text-ink hover:bg-surface-2"
+                >
+                  + Registrar laboratorio
+                </button>
+              </div>
 
               <section className="rounded-lg border border-border bg-surface p-5 shadow-sm">
                 <h2 className="mb-3 font-semibold text-ink">Antecedentes</h2>
@@ -451,26 +491,13 @@ export function PacienteFicha() {
           </div>
         </div>
       ) : pestana === 'plan' ? (
-        <PlanAlimentarioTab pacienteId={p.id} />
+        <PlanAlimentarioTab pacienteId={p.id} planInicial={planPedido} />
       ) : pestana === 'registros' ? (
         <RegistrosPaciente pacienteId={p.id} />
       ) : pestana === 'soap' ? (
         <ListaSOAP pacienteId={p.id} />
       ) : pestana === 'sociodemografia' ? (
         <SociodemografiaBloque pacienteId={p.id} />
-      ) : pestana === 'laboratorios' ? (
-        <div className="space-y-4">
-          <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={() => setLabModal(true)}
-              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
-            >
-              + Registrar laboratorio
-            </button>
-          </div>
-          <ListaLaboratorios estudios={laboratorios} />
-        </div>
       ) : (
         <Timeline
           snapshots={timeline}
@@ -487,6 +514,12 @@ export function PacienteFicha() {
           }
         />
       )}
+
+      {/* Fuera de las pestañas y al pie: la nota es del paciente, no de
+          una sección, y se quiere a mano se esté mirando lo que se esté
+          mirando. `key` para que cambiar de paciente la remonte con la
+          suya (ver el componente). */}
+      <NotaProfesional key={p.id} pacienteId={p.id} notaInicial={p.notaProfesional} />
 
       <ExportarPDFModal
         abierto={exportando}
@@ -523,7 +556,6 @@ export function PacienteFicha() {
         onCerrar={() => setLabModal(false)}
         onGuardado={() => {
           setLabModal(false)
-          setPestana('laboratorios')
           cargar()
         }}
       />

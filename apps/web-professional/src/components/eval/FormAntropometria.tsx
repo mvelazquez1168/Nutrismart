@@ -36,7 +36,10 @@ const BASICOS = [
   { clave: 'cinturaCm', etiqueta: 'Cintura', unidad: 'cm', paso: '0.1' },
   { clave: 'caderaCm', etiqueta: 'Cadera', unidad: 'cm', paso: '0.1' },
   { clave: 'brazoCm', etiqueta: 'Brazo', unidad: 'cm', paso: '0.1' },
-  { clave: 'piernaCm', etiqueta: 'Pierna', unidad: 'cm', paso: '0.1' },
+  // Etiqueta, no columna: en la base sigue siendo `pierna_cm` (R41).
+  // Lo que se mide es la pantorrilla, y «Pierna» dejaba en el aire dónde
+  // poner la cinta.
+  { clave: 'piernaCm', etiqueta: 'Circunferencia de pantorrilla', unidad: 'cm', paso: '0.1' },
 ] as const
 
 const BIA = [

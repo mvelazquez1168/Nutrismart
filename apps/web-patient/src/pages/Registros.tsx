@@ -10,20 +10,39 @@ import { useNavigate } from 'react-router-dom'
 import {
   ApiError,
   FRANJAS,
+  anadirItem,
   borrarComida,
   getDiario,
+  getItems,
   getMetricas,
+  getModoDiario,
   getSemanaDiario,
   guardarComida,
   guardarMetrica,
+  quitarItem,
+  setModoDiario,
   type Diario,
   type DiaSemana,
   type Franja,
+  type ItemComida,
   type Metrica,
+  type ModoDiario,
   type TipoMetrica,
 } from '../lib/api'
 import { entrar, initKeycloak } from '../lib/keycloak'
+import { BuscadorAlimento } from '../components/BuscadorAlimento'
+import { PanelBienestar } from '../components/PanelBienestar'
+import { PanelCuerpo } from '../components/PanelCuerpo'
 import { NavBar } from '../components/NavBar'
+
+const PESTANAS = [
+  { clave: 'bienestar', etiqueta: 'Cómo estoy' },
+  { clave: 'diario', etiqueta: 'Qué comí' },
+  { clave: 'medidas', etiqueta: 'Peso y más' },
+  { clave: 'cuerpo', etiqueta: 'Cuerpo' },
+] as const
+
+type Pestana = (typeof PESTANAS)[number]['clave']
 
 const METRICAS: { clave: TipoMetrica; etiqueta: string; unidad: string }[] = [
   { clave: 'peso', etiqueta: 'Peso', unidad: 'kg' },
@@ -66,10 +85,127 @@ function BarraSemana({ dias }: { dias: DiaSemana[] }) {
   )
 }
 
+/**
+ * Los alimentos de una franja, en modo detallado.
+ *
+ * `registroId` puede ser null: la comida no existe hasta que se le mete
+ * el primer alimento, y se crea en el mismo paso. Así no quedan comidas
+ * vacías de quien abrió la franja y se arrepintió.
+ */
+function PanelItems({
+  registroId,
+  fecha,
+  franja,
+  onCambio,
+}: {
+  registroId: string | null
+  fecha: string
+  franja: Franja
+  onCambio: () => Promise<void>
+}) {
+  const [items, setItems] = useState<ItemComida[]>([])
+  const [buscando, setBuscando] = useState(false)
+  const [ocupado, setOcupado] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!registroId) {
+      setItems([])
+      return
+    }
+    let vivo = true
+    getItems(registroId)
+      .then((r) => {
+        if (vivo) setItems(r)
+      })
+      .catch(() => {
+        /* la lista vacía ya comunica el estado */
+      })
+    return () => {
+      vivo = false
+    }
+  }, [registroId])
+
+  async function anadir(datos: { alimentoId?: string; nombre?: string; cantidadG: number }) {
+    const r = await anadirItem({ ...datos, fecha, tipoComida: franja })
+    setBuscando(false)
+    setItems((prev) => [...prev, r])
+    // El total de la comida lo recalcula el servidor: se recarga el
+    // diario entero en vez de sumar aquí, para que no haya dos cuentas
+    // que puedan discrepar.
+    await onCambio()
+  }
+
+  async function quitar(item: ItemComida) {
+    if (!registroId || ocupado) return
+    setOcupado(true)
+    setError(null)
+    try {
+      await quitarItem(registroId, item.id)
+      setItems((prev) => prev.filter((i) => i.id !== item.id))
+      await onCambio()
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'No se pudo quitar')
+    } finally {
+      setOcupado(false)
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      {items.length > 0 && (
+        <ul className="divide-y divide-border">
+          {items.map((i) => (
+            <li key={i.id} className="flex items-baseline justify-between gap-2 py-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm text-ink">{i.nombre}</p>
+                <p className="text-xs text-muted tabular-nums">{Math.round(i.cantidadG)} g</p>
+              </div>
+              <div className="flex shrink-0 items-baseline gap-3">
+                <span className="text-sm tabular-nums text-muted">
+                  {i.kcal !== null ? `${Math.round(i.kcal)} kcal` : '—'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void quitar(i)}
+                  disabled={ocupado}
+                  aria-label={`Quitar ${i.nombre}`}
+                  className="text-xs text-muted hover:text-ink"
+                >
+                  Quitar
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {error && (
+        <p role="alert" className="text-xs" style={{ color: 'var(--status-critical)' }}>
+          {error}
+        </p>
+      )}
+
+      {buscando ? (
+        <BuscadorAlimento onElegir={anadir} onCerrar={() => setBuscando(false)} />
+      ) : (
+        <button
+          type="button"
+          onClick={() => setBuscando(true)}
+          className="w-full rounded-md border border-dashed border-border py-2.5 text-sm font-medium text-primary"
+        >
+          + Añadir alimento
+        </button>
+      )}
+    </div>
+  )
+}
+
 function PanelDiario() {
   const [fecha, setFecha] = useState(hoyLocal())
   const [diario, setDiario] = useState<Diario | null>(null)
   const [semana, setSemana] = useState<DiaSemana[]>([])
+  const [modo, setModo] = useState<ModoDiario>('simple')
   const [editando, setEditando] = useState<Franja | null>(null)
   const [texto, setTexto] = useState('')
   const [kcal, setKcal] = useState('')
@@ -87,6 +223,25 @@ function PanelDiario() {
       setError(e instanceof ApiError ? e.message : 'No hemos podido cargar tu diario'),
     )
   }, [fecha, cargar])
+
+  useEffect(() => {
+    getModoDiario()
+      .then((r) => setModo(r.modoDiario))
+      .catch(() => {
+        /* sin respuesta se queda en simple, que es lo que menos estorba */
+      })
+  }, [])
+
+  async function cambiarModo(nuevo: ModoDiario) {
+    setModo(nuevo)
+    setEditando(null)
+    try {
+      await setModoDiario(nuevo)
+    } catch {
+      /* la preferencia no es crítica: si no se guarda, se pierde el
+         cambio, pero nada de lo apuntado se ve afectado */
+    }
+  }
 
   function abrir(franja: Franja) {
     const ya = diario?.registros.find((r) => r.tipoComida === franja)
@@ -182,6 +337,33 @@ function PanelDiario() {
         )}
       </section>
 
+      {/* El modo lo elige el paciente, no la clínica. Hay quien no va a
+          apuntar alimento por alimento nunca, y forzarlo consigue que
+          deje de apuntar del todo. */}
+      <div className="flex gap-1.5" role="group" aria-label="Modo del diario">
+        {(
+          [
+            { clave: 'simple', etiqueta: 'Rápido', pie: 'Una frase por comida' },
+            { clave: 'detallado', etiqueta: 'Detallado', pie: 'Alimento por alimento' },
+          ] as const
+        ).map((m) => (
+          <button
+            key={m.clave}
+            type="button"
+            onClick={() => void cambiarModo(m.clave)}
+            aria-pressed={modo === m.clave}
+            className={`flex-1 rounded-md border px-2 py-2 text-center ${
+              modo === m.clave
+                ? 'border-primary bg-primary-tint text-primary'
+                : 'border-border text-muted'
+            }`}
+          >
+            <span className="block text-xs font-semibold">{m.etiqueta}</span>
+            <span className="block text-[0.65rem] leading-tight">{m.pie}</span>
+          </button>
+        ))}
+      </div>
+
       <ul className="space-y-2">
         {FRANJAS.map((f) => {
           const r = diario.registros.find((x) => x.tipoComida === f.clave)
@@ -206,7 +388,18 @@ function PanelDiario() {
                 )}
               </button>
 
-              {abierta && (
+              {abierta && modo === 'detallado' && (
+                <div className="border-t border-border p-4">
+                  <PanelItems
+                    registroId={r?.id ?? null}
+                    fecha={fecha}
+                    franja={f.clave}
+                    onCambio={() => cargar(fecha)}
+                  />
+                </div>
+              )}
+
+              {abierta && modo === 'simple' && (
                 <div className="space-y-2 border-t border-border p-4">
                   <label htmlFor={`d-${f.clave}`} className="block text-xs text-muted">
                     ¿Qué comiste?
@@ -470,7 +663,7 @@ function PanelMetricas() {
 
 export function Registros() {
   const navegar = useNavigate()
-  const [pestana, setPestana] = useState<'diario' | 'medidas'>('diario')
+  const [pestana, setPestana] = useState<Pestana>('bienestar')
   const [listo, setListo] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -508,18 +701,22 @@ export function Registros() {
       </header>
 
       <div className="-mt-4 px-4">
+        {/* Cuatro pestañas y no cuatro entradas más en la barra
+            inferior: son la misma acción («apuntar lo mío»). El
+            bienestar va primero porque es lo que se contesta a diario;
+            el resto se rellena cuando toca. */}
         <div className="mb-4 flex overflow-hidden rounded-md border border-border bg-surface">
-          {(['diario', 'medidas'] as const).map((p) => (
+          {PESTANAS.map((p) => (
             <button
-              key={p}
+              key={p.clave}
               type="button"
-              onClick={() => setPestana(p)}
-              aria-pressed={pestana === p}
-              className={`flex-1 py-2.5 text-sm font-medium ${
-                pestana === p ? 'bg-primary text-white' : 'text-ink'
+              onClick={() => setPestana(p.clave)}
+              aria-pressed={pestana === p.clave}
+              className={`flex-1 px-1 py-2.5 text-xs font-medium ${
+                pestana === p.clave ? 'bg-primary text-white' : 'text-ink'
               }`}
             >
-              {p === 'diario' ? 'Qué comí' : 'Mis medidas'}
+              {p.etiqueta}
             </button>
           ))}
         </div>
@@ -530,7 +727,10 @@ export function Registros() {
           </p>
         )}
 
-        {listo && (pestana === 'diario' ? <PanelDiario /> : <PanelMetricas />)}
+        {listo && pestana === 'bienestar' && <PanelBienestar />}
+        {listo && pestana === 'diario' && <PanelDiario />}
+        {listo && pestana === 'medidas' && <PanelMetricas />}
+        {listo && pestana === 'cuerpo' && <PanelCuerpo />}
       </div>
 
       <NavBar />

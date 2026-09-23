@@ -85,7 +85,9 @@ export function NotificacionesPanel({
         role="dialog"
         aria-modal="true"
         aria-label="Notificaciones"
-        className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-border bg-surface shadow-lg"
+        // `text-ink` explicito: el panel cuelga del DOM de la barra
+        // superior, que ahora impone la tinta del color de marca.
+        className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-border bg-surface text-ink shadow-lg"
       >
         <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-4">
           <div className="flex items-center gap-2">
