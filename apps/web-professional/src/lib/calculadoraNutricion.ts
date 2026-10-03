@@ -565,6 +565,77 @@ export const METODOS_DIETA: Record<MetodoDietaClave, MetodoDieta> = {
 
 export const ORDEN_METODOS: MetodoDietaClave[] = ['ADA', 'INCIENSA', 'Colombiana']
 
+/**
+ * Métodos que la pantalla OFRECE hoy (R44).
+ *
+ * INCIENSA y Colombiana se quedan en `METODOS_DIETA` y en
+ * `ORDEN_METODOS` —con sus grupos, sus cortes y sus columnas extra— pero
+ * salen del selector: sus tablas no están terminadas y ofrecerlas invita
+ * a prescribir sobre un cálculo a medias.
+ *
+ * Se siguen pintando si una conclusión GUARDADA las usa: ver
+ * `metodosOfrecidos`. Quitarlas del selector no puede hacer ilegible una
+ * prescripción que ya se firmó.
+ */
+export const METODOS_DIETA_OFRECIDOS: MetodoDietaClave[] = ['ADA']
+
+/**
+ * Los métodos a enseñar en el selector, contando el ya elegido.
+ *
+ * Si la conclusión abierta trae INCIENSA, su pestaña aparece: sin ella,
+ * la tabla de intercambios de esa prescripción se vería sin que nada en
+ * pantalla dijera de dónde sale.
+ */
+export function metodosOfrecidos(actual: MetodoDietaClave): MetodoDietaClave[] {
+  return ORDEN_METODOS.filter(
+    (m) => METODOS_DIETA_OFRECIDOS.includes(m) || m === actual,
+  )
+}
+
+/* ---- Azúcar libre y sal recomendadas (R44) ---- */
+
+/**
+ * Azúcar libre en cucharadas al día.
+ *
+ * `(REQ × 0.10) / 4 / 15`: el 10 % del requerimiento es el techo de la
+ * OMS para azúcares libres, se pasa a gramos con los 4 kcal/g de los
+ * carbohidratos y se divide entre los 15 g que cabe en una cucharada
+ * rasa.
+ */
+export function azucarLibreCdas(req: number): number | null {
+  if (!Number.isFinite(req) || req <= 0) return null
+  return r1((req * 0.1) / 4 / 15)
+}
+
+/** Metas de sodio que se ofrecen, en mg/día. De más laxa a más estricta. */
+export const SODIO_OFRECIDO = [2500, 2000, 1600, 800] as const
+
+export type SodioMg = (typeof SODIO_OFRECIDO)[number]
+
+/**
+ * Sal en cucharaditas al día a partir de la meta de sodio.
+ *
+ * `(mg × 2.4) / 5000`: el 2.4 convierte sodio en cloruro de sodio y los
+ * 5000 son los MILIGRAMOS de sal de una cucharadita rasa (5 g).
+ *
+ * El encargo de la R44 escribió la fórmula como `(mg × 2.4) / 5`, y ese
+ * 5 son gramos: la cuenta solo cierra si el sodio entra en gramos. Tal
+ * cual, con el sodio en mg, 2000 mg daban **960 cucharaditas** de sal al
+ * día. El /5000 es la misma fórmula con la conversión que faltaba, y da
+ * 0.96 ≈ 1 cucharadita, que es justo la equivalencia conocida de los
+ * 2000 mg de sodio que recomienda la OMS.
+ *
+ * Contrastado además con `calcularSal` —el cálculo de INCIENSA que ya
+ * estaba en este archivo—, que divide por 5000 por el mismo motivo.
+ *
+ * Ojo: NO es `calcularSal`. Aquella parte del sodio ya aportado por la
+ * dieta y usa 2.54; esta parte de la meta elegida. Conviven a propósito.
+ */
+export function salCdtas(sodioMg: number): number | null {
+  if (!Number.isFinite(sodioMg) || sodioMg <= 0) return null
+  return r1((sodioMg * 2.4) / 5000)
+}
+
 /* ---- Macros meta (R39 §B1) ---- */
 
 export interface MacrosMeta {
@@ -789,4 +860,13 @@ export interface DatosCalculadora {
   geeTotal?: number | null
   getCunningham?: number | null
   disponibilidadEnergetica?: number | null
+
+  /**
+   * Meta de sodio elegida, en mg/día (R44). Null = no se eligió.
+   *
+   * Se guarda el mg, no las cucharaditas: el total se deriva al pintar,
+   * así que un cambio en el factor no deja números viejos que ya no
+   * cuadran con su propia fórmula.
+   */
+  sodioMg?: number | null
 }

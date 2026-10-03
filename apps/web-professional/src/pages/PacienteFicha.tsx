@@ -238,7 +238,6 @@ export function PacienteFicha() {
   }
 
   const p = estado.paciente
-  const hayBorrador = timeline.some((s) => s.estado === 'borrador')
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
@@ -269,19 +268,17 @@ export function PacienteFicha() {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={ocupado}
-              onClick={() => setSnapshotModal({ abierto: true, snapshot: null })}
-              title={
-                hayBorrador
-                  ? 'Ya hay un control en borrador: ciérralo o edítalo antes de crear otro'
-                  : undefined
-              }
-              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-60"
-            >
-              + Punto de control
-            </button>
+            {/* «+ Punto de control» está OCULTO desde la R44.
+                No se borró nada: el SnapshotModal, el endpoint y el
+                timeline siguen enteros, y la pestaña Historial sigue
+                permitiendo editar, cerrar y corregir los controles que
+                ya existen. Lo único que desaparece es el atajo para
+                crear uno nuevo desde aquí, porque las mediciones entran
+                por la valoración.
+
+                Con el botón se fue su aviso de «ya hay un borrador
+                abierto», que era un `timeline.some(...)` calculado solo
+                para el `title`. Si el botón vuelve, vuelve con él. */}
             <button
               type="button"
               onClick={() => setExportando(true)}

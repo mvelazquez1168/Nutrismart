@@ -4131,6 +4131,337 @@ Comprobación de no regresión (las bandas infantiles y las de hombre no se toca
 
 El encargo definía el bloque persistido en `snake_case` (`metodo_ger`, `gee_entradas`, `get_cunningham`). Se guardó en **camelCase** (`metodoGer`, `geeEntradas`, `getCunningham`) para no tener dos convenciones dentro del mismo JSONB: los campos que ya había —`metaCalorica`, `metodoDieta`, `listasIntercambio`— son camelCase.
 
+# Rebanada 43 — Panel de detalle de una consulta
+
+Pulsar una consulta en el expediente abre un panel lateral, de **solo lectura**, con todo lo que se registró ese día: antropometría, diagnósticos, objetivos, observaciones, prescripción, plan alimentario vigente, recomendaciones, acuerdos y la calculadora.
+
+**Dónde:** Ficha del paciente → pestaña **Resumen** → tarjeta **Valoraciones** → clic en cualquier fila de la lista.
+
+## Nota sobre dónde está la lista
+
+El encargo decía «pestaña Historial». La pestaña **Historial** del expediente no enseña consultas: enseña **puntos de control** (`clinical_snapshot`), que son la foto de las métricas de un día y no tienen diagnóstico, prescripción ni plan. La lista de consultas es la tarjeta **Valoraciones**, en Resumen, y es la que abre el panel.
+
+## Antes de empezar
+
+No hay migración: el endpoint solo lee tablas que ya existían.
+
+```
+docker compose -f infra/docker-compose.dev.yml up -d --build api web-pro
+```
+
+## 1 · La fila se abre
+
+| Paso | Qué comprobar |
+|---|---|
+| Pasar el ratón por una fila de Valoraciones | Cursor de mano y fondo `surface-2` |
+| Clic en la fila | El panel entra **por la derecha** |
+| Clic en el botón **Ver** / **Continuar** | Navega a la valoración; **no** abre el panel |
+| Tabulador hasta la fila y Enter | Abre el panel igual que el ratón |
+| Escape, o clic en el fondo oscuro, o la ✕ | Cierra; el foco vuelve a la fila |
+
+**Lo que hay que mirar con atención:** que **Ver** siga llevando a la valoración. Son dos destinos en la misma fila y es a propósito — mirar es lo habitual, editar es la excepción — pero si el `stopPropagation` del botón se pierde, al pulsar **Ver** se abren las dos cosas a la vez.
+
+## 2 · Cada sección con sus datos
+
+Con el paciente de semilla (**María**, consulta **#2** del 14/07/2026):
+
+| Sección | Qué debe decir |
+|---|---|
+| Cabecera | `Consulta #2 · Seguimiento · 14/07/2026` y «Atendió Dra. Ana Rodríguez» |
+| Datos antropométricos | peso 77.6 kg, talla 162 cm, IMC 29.57, cintura 88.5 cm, ICC 0.859 |
+| Diagnósticos | «Sobrepeso con perímetro de cintura de riesgo» + ficha `E66.3` |
+| Observaciones clínicas | El párrafo entero, con sus saltos de línea |
+| Prescripción dietética | 1750 kcal/día · Proteína 25% (109.4 g) · CHO 45% (196.9 g) · Grasas 30% (58.3 g) · meta de peso 72 kg al 15/12/2026 |
+| Recomendaciones | Tres viñetas |
+| Acuerdos | Tres, los dos primeros **Cumplido** (verde) y el tercero **No cumplido** (ámbar) |
+
+## 3 · Las secciones vacías no se dibujan
+
+| Caso | Qué comprobar |
+|---|---|
+| Consulta **#1** de María (sin conclusión) | Solo aparece Antropometría |
+| Consulta sin medición ni conclusión | El cuerpo queda casi vacío |
+| Al pie, en cualquiera de los dos | Línea discreta: «Sin registrar en esta consulta: Diagnósticos · Objetivos…» |
+
+**Por qué el pie:** un bloque «Diagnósticos» con un guion ocupa lo mismo que uno con contenido y hay que leerlo para descubrir que no dice nada. Que el hueco no exista se recorre más rápido; la línea del pie evita que «no se registró» se confunda con «el sistema no lo tiene».
+
+## 4 · El plan alimentario es deducido, no vinculado
+
+`plan_alimentario` **no tiene `consulta_id`**: no hay forma de saber con certeza qué plan se entregó en una consulta concreta. El servidor lo deduce por fechas y por eso la sección se titula «Plan alimentario **vigente**».
+
+Las reglas, en `apps/api/src/routes/consulta-detalle.ts`:
+
+- Los **borradores** quedan fuera — nunca se entregaron al paciente.
+- Un plan sin fecha de inicio (o sin fin) se considera vigente por ese extremo: el campo es opcional en la base.
+- Si encajan varios: gana el de inicio más reciente; a igualdad, el que está **activo**; luego el más nuevo.
+
+| Paso | Qué comprobar |
+|---|---|
+| Consulta de un paciente con plan activo | Tabla con **Tiempo de comida / Patrón / Ejemplo de menú** |
+| El orden de las filas | Desayuno → Merienda AM → Almuerzo → Merienda PM → Cena → Colación nocturna, **no** alfabético |
+| Franjas sin patrón ni menú | No salen en la tabla |
+| Paciente sin plan | La sección no aparece |
+
+**Lo que hay que mirar con atención:** el orden. El `ORDER BY` va contra la columna `enum`, no contra el alias `::text`; si alguien le quita el prefijo `pc.`, Postgres ordena por el alias y las comidas salen alfabéticas (almuerzo primero).
+
+## 5 · Nada es editable
+
+| Paso | Qué comprobar |
+|---|---|
+| Recorrer el panel entero con el tabulador | El único control es la ✕ de cerrar |
+| Buscar inputs, selects o textareas | No hay ninguno; tampoco botón de guardar |
+
+El endpoint no tiene PUT hermano: lo que se escribe sigue escribiéndose por su sección, que es donde vive la validación de cada una.
+
+## 6 · Cambiar de consulta
+
+| Paso | Qué comprobar |
+|---|---|
+| Abrir la #2, cerrar, abrir la #1 | Los datos son los de la **#1**, no restos de la #2 |
+| Abrir una consulta y cerrar antes de que cargue | Sin error en consola: la petición se aborta |
+| Mientras carga | Esqueleto gris y «Cargando el detalle…» |
+
+**Por qué importa:** la petición sale al **abrir**, no al montar la lista. Una ficha con quince consultas no se trae quince detalles para que se abra uno.
+
+## 7 · Aislamiento entre pacientes
+
+El id de la consulta viaja en la URL junto al del paciente, y el servidor exige que **cuadren**.
+
+| Paso | Qué comprobar |
+|---|---|
+| `GET …/pacientes/<paciente B>/consultas/<consulta de A>/detalle` | **404** `consulta_no_encontrada` |
+| Como nutricionista, consulta de un paciente ajeno | **404**, nunca 403 |
+
+Distinguir «no existe» de «existe pero no es tuyo» confirmaría la existencia de pacientes de otro nutricionista.
+
+## Lo que quedó sin comprobar con datos reales
+
+La sección **Calculadora** solo se dibuja cuando `datos_calculadora` trae `metodoGer` (es decir, bloques guardados a partir de la R42). **Ninguna conclusión de la semilla tiene ese campo**, así que la sección no se pudo ver con datos de verdad.
+
+Para probarla: abrir una consulta en borrador → Conclusiones → calculadora → elegir **Cunningham**, rellenar MLG y al menos una actividad del GEE, aplicar y guardar. Después, abrir esa consulta desde Valoraciones: el panel debe enseñar método, MLG, GEE, GET y la ficha de disponibilidad energética **con el mismo color** que el panel de la calculadora (crítico <30, ámbar 30–45, verde 45–60, gris >60).
+
+---
+
+# Rebanada 44 — Ajustes clínicos, calculadora y UI
+
+Doce ajustes repartidos por la valoración. Uno de ellos —el cálculo de sal— llegó con la fórmula incompleta; ver «La fórmula de la sal» al final de esta sección.
+
+## Antes de empezar
+
+Hay **migración** (046): cinco columnas del tamizaje, las observaciones del historial y la justificación de la prescripción.
+
+```
+docker compose -f infra/docker-compose.dev.yml up -d --build api web-pro
+docker compose -f infra/docker-compose.dev.yml exec api node dist/migrate.js
+```
+
+## 1 · Clínico — sin botones de FAF
+
+| Paso | Qué comprobar |
+|---|---|
+| Consulta → **Clínico** → Actividad física | **No** hay tarjetas «Sedentario / Leve / … FAF 1.2» |
+| En el mismo bloque | **No** hay recuadro «Factor de actividad» |
+| Lo que sí queda | Sesiones por semana, Duración media y Detalles |
+| Guardar el historial y volver a abrirlo | Sesiones y duración se conservan |
+
+**Lo que hay que mirar con atención:** que el FAF del paciente **no se borre**. La columna `tipo_actividad` sigue en la base con lo que se eligió antes, y de ella deriva el servidor el `faf` que alimenta la calculadora. El formulario la devuelve tal cual aunque no la pinte; si ese viaje de ida y vuelta se rompe, el primer guardado del historial deja el FAF en nulo —este PUT reemplaza la fila entera—. Comprobación: con un paciente que tenga actividad registrada, guardar el Clínico y mirar que `tipo_actividad` y `faf` de `historial_clinico` siguen igual.
+
+## 2 · Clínico — las siete preguntas nuevas
+
+El bloque pasa a llamarse **«Relación con los alimentos»** y pregunta exactamente:
+
+1. ¿Hay alimentos que generen culpa o vergüenza?
+2. ¿Sientes que mereces comer solo después de hacer ejercicio?
+3. ¿Las emociones influyen en cómo y qué comes?
+4. ¿Te resulta fácil identificar cuándo tienes hambre o estás satisfecho/a?
+5. ¿Sientes que tu valor personal depende de cómo luces?
+6. ¿La comida ocupa gran parte de tus pensamientos durante el día?
+7. ¿Clasificas ciertos alimentos o grupos de alimentos como «buenos» o «malos»?
+
+| Paso | Qué comprobar |
+|---|---|
+| El control de cada fila | La misma escala Likert de antes: Nunca · Casi nunca · A veces · A menudo · Siempre |
+| Preguntas que ya **no** aparecen | «Se salta comidas», «Episodios de atracón», «Dietas frecuentes» |
+| Paciente con el tamizaje viejo respondido | Las preguntas 1 y 3 llegan **marcadas**: conservan su columna (`culpa_al_comer`, `alimentacion_emocional`) |
+| Responder las siete y guardar | Al reabrir salen las siete marcadas |
+
+**Lo que hay que mirar con atención:** las tres preguntas retiradas tampoco se borran. Son `salteo_comidas`, `atracones` y `dietas_frecuentes`, y el formulario las devuelve sin enseñarlas, igual que el FAF. Guardar el Clínico varias veces no debe cambiar esos tres valores:
+
+```sql
+select salteo_comidas, atracones, dietas_frecuentes
+  from historial_clinico where paciente_id = '…';
+```
+
+**Por qué columnas nuevas y no un JSONB:** las cinco preguntas que entran son cinco columnas `smallint` con el mismo `CHECK (between 1 and 5)` que las cinco que ya había. Mover el tamizaje a un documento JSON habría dejado huérfano lo ya respondido.
+
+## 3 · Clínico — CUCI y Crohn
+
+| Paso | Qué comprobar |
+|---|---|
+| Clínico → **Salud digestiva** | Aparecen **CUCI (Colitis Ulcerosa Crónica Idiopática)** y **Enfermedad de Crohn** |
+| Las siete de antes | Siguen todas, incluida «Enfermedad inflamatoria intestinal» |
+| Marcar una de las nuevas y guardar | Se conserva al reabrir |
+
+La lista vive en un `jsonb`, así que añadir opciones no necesitó migración. «Enfermedad inflamatoria intestinal» se queda a propósito: no todo caso tiene el subtipo precisado.
+
+## 4 · Clínico — Observaciones clínicas
+
+| Paso | Qué comprobar |
+|---|---|
+| Bajar al final de Clínico | Tras **Hábitos** hay una tarjeta **«Observaciones clínicas»** con textarea y su propio botón |
+| Escribir, guardar y recargar | El texto vuelve |
+| Después de guardar observaciones | Antecedentes, síntomas y tamizaje **intactos** |
+
+**Lo que hay que mirar con atención:** esa última fila. Las observaciones tienen **endpoint propio** (`PUT …/historial/observaciones`) justo por eso: el PUT del historial completo reemplaza la fila entera, y mandarlo desde una tarjeta que no tiene el resto del formulario a mano borraría antecedentes, síntomas y tamizaje de un golpe.
+
+**No confundir con la otra caja del mismo nombre.** Hay dos «Observaciones clínicas» en la valoración y son campos distintos:
+
+| Dónde | Tabla · columna | A qué pertenece |
+|---|---|---|
+| Clínico (esta) | `historial_clinico.observaciones_clinicas` | Al **paciente**; se actualiza visita a visita |
+| Prescripción | `conclusion_valoracion.observaciones_clinicas` | A **una consulta**; es el juicio de ese día |
+
+Escribir en una no debe cambiar la otra. Vale la pena comprobarlo.
+
+## 5 · Dietético — consumo usual con listas ADA
+
+**Ya funcionaba; esto es una verificación, no un cambio.** Recordatorio 24h y Consumo Usual son el **mismo componente** (`TablaDietetica`) contra el **mismo endpoint**, y solo se distinguen por el `tipo` de la URL. El prompt del análisis (`SISTEMA_ADA`, en `routes/registroDietetico.ts`) es idéntico para los dos.
+
+| Paso | Qué comprobar |
+|---|---|
+| Dietético → **Consumo Usual** → escribir alimentos en Desayuno | Aparece el botón **Analizar IA** |
+| Pulsarlo | Vuelve con kcal · CHO · Prot · Grasas, igual que en Recordatorio 24h |
+| El pie de la tabla | Suma el día |
+| Corregir el kcal a mano | Queda el valor propio y al lado «(IA: …)» |
+| Volver a Recordatorio 24h | Su contenido no cambió: son dos registros distintos, `unique (consulta_id, tipo)` |
+
+**Por qué parecía no funcionar:** la semilla solo trae filas de `recordatorio_24h`. Un Consumo Usual en blanco no enseña macros porque no hay nada analizado, no porque el cálculo falte.
+
+## 6 · Calculadora — solo ADA en el selector
+
+| Paso | Qué comprobar |
+|---|---|
+| Prescripción → calculadora → **Sección B** | El selector de método enseña **solo ADA** |
+| INCIENSA y Colombianas | No aparecen |
+| Abrir una conclusión guardada **con** INCIENSA | Su pestaña **sí** aparece, con un aviso en ámbar: «ya no se ofrece para prescripciones nuevas» |
+
+**Por qué esa excepción:** quitarlas del selector no puede hacer ilegible una prescripción que ya se firmó. Sin su pestaña, la tabla de intercambios de esa conclusión se vería sin que nada en pantalla dijera de dónde sale. Nada se borró del código: `METODOS_DIETA` y `ORDEN_METODOS` siguen enteros, y la lista de lo que se ofrece es `METODOS_DIETA_OFRECIDOS`.
+
+## 7 · Calculadora — azúcar y sal recomendadas
+
+Bloque nuevo entre la distribución de macronutrientes y la tabla de intercambios.
+
+**Azúcar libre** — `(REQ × 0.10) / 4 / 15`, en cucharadas de 15 g:
+
+| REQ | Debe decir |
+|---|---|
+| 1200 | **2.0** cdas/día |
+| 1750 | **2.9** cdas/día |
+| 2400 | **4.0** cdas/día |
+
+Sin REQ, el bloque dice «Indica el REQ a utilizar para calcularla».
+
+**Sal** — cuatro botones de meta de sodio:
+
+| Botón | Debe decir |
+|---|---|
+| 2500 mg | **1.2** cdtas/día |
+| 2000 mg | **1.0** cdtas/día |
+| 1600 mg | **0.8** cdtas/día |
+| 800 mg | **0.4** cdtas/día |
+
+| Paso | Qué comprobar |
+|---|---|
+| Sin elegir sodio | «Elige una meta de sodio para calcular las cucharaditas» |
+| Pulsar el botón ya elegido | Se deselecciona y vuelve el aviso |
+| Aplicar, guardar la conclusión y reabrir la calculadora | El sodio elegido sigue marcado |
+| Abrir el panel de detalle de la consulta (R43) | Enseña «Meta de sodio» y «Sal» en el bloque de la calculadora |
+
+El mg se guarda en `datos_calculadora.sodioMg`; las cucharaditas se derivan al pintar, así que un cambio en el factor no deja números viejos que ya no cuadran con su propia fórmula. El servidor solo acepta los cuatro valores de la lista.
+
+## 8 · Prescripción — alergias del paciente
+
+| Paso | Qué comprobar |
+|---|---|
+| Paciente **con** alergias → Prescripción dietética | Primer bloque de la sección, en ámbar, con las alergias como badges |
+| Compararlo con el card del Resumen del expediente | Las mismas, con el mismo color |
+| Paciente **sin** alergias registradas | El bloque **no aparece** |
+| Intentar editarlas desde ahí | No se puede: es solo lectura |
+
+**Por qué no aparece vacío:** un «Sin registrar» en el sitio donde se decide la prescripción se lee como «no tiene», y eso es peor que no decir nada.
+
+## 9 · Prescripción — Justificación
+
+| Paso | Qué comprobar |
+|---|---|
+| Prescripción | Entre **Prescripción dietética** y el plan alimentario hay una tarjeta **Justificación** |
+| Escribir y guardar | Vuelve al recargar |
+| Panel de detalle de la consulta (R43) | Enseña la justificación como sección propia |
+| Si queda vacía | El panel la nombra en «Sin registrar en esta consulta» |
+
+## 10 · El botón «+ Punto de control» no está
+
+| Paso | Qué comprobar |
+|---|---|
+| Ficha del paciente → cabecera | **No** hay «+ Punto de control»; el de exportar a PDF sigue |
+| Pestaña **Historial** | Los controles que ya existen siguen pudiéndose editar, cerrar y corregir |
+| Un snapshot en borrador | Su botón «Editar» abre el modal de siempre |
+
+Solo se ocultó el atajo de creación. `SnapshotModal`, el endpoint y el timeline siguen enteros; en `PacienteFicha.tsx` queda el comentario con lo que hay que devolver si el botón vuelve.
+
+## 11 · Tipo de consulta al abrir una nueva
+
+| Paso | Qué comprobar |
+|---|---|
+| Resumen → **Valoraciones** → «+ Nueva consulta» | Se abre un formulario **antes** de crear nada |
+| Lo primero del formulario | Dos opciones: **Consulta normal** · **Seguimiento rutinario**, con su descripción |
+| Propuesta por omisión | «Consulta normal» si el paciente no tiene ninguna; «Seguimiento rutinario» si ya tiene |
+| **Cancelar** | No se crea nada |
+| **Abrir consulta** | Se crea con el tipo elegido y navega a la valoración |
+| La lista de Valoraciones | Cada fila lleva una etiqueta con su tipo |
+| Cabecera de la valoración y panel de detalle | Usan el mismo vocabulario |
+
+**Lo que hay que mirar con atención:** que elegir «Consulta normal» en la quinta visita **se respete**. Antes el tipo se derivaba del ordinal —la primera inicial, el resto seguimiento— y esa sigue siendo la regla si el cuerpo no trae `tipo`. Comprobación directa:
+
+```sql
+select numero_consulta, tipo from consulta
+ where paciente_id = '…' order by numero_consulta desc limit 3;
+```
+
+Las claves del enum **no cambiaron**: siguen siendo `inicial` y `seguimiento`. Lo que cambió es el rótulo.
+
+## 12 · La carpeta se llama «Prescripción»
+
+| Paso | Qué comprobar |
+|---|---|
+| Pestañas de la valoración | La quinta dice **Prescripción**, no «Conclusiones» |
+| Con secciones sin completar, pasar el ratón por «Finalizar valoración» | El aviso dice «Faltan por completar: … Prescripción» |
+
+Solo el rótulo. La clave de la sección sigue siendo `conclusion` —la valida el servidor y está escrita en los `secciones_completas` ya guardados—, igual que `bioquim` sigue llamándose así detrás de «Laboratorios».
+
+## La fórmula de la sal
+
+El encargo pedía `(mg_seleccionados × 2.4) / 5`. Con el sodio en **miligramos**, esa cuenta da **960 cucharaditas de sal al día** para los 2000 mg de la OMS.
+
+El 5 son **gramos**: la fórmula solo cierra si el sodio entra en gramos. Implementada como `(mg × 2.4) / 5000` da **0.96 ≈ 1 cucharadita**, que es la equivalencia conocida de 2000 mg de sodio. Se contrastó además con `calcularSal` —el cálculo de INCIENSA que ya estaba en `calculadoraNutricion.ts`—, que divide por 5000 por el mismo motivo.
+
+Es el mismo tropiezo que el coeficiente de Schofield en la R42, y se encontró igual: **contrastando el resultado con otra ecuación del mismo panel**. Un número absurdo en pantalla se ve; el problema es que nadie lo mire.
+
+## Verificado contra la base
+
+Lo que se comprobó ejecutando el SQL real, no leyéndolo:
+
+- **El upsert del historial coloca cada valor en su columna.** La numeración de los diez parámetros Likert se **deriva** de la lista en vez de escribirse a mano (`PARAMS_FIJOS`, `PH_LIKERT`), porque un desajuste de uno no da error de sintaxis: guarda el valor en la columna de al lado. Se verificó en dos pasadas —las cinco primeras con 1..5 y las otras nulas, y al revés— porque el `CHECK` limita la escala a 1..5 y con diez columnas no hay forma de distinguirlas en una sola.
+- **El upsert parcial de observaciones no toca nada más**: `notas_adicionales`, el tamizaje y los síntomas quedaron intactos.
+- **`faf` sigue derivándose** del `tipo_actividad` conservado.
+- **La justificación** aterriza en su columna sin mover diagnóstico ni kcal.
+- **El tipo pedido manda**: `inicial` → inicial, `seguimiento` → seguimiento, ausente → la regla del ordinal.
+- **Los dos registros dietéticos conviven** en la misma consulta.
+
+**Lo que no se pudo probar con un token real:** las credenciales de desarrollo de este documento (`ana@vida.cr` / `nutrismart-dev`) devuelven `invalid_grant` en el Keycloak actual, así que los endpoints se ejercitaron por su SQL y sus mappers, no por HTTP. El **análisis IA del Consumo Usual** tampoco se llamó de verdad: gasta crédito de Claude. Queda para el recorrido manual.
+
+---
+
 ---
 
 # Tropiezos de entorno

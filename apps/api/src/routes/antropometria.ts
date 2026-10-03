@@ -19,7 +19,7 @@ import { pacienteVisible } from './consultas.js'
 
 const METODOS = ['bia', 'pliegues'] as const
 
-const CAMPOS = `
+export const CAMPOS = `
   id, to_char(fecha_medicion, 'YYYY-MM-DD') as fecha_medicion, consulta_id,
   peso_kg, talla_cm, imc, cintura_cm, cadera_cm, icc, brazo_cm, pierna_cm,
   metodo::text as metodo, masa_libre_grasa_kg, masa_muscular_kg, pct_grasa,
@@ -33,7 +33,7 @@ function num(v: unknown): number | null {
   return Number.isFinite(n) ? n : null
 }
 
-function aMedicion(f: Record<string, unknown>) {
+export function aMedicion(f: Record<string, unknown>) {
   return {
     id: f['id'] as string,
     fechaMedicion: f['fecha_medicion'] as string,

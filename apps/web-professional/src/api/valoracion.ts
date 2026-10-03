@@ -1,6 +1,7 @@
 /** Valoración ABCD — EVAL-00, EVAL-01, EVAL-02. */
 import { apiGet, apiPost, apiPut } from './client'
 import type { DatosCalculadora } from '../lib/calculadoraNutricion'
+import type { EstadoPlan, TipoComida } from './planes'
 
 export const SECCIONES = [
   { clave: 'antrop', etiqueta: 'Antropometría' },
@@ -12,7 +13,10 @@ export const SECCIONES = [
   { clave: 'bioquim', etiqueta: 'Laboratorios' },
   { clave: 'clinico', etiqueta: 'Clínico' },
   { clave: 'dietetico', etiqueta: 'Dietético' },
-  { clave: 'conclusion', etiqueta: 'Conclusiones' },
+  // La clave sigue siendo 'conclusion' —la valida el servidor y está
+  // escrita en los `secciones_completas` ya guardados—; lo que ve el
+  // profesional es «Prescripción» desde la R44.
+  { clave: 'conclusion', etiqueta: 'Prescripción' },
 ] as const
 
 export type Seccion = (typeof SECCIONES)[number]['clave']
@@ -92,8 +96,44 @@ export function getConsulta(
   return apiGet<Consulta>(`/api/pacientes/${pacienteId}/consultas/${consultaId}`, signal)
 }
 
-export function crearConsulta(pacienteId: string): Promise<Consulta> {
-  return apiPost<Consulta>(`/api/pacientes/${pacienteId}/consultas`, {})
+/**
+ * Abre una consulta.
+ *
+ * `tipo` es opcional: sin él el servidor lo deriva del ordinal —la
+ * primera inicial, el resto seguimiento— que es el comportamiento de
+ * antes de la R44.
+ */
+export function crearConsulta(
+  pacienteId: string,
+  tipo?: Consulta['tipo'],
+): Promise<Consulta> {
+  return apiPost<Consulta>(
+    `/api/pacientes/${pacienteId}/consultas`,
+    tipo ? { tipo } : {},
+  )
+}
+
+/**
+ * Cómo se llama cada tipo de consulta en pantalla (R44).
+ *
+ * Las claves son las del enum de la base (`inicial`, `seguimiento`) y no
+ * se tocan; lo que cambió es el rótulo.
+ */
+export const TIPOS_CONSULTA = [
+  {
+    clave: 'inicial',
+    etiqueta: 'Consulta normal',
+    descripcion: 'Valoración completa: se recorre el ABCD de principio a fin',
+  },
+  {
+    clave: 'seguimiento',
+    etiqueta: 'Seguimiento rutinario',
+    descripcion: 'Control sobre lo ya valorado: se compara contra la visita anterior',
+  },
+] as const
+
+export function etiquetaTipoConsulta(tipo: Consulta['tipo']): string {
+  return TIPOS_CONSULTA.find((t) => t.clave === tipo)?.etiqueta ?? tipo
 }
 
 export function marcarSeccion(
@@ -233,6 +273,8 @@ export interface Conclusion {
   diagnosticoSecundario: string | null
   observacionesClinicas: string | null
   objetivos: string | null
+  /** Razones clínicas de lo que se prescribe (R44). */
+  justificacion: string | null
   recomendaciones: string[]
   kcalPrescritas: number | null
   pctProteina: number | null
@@ -270,5 +312,53 @@ export function guardarConclusion(
   return apiPut<Conclusion>(
     `/api/pacientes/${pacienteId}/consultas/${consultaId}/conclusion`,
     datos,
+  )
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Detalle de una consulta pasada (R43)                                */
+/* ------------------------------------------------------------------ */
+
+export interface ComidaDeConsulta {
+  tipoComida: TipoComida
+  patron: string | null
+  ejemploMenu: string | null
+}
+
+/**
+ * El plan que regía el día de la consulta.
+ *
+ * «Vigente», no «de la consulta»: el plan no cuelga de la consulta en el
+ * modelo, el servidor lo deduce por fechas. Ver consulta-detalle.ts.
+ */
+export interface PlanVigenteEnConsulta {
+  id: string
+  nombre: string
+  objetivo: string | null
+  fechaInicio: string | null
+  fechaFin: string | null
+  estado: EstadoPlan
+  notas: string | null
+  comidas: ComidaDeConsulta[]
+}
+
+/** Todo lo registrado en una consulta, en una sola lectura. */
+export interface ConsultaDetalle {
+  consulta: Consulta
+  /** null cuando esa sección quedó sin registrar. */
+  antropometria: Medicion | null
+  conclusion: Conclusion | null
+  plan: PlanVigenteEnConsulta | null
+}
+
+export function getConsultaDetalle(
+  pacienteId: string,
+  consultaId: string,
+  signal?: AbortSignal,
+): Promise<ConsultaDetalle> {
+  return apiGet<ConsultaDetalle>(
+    `/api/pacientes/${pacienteId}/consultas/${consultaId}/detalle`,
+    signal,
   )
 }

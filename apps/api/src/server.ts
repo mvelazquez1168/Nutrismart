@@ -31,6 +31,7 @@ import { registerHistorialRoutes } from './routes/historial.js'
 import { registerDieteticoRoutes } from './routes/dietetico.js'
 import { registerRegistroDieteticoRoutes } from './routes/registroDietetico.js'
 import { registerConclusionRoutes } from './routes/conclusion.js'
+import { registerConsultaDetalleRoutes } from './routes/consulta-detalle.js'
 import { registerSeguimientoRoutes } from './routes/seguimiento.js'
 import { registerIaRoutes } from './routes/ia.js'
 import { registerInvitacionRoutes } from './routes/invitacion.js'
@@ -173,6 +174,7 @@ async function start(): Promise<void> {
     await registerDieteticoRoutes(app)
     await registerRegistroDieteticoRoutes(app)
     await registerConclusionRoutes(app)
+    await registerConsultaDetalleRoutes(app)
     await registerSeguimientoRoutes(app)
     await registerIaRoutes(app)
     await registerInvitacionRoutes(app)

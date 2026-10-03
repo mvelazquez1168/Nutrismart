@@ -11,8 +11,8 @@ import {
   CONDICIONES,
   ESCALA_LIKERT,
   LIKERT,
+  LIKERT_RETIRADOS,
   SINTOMAS_GI,
-  TIPOS_ACTIVIDAD,
   getHistorial,
   guardarHistorial,
   type Historial,
@@ -39,7 +39,6 @@ export function FormHistorialClinico({
 }) {
   const [apf, setApf] = useState<Antecedente[]>([])
   const [app, setApp] = useState<Antecedente[]>([])
-  const [tipoActividad, setTipoActividad] = useState('')
   const [sesiones, setSesiones] = useState('')
   const [duracion, setDuracion] = useState('')
   const [actividadDetalle, setActividadDetalle] = useState('')
@@ -64,6 +63,29 @@ export function FormHistorialClinico({
    */
   const notasPrevias = useRef<string | null>(null)
 
+  /**
+   * Tipo de actividad física, conservado sin interfaz (R44).
+   *
+   * Las tarjetas de selección —las que enseñaban «FAF 1.2», «FAF 1.375»…—
+   * se retiraron: el factor de actividad se fija en la calculadora, que
+   * es donde se usa, y tenerlo en dos sitios permitía que dijeran cosas
+   * distintas.
+   *
+   * La columna sigue en la base con lo ya elegido, y el servidor deriva
+   * `faf` de ella. Como este guardado reemplaza la fila entera, el valor
+   * tiene que viajar de vuelta o se borraría —y con él el FAF del
+   * histórico— al primer guardado del historial.
+   */
+  const tipoActividadPrevio = useRef<string | null>(null)
+
+  /**
+   * Respuestas de las tres preguntas que salieron del tamizaje (R44).
+   *
+   * Igual que arriba: no se preguntan, no se pintan, y se devuelven tal
+   * cual para no borrarlas.
+   */
+  const likertRetirado = useRef<Record<string, number | null>>({})
+
   const [cargando, setCargando] = useState(true)
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -76,7 +98,7 @@ export function FormHistorialClinico({
         if (signal?.aborted) return
         setApf(h.apf ?? [])
         setApp(h.app ?? [])
-        setTipoActividad(h.tipoActividad ?? '')
+        tipoActividadPrevio.current = h.tipoActividad ?? null
         setSesiones(h.sesionesSemana?.toString() ?? '')
         setDuracion(h.duracionMin?.toString() ?? '')
         setActividadDetalle(h.actividadDetalle ?? '')
@@ -86,6 +108,9 @@ export function FormHistorialClinico({
         setSintomas(h.sintomasGi ?? [])
         setGiDetalle(h.giDetalle ?? '')
         notasPrevias.current = h.notasAdicionales ?? null
+        likertRetirado.current = Object.fromEntries(
+          LIKERT_RETIRADOS.map((k) => [k, h[k]]),
+        )
         setLikert(
           Object.fromEntries(
             LIKERT.map((l) => [l.clave, h[l.clave]]).filter(([, v]) => v !== null),
@@ -115,8 +140,6 @@ export function FormHistorialClinico({
     setOk(false)
   }
 
-  const faf = TIPOS_ACTIVIDAD.find((t) => t.clave === tipoActividad)?.faf ?? null
-
   async function guardar() {
     setGuardando(true)
     setError(null)
@@ -126,7 +149,7 @@ export function FormHistorialClinico({
         consultaId,
         apf,
         app,
-        tipoActividad: tipoActividad || null,
+        tipoActividad: tipoActividadPrevio.current,
         sesionesSemana: sesiones === '' ? null : Number(sesiones),
         duracionMin: duracion === '' ? null : Number(duracion),
         actividadDetalle: actividadDetalle || null,
@@ -135,6 +158,7 @@ export function FormHistorialClinico({
         otrasSustancias: otrasSustancias || null,
         sintomasGi: sintomas,
         giDetalle: giDetalle || null,
+        ...likertRetirado.current,
         ...likert,
         notasAdicionales: notasPrevias.current,
       })
@@ -216,35 +240,11 @@ export function FormHistorialClinico({
           </div>
         </Bloque>
 
+        {/* Actividad física SIN selector de factor (R44): las tarjetas
+            «FAF 1.2 / 1.375 / …» y la lectura del factor se retiraron. El
+            FA se fija en la calculadora, que es quien lo usa. */}
         <Bloque titulo="Actividad física">
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-            {TIPOS_ACTIVIDAD.map((t) => (
-              <label
-                key={t.clave}
-                className={`cursor-pointer rounded-md border p-3 ${
-                  tipoActividad === t.clave
-                    ? 'border-primary bg-primary-tint'
-                    : 'border-border bg-surface hover:bg-surface-2'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="actividad"
-                  className="sr-only"
-                  checked={tipoActividad === t.clave}
-                  onChange={() => {
-                    setTipoActividad(t.clave)
-                    setOk(false)
-                  }}
-                />
-                <span className="block text-sm font-medium text-ink">{t.etiqueta}</span>
-                <span className="block text-xs text-muted">{t.descripcion}</span>
-                <span className="mt-1 block text-xs tabular-nums text-primary">FAF {t.faf}</span>
-              </label>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Campo id="ses" etiqueta="Sesiones por semana">
               <input
                 id="ses"
@@ -267,10 +267,6 @@ export function FormHistorialClinico({
                 className={claseControl(false)}
               />
             </Campo>
-            <div className="rounded-md border border-border bg-surface-2 p-3">
-              <p className="text-xs uppercase tracking-wide text-muted">Factor de actividad</p>
-              <p className="text-xl font-bold tabular-nums text-ink">{faf ?? '—'}</p>
-            </div>
           </div>
 
           <Campo id="act-det" etiqueta="Detalles" ayuda="Opcional">
@@ -360,12 +356,16 @@ export function FormHistorialClinico({
           )}
         </Bloque>
 
-        <Bloque titulo="Relación con la comida">
+        <Bloque titulo="Relación con los alimentos">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr>
-                  <th className="w-48" />
+                  {/* Las preguntas de la R44 son frases enteras, no
+                      etiquetas de dos palabras: la columna pasa de w-48 a
+                      la mitad de la tabla para que no se parta cada una
+                      en cuatro líneas. */}
+                  <th className="w-1/2 min-w-[18rem]" />
                   {ESCALA_LIKERT.map((e) => (
                     <th
                       key={e}

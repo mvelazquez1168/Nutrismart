@@ -5,7 +5,7 @@
  * Los gramos de cada macro se muestran calculados pero los deriva el
  * servidor: aquí es un anticipo, no una segunda fuente.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type CSSProperties } from 'react'
 import { ApiError } from '../../api/client'
 import {
   DIAGNOSTICOS,
@@ -34,6 +34,7 @@ export function FormConclusion({
   consultaId,
   edad,
   sexo,
+  alergias,
   bloqueada,
   onGuardado,
 }: {
@@ -41,6 +42,14 @@ export function FormConclusion({
   consultaId: string
   edad: number | null
   sexo: string | null
+  /**
+   * Alergias e intolerancias del paciente (R44), de solo lectura.
+   *
+   * Llegan por prop y no por un fetch propio: la pantalla contenedora ya
+   * tiene el paciente cargado, y pedirlo otra vez sería una segunda
+   * petición para pintar lo mismo que el resumen del expediente.
+   */
+  alergias: { descripcion: string }[]
   bloqueada: boolean
   onGuardado: () => void | Promise<void>
 }) {
@@ -48,6 +57,7 @@ export function FormConclusion({
   const [secundario, setSecundario] = useState('')
   const [observaciones, setObservaciones] = useState('')
   const [objetivos, setObjetivos] = useState('')
+  const [justificacion, setJustificacion] = useState('')
   const [recomendaciones, setRecomendaciones] = useState<string[]>([])
   const [personalizada, setPersonalizada] = useState('')
   const [kcal, setKcal] = useState('')
@@ -80,6 +90,7 @@ export function FormConclusion({
           setSecundario(c.diagnosticoSecundario ?? '')
           setObservaciones(c.observacionesClinicas ?? '')
           setObjetivos(c.objetivos ?? '')
+          setJustificacion(c.justificacion ?? '')
           setRecomendaciones(c.recomendaciones ?? [])
           setKcal(c.kcalPrescritas?.toString() ?? '')
           if (c.pctProteina !== null && c.pctCho !== null && c.pctGrasa !== null) {
@@ -145,6 +156,7 @@ export function FormConclusion({
         diagnosticoSecundario: secundario || null,
         observacionesClinicas: observaciones || null,
         objetivos: objetivos || null,
+        justificacion: justificacion || null,
         recomendaciones,
         kcalPrescritas: kcalNum,
         // Los tres o ninguno: el servidor rechaza un reparto incompleto.
@@ -247,6 +259,37 @@ export function FormConclusion({
               Abrir calculadora →
             </button>
           </div>
+
+          {/* Las alergias, lo PRIMERO de la sección y de solo lectura
+              (R44): son la restricción que no se negocia, y tenerlas que
+              buscar en otra pestaña mientras se escribe el plan es cómo
+              se prescribe lácteo a quien no lo tolera. Sin alergias
+              registradas el bloque no aparece: un «Sin registrar» aquí se
+              leería como «no tiene». */}
+          {alergias.length > 0 && (
+            <div
+              className="rounded-md border p-3"
+              style={{
+                borderColor: 'var(--status-alert)',
+                backgroundColor: 'color-mix(in srgb, var(--status-alert) 8%, transparent)',
+              }}
+            >
+              <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink">
+                Alergias e intolerancias
+              </p>
+              <ul className="flex flex-wrap gap-1.5">
+                {alergias.map((a) => (
+                  <li
+                    key={a.descripcion}
+                    className="badge-estado"
+                    style={{ '--estado-color': 'var(--status-alert)' } as CSSProperties}
+                  >
+                    {a.descripcion}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
             <Campo id="kcal" etiqueta="Meta calórica (kcal/día)">
@@ -382,6 +425,31 @@ export function FormConclusion({
               value={suplementos}
               onChange={(e) => setSuplementos(e.target.value)}
               className={`${claseControl(false)} resize-none`}
+            />
+          </Campo>
+        </section>
+
+        {/* ---- Justificación ---- */}
+        {/* Entre la prescripción y el plan, y no dentro de la
+            prescripción: se escribe DESPUÉS de haber decidido las kcal y
+            los macros, mirándolos. Es el «por qué» de lo de arriba, no un
+            campo más del formulario. */}
+        <section className="space-y-3 rounded-lg border border-border bg-surface p-5">
+          <h3 className="font-semibold text-ink">Justificación</h3>
+          <Campo
+            id="justificacion"
+            etiqueta="Razones clínicas de la prescripción"
+            ayuda="Por qué estas kcal, estos macros y estas restricciones para este paciente"
+          >
+            <textarea
+              id="justificacion"
+              rows={4}
+              value={justificacion}
+              onChange={(e) => {
+                setJustificacion(e.target.value)
+                setOk(false)
+              }}
+              className={`${claseControl(false)} resize-y`}
             />
           </Campo>
         </section>

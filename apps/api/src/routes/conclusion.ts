@@ -59,9 +59,12 @@ const RESTRICCIONES = [
 /** Kilocalorías por gramo. Atwater, redondeado como en la práctica. */
 const KCAL_G = { proteina: 4, cho: 4, grasa: 9 }
 
-const CAMPOS = `
+/** Metas de sodio que ofrece la calculadora, en mg/día (R44). */
+const SODIO_OFRECIDO = [2500, 2000, 1600, 800]
+
+export const CAMPOS = `
   id, consulta_id, diagnostico_principal, diagnostico_cie10, diagnostico_secundario,
-  observaciones_clinicas, objetivos, recomendaciones, kcal_prescritas,
+  observaciones_clinicas, objetivos, justificacion, recomendaciones, kcal_prescritas,
   pct_proteina, pct_cho, pct_grasa, proteina_g, cho_g, grasa_g,
   restricciones, suplementos, acuerdos,
   peso_objetivo, to_char(fecha_objetivo_peso,'YYYY-MM-DD') as fecha_objetivo_peso,
@@ -169,6 +172,13 @@ function sanearDatosCalculadora(v: unknown): unknown {
     geeTotal: opcional(o['geeTotal']),
     getCunningham: opcional(o['getCunningham']),
     disponibilidadEnergetica: opcional(o['disponibilidadEnergetica']),
+    /* ---- Sodio recomendado (R44) ----
+     *
+     * Lista blanca de los cuatro valores que ofrece la pantalla: no es
+     * un número libre, es la meta de sodio que se eligió. Las cdtas de
+     * sal se derivan de aquí al pintar, no se guardan: un total
+     * almacenado podría dejar de cuadrar con su propio factor. */
+    sodioMg: SODIO_OFRECIDO.includes(Number(o['sodioMg'])) ? Number(o['sodioMg']) : null,
   }
 }
 
@@ -182,7 +192,7 @@ function noEncontradaConsulta() {
   return { error: 'consulta_no_encontrada', message: 'No se encontró la consulta' }
 }
 
-function aConclusion(f: Record<string, unknown>) {
+export function aConclusion(f: Record<string, unknown>) {
   const num = (v: unknown) => (v === null || v === undefined ? null : Number(v))
   return {
     id: f['id'] as string,
@@ -192,6 +202,8 @@ function aConclusion(f: Record<string, unknown>) {
     diagnosticoSecundario: (f['diagnostico_secundario'] as string | null) ?? null,
     observacionesClinicas: (f['observaciones_clinicas'] as string | null) ?? null,
     objetivos: (f['objetivos'] as string | null) ?? null,
+    /** Razones clínicas de lo que se prescribe (R44). */
+    justificacion: (f['justificacion'] as string | null) ?? null,
     recomendaciones: (f['recomendaciones'] ?? []) as string[],
     kcalPrescritas: num(f['kcal_prescritas']),
     pctProteina: num(f['pct_proteina']),
@@ -420,10 +432,10 @@ export async function registerConclusionRoutes(app: FastifyInstance): Promise<vo
              observaciones_clinicas, objetivos, recomendaciones,
              kcal_prescritas, pct_proteina, pct_cho, pct_grasa,
              proteina_g, cho_g, grasa_g, restricciones, suplementos, acuerdos,
-             peso_objetivo, fecha_objetivo_peso, datos_calculadora
+             peso_objetivo, fecha_objetivo_peso, datos_calculadora, justificacion
            ) values (
              $1,$2,$3,$4,$5,$6,$7,$8,$22,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18,$19::jsonb,
-             $20,$21::date,$23::jsonb
+             $20,$21::date,$23::jsonb,$24
            )
            on conflict (consulta_id) do update set
              profesional_id = excluded.profesional_id,
@@ -432,6 +444,7 @@ export async function registerConclusionRoutes(app: FastifyInstance): Promise<vo
              diagnostico_secundario = excluded.diagnostico_secundario,
              observaciones_clinicas = excluded.observaciones_clinicas,
              objetivos = excluded.objetivos,
+             justificacion = excluded.justificacion,
              recomendaciones = excluded.recomendaciones,
              kcal_prescritas = excluded.kcal_prescritas,
              pct_proteina = excluded.pct_proteina, pct_cho = excluded.pct_cho,
@@ -456,6 +469,7 @@ export async function registerConclusionRoutes(app: FastifyInstance): Promise<vo
             pesoObjetivo, fechaObjetivoPeso,
             texto('objetivos'),
             datosCalc === null ? null : JSON.stringify(datosCalc),
+            texto('justificacion'),
           ],
         )
 

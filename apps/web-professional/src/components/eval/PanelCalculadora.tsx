@@ -29,8 +29,12 @@ import {
   CATALOGO_ACTIVIDADES,
   METODOS_GEB,
   METODOS_DIETA,
+  METODOS_DIETA_OFRECIDOS,
+  metodosOfrecidos,
+  azucarLibreCdas,
+  salCdtas,
+  SODIO_OFRECIDO,
   MICRONUTRIENTES_COLOMBIANA,
-  ORDEN_METODOS,
   ETIQUETA_ESTRUCTURA,
   calcularDistribucion,
   calcularGEE,
@@ -239,6 +243,8 @@ export function PanelCalculadora({
   const [porciones, setPorciones] = useState<Record<string, number>>({})
   const [naRecomendado, setNaRecomendado] = useState('')
   const [naAportado, setNaAportado] = useState('')
+  /** Meta de sodio elegida, en mg/día (R44). null = sin elegir. */
+  const [sodioMg, setSodioMg] = useState<number | null>(null)
 
   // Precarga de la última medición. No bloquea: el panel se muestra ya y
   // los datos entran cuando llega el fetch.
@@ -318,6 +324,8 @@ export function PanelCalculadora({
       if (clave) p[clave] = l.porciones
     }
     setPorciones(p)
+    // Ausente en lo guardado antes de la R44: se queda sin elegir.
+    if (datosGuardados.sodioMg != null) setSodioMg(datosGuardados.sodioMg)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [abierto, datosGuardados])
 
@@ -525,6 +533,11 @@ export function PanelCalculadora({
         )
       : null
 
+  /* Azúcar y sal recomendadas (R44). El azúcar sale del REQ de la
+     distribución activa; la sal, de la meta de sodio elegida. */
+  const azucarCdas = reqN !== null ? azucarLibreCdas(reqN) : null
+  const salDeSodio = sodioMg !== null ? salCdtas(sodioMg) : null
+
   const sal =
     num(naRecomendado) !== null && num(naAportado) !== null
       ? calcularSal(num(naRecomendado) as number, num(naAportado) as number)
@@ -570,6 +583,7 @@ export function PanelCalculadora({
       geeTotal: esCunningham ? geeTotal : null,
       getCunningham: getCunn,
       disponibilidadEnergetica: de,
+      sodioMg,
     })
   }
 
@@ -931,8 +945,10 @@ export function PanelCalculadora({
             <Titulo>B · Distribución de dieta</Titulo>
 
             {/* Tabs de método */}
+            {/* Solo los métodos ofrecidos (R44), más el ya elegido si
+                esta conclusión viene con uno retirado. */}
             <div className="flex gap-1 rounded-md bg-surface-2 p-1" role="tablist">
-              {ORDEN_METODOS.map((clave) => (
+              {metodosOfrecidos(metodoDieta).map((clave) => (
                 <button
                   key={clave}
                   type="button"
@@ -1007,6 +1023,66 @@ export function PanelCalculadora({
                     </tbody>
                   </table>
                 </div>
+              )}
+            </div>
+
+            {/* Aviso cuando la prescripción abierta usa un método ya
+                retirado del selector: su pestaña aparece pero no se
+                debería elegir para una nueva. */}
+            {!METODOS_DIETA_OFRECIDOS.includes(metodoDieta) && (
+              <p className="text-xs" style={{ color: 'var(--status-alert)' }}>
+                {METODOS_DIETA[metodoDieta].etiqueta} ya no se ofrece para prescripciones nuevas.
+                Se muestra porque esta conclusión la tiene guardada.
+              </p>
+            )}
+
+            {/* ---- Azúcar y sal recomendadas (R44) ---- */}
+            <div className="rounded-md border border-border p-2">
+              <p className="mb-2 text-xs font-semibold text-ink">Azúcar y sal recomendadas</p>
+
+              {/* Azúcar libre: no se elige nada, sale del REQ */}
+              <div className="mb-2">
+                <p className="mb-1 text-xs text-muted">
+                  Azúcar libre — 10 % del REQ, en cucharadas de 15 g
+                </p>
+                {azucarCdas !== null ? (
+                  <Lectura etiqueta="Azúcar libre" valor={`${azucarCdas} cdas/día`} />
+                ) : (
+                  <p className="text-xs text-muted">Indica el REQ a utilizar para calcularla.</p>
+                )}
+              </div>
+
+              {/* Sal: cuatro metas de sodio */}
+              <p className="mb-1 text-xs text-muted">Sal — según la meta de sodio</p>
+              <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Meta de sodio">
+                {SODIO_OFRECIDO.map((mg) => (
+                  <button
+                    key={mg}
+                    type="button"
+                    role="radio"
+                    aria-checked={sodioMg === mg}
+                    // Volver a pulsar el elegido lo deselecciona: «no se
+                    // fijó meta de sodio» tiene que poder recuperarse sin
+                    // cerrar la calculadora.
+                    onClick={() => setSodioMg(sodioMg === mg ? null : mg)}
+                    className={`rounded-pill border px-3 py-1 text-xs tabular-nums ${
+                      sodioMg === mg
+                        ? 'border-primary bg-primary-tint font-semibold text-primary'
+                        : 'border-border text-ink hover:bg-surface-2'
+                    }`}
+                  >
+                    {mg} mg
+                  </button>
+                ))}
+              </div>
+              {salDeSodio !== null ? (
+                <div className="mt-2">
+                  <Lectura etiqueta="Sal" valor={`${salDeSodio} cdtas/día`} />
+                </div>
+              ) : (
+                <p className="mt-1 text-xs text-muted">
+                  Elige una meta de sodio para calcular las cucharaditas.
+                </p>
               )}
             </div>
 

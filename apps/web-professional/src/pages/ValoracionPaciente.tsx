@@ -11,6 +11,7 @@ import { getPaciente } from '../api/pacientes'
 import {
   SECCIONES,
   SECCIONES_EXIGIDAS,
+  etiquetaTipoConsulta,
   finalizarConsulta,
   getConsulta,
   type Consulta,
@@ -22,6 +23,7 @@ import { FormAntropometria } from '../components/eval/FormAntropometria'
 import { PanelBioquimica } from '../components/eval/PanelBioquimica'
 import { FormHistorialClinico } from '../components/eval/FormHistorialClinico'
 import { HabitosClinicos } from '../components/eval/HabitosClinicos'
+import { ObservacionesHistorial } from '../components/eval/ObservacionesHistorial'
 import { TabsDietetico } from '../components/eval/TabsDietetico'
 import { FormConclusion } from '../components/eval/FormConclusion'
 import { ResumenPlanPrescrito } from '../components/eval/ResumenPlanPrescrito'
@@ -141,7 +143,7 @@ export function ValoracionPaciente() {
           </div>
           <p className="mt-0.5 text-sm text-muted">
             Consulta #{consulta.numeroConsulta} ·{' '}
-            {consulta.tipo === 'inicial' ? 'Inicial' : 'Seguimiento'} · {consulta.fechaConsulta}
+            {etiquetaTipoConsulta(consulta.tipo)} · {consulta.fechaConsulta}
           </p>
         </div>
 
@@ -225,6 +227,10 @@ export function ValoracionPaciente() {
               botón: se guardan en la ficha del paciente, no en el
               historial de esta consulta. */}
           <HabitosClinicos pacienteId={id} bloqueada={finalizada} />
+          {/* Observaciones del historial (R44). Después de Hábitos y con
+              su propio botón, por el mismo motivo: no se guardan con el
+              formulario del historial. */}
+          <ObservacionesHistorial pacienteId={id} bloqueada={finalizada} />
         </div>
       )}
       {tab === 'dietetico' && (
@@ -243,6 +249,7 @@ export function ValoracionPaciente() {
             consultaId={consultaId}
             edad={paciente?.edad ?? null}
             sexo={paciente?.sexoBiologico ?? null}
+            alergias={paciente?.alergias ?? []}
             bloqueada={finalizada}
             onGuardado={refrescar}
           />

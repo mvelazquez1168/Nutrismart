@@ -26,13 +26,33 @@ export const FACTOR_ACTIVIDAD: Record<string, number> = {
   muy_intenso: 1.9,
 }
 
+/**
+ * Tamizaje de relación con los alimentos: las SIETE preguntas vigentes
+ * (R44) más las tres retiradas.
+ *
+ * `LIKERT` es la lista que la pantalla pregunta hoy. `LIKERT_RETIRADOS`
+ * son preguntas que salieron del cuestionario en la R44 y cuyas columnas
+ * siguen ahí con lo que se respondió antes.
+ *
+ * Ambas listas entran en la validación, en el INSERT y en la respuesta.
+ * Si las retiradas no viajaran de vuelta, el primer guardado del
+ * historial las borraría: este endpoint reemplaza la fila entera.
+ */
 const LIKERT = [
-  'alimentacionEmocional',
-  'salteoComidas',
-  'atracones',
   'culpaAlComer',
-  'dietasFrecuentes',
+  'mereceComerTrasEjercicio',
+  'alimentacionEmocional',
+  'identificaHambreSaciedad',
+  'valorPersonalApariencia',
+  'comidaOcupaPensamientos',
+  'clasificaAlimentosBuenosMalos',
 ] as const
+
+/** Fuera del cuestionario desde la R44; su dato se conserva. */
+const LIKERT_RETIRADOS = ['salteoComidas', 'atracones', 'dietasFrecuentes'] as const
+
+/** Todo lo que se lee y se escribe, vigente o no. */
+const LIKERT_TODOS = [...LIKERT, ...LIKERT_RETIRADOS] as const
 
 const COLUMNA_LIKERT: Record<string, string> = {
   alimentacionEmocional: 'alimentacion_emocional',
@@ -40,14 +60,83 @@ const COLUMNA_LIKERT: Record<string, string> = {
   atracones: 'atracones',
   culpaAlComer: 'culpa_al_comer',
   dietasFrecuentes: 'dietas_frecuentes',
+  mereceComerTrasEjercicio: 'merece_comer_tras_ejercicio',
+  identificaHambreSaciedad: 'identifica_hambre_saciedad',
+  valorPersonalApariencia: 'valor_personal_apariencia',
+  comidaOcupaPensamientos: 'comida_ocupa_pensamientos',
+  clasificaAlimentosBuenosMalos: 'clasifica_alimentos_buenos_malos',
 }
+
+/*
+ * Numeración de los parámetros del INSERT, derivada y no escrita a mano.
+ *
+ * El bloque Likert pasó de cinco columnas a diez en la R44. Con los
+ * `$17,$18,…` escritos literalmente, añadir una pregunta obliga a
+ * recorrer la lista entera renumerando, y un desajuste de uno no da
+ * error de sintaxis: guarda el valor en la columna de al lado.
+ *
+ * `PARAMS_FIJOS` son los parámetros anteriores al bloque Likert, en el
+ * orden en que aparecen en el INSERT: clinica, paciente, consulta,
+ * profesional, apf, app, tipo_actividad, sesiones, duracion, faf,
+ * actividad_detalle, fuma, alcohol, otras_sustancias, sintomas_gi,
+ * gi_detalle.
+ */
+const PARAMS_FIJOS = 16
+const COLS_LIKERT = LIKERT_TODOS.map((k) => COLUMNA_LIKERT[k])
+const PH_LIKERT = COLS_LIKERT.map((_, i) => `$${PARAMS_FIJOS + 1 + i}`).join(',')
+const SET_LIKERT = COLS_LIKERT.map((col) => `${col} = excluded.${col}`).join(', ')
+const PH_OBSERVACIONES = `$${PARAMS_FIJOS + COLS_LIKERT.length + 1}`
+const PH_NOTAS = `$${PARAMS_FIJOS + COLS_LIKERT.length + 2}`
 
 const CAMPOS = `
   id, consulta_id, apf, app, tipo_actividad, sesiones_semana, duracion_min, faf,
   actividad_detalle, fuma, alcohol, otras_sustancias, sintomas_gi, gi_detalle,
   alimentacion_emocional, salteo_comidas, atracones, culpa_al_comer, dietas_frecuentes,
-  notas_adicionales, updated_at
+  merece_comer_tras_ejercicio, identifica_hambre_saciedad, valor_personal_apariencia,
+  comida_ocupa_pensamientos, clasifica_alimentos_buenos_malos,
+  observaciones_clinicas, notas_adicionales, updated_at
 `
+
+/**
+ * Upsert del historial completo.
+ *
+ * Constante de módulo y no una plantilla dentro del handler: no depende
+ * de nada de la petición, y aquí se puede ejercitar contra la base sin
+ * pasar por la autenticación —que es la única forma de comprobar que
+ * cada parámetro aterriza en SU columna cuando la numeración se deriva.
+ */
+const SQL_UPSERT_HISTORIAL = `
+  insert into historial_clinico (
+    clinica_id, paciente_id, consulta_id, profesional_id,
+    apf, app, tipo_actividad, sesiones_semana, duracion_min, faf, actividad_detalle,
+    fuma, alcohol, otras_sustancias, sintomas_gi, gi_detalle,
+    ${COLS_LIKERT.join(', ')}, observaciones_clinicas, notas_adicionales
+  ) values (
+    $1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9,$10,$11,
+    $12,$13,$14,$15::jsonb,$16,
+    ${PH_LIKERT},${PH_OBSERVACIONES},${PH_NOTAS}
+  )
+  on conflict (clinica_id, paciente_id) do update set
+    consulta_id = coalesce(excluded.consulta_id, historial_clinico.consulta_id),
+    profesional_id = excluded.profesional_id,
+    apf = excluded.apf, app = excluded.app,
+    tipo_actividad = excluded.tipo_actividad,
+    sesiones_semana = excluded.sesiones_semana,
+    duracion_min = excluded.duracion_min,
+    faf = excluded.faf,
+    actividad_detalle = excluded.actividad_detalle,
+    fuma = excluded.fuma, alcohol = excluded.alcohol,
+    otras_sustancias = excluded.otras_sustancias,
+    sintomas_gi = excluded.sintomas_gi, gi_detalle = excluded.gi_detalle,
+    ${SET_LIKERT},
+    observaciones_clinicas = excluded.observaciones_clinicas,
+    notas_adicionales = excluded.notas_adicionales
+  returning ${CAMPOS}
+`
+
+/** El orden en que `SQL_UPSERT_HISTORIAL` espera los valores Likert. */
+export const ORDEN_PARAMS_LIKERT = LIKERT_TODOS
+export { SQL_UPSERT_HISTORIAL, aHistorial }
 
 function sinProfesional() {
   return {
@@ -81,6 +170,12 @@ function aHistorial(f: Record<string, unknown>) {
     atracones: num(f['atracones']),
     culpaAlComer: num(f['culpa_al_comer']),
     dietasFrecuentes: num(f['dietas_frecuentes']),
+    mereceComerTrasEjercicio: num(f['merece_comer_tras_ejercicio']),
+    identificaHambreSaciedad: num(f['identifica_hambre_saciedad']),
+    valorPersonalApariencia: num(f['valor_personal_apariencia']),
+    comidaOcupaPensamientos: num(f['comida_ocupa_pensamientos']),
+    clasificaAlimentosBuenosMalos: num(f['clasifica_alimentos_buenos_malos']),
+    observacionesClinicas: (f['observaciones_clinicas'] as string | null) ?? null,
     notasAdicionales: (f['notas_adicionales'] as string | null) ?? null,
     updatedAt: f['updated_at'] as Date,
   }
@@ -173,7 +268,7 @@ export async function registerHistorialRoutes(app: FastifyInstance): Promise<voi
         return n
       }
 
-      for (const clave of LIKERT) {
+      for (const clave of LIKERT_TODOS) {
         const v = c[clave]
         if (v === undefined || v === null || v === '') continue
         const n = Number(v)
@@ -212,34 +307,7 @@ export async function registerHistorialRoutes(app: FastifyInstance): Promise<voi
         await cliente.query('begin')
 
         const { rows } = await cliente.query(
-          `insert into historial_clinico (
-             clinica_id, paciente_id, consulta_id, profesional_id,
-             apf, app, tipo_actividad, sesiones_semana, duracion_min, faf, actividad_detalle,
-             fuma, alcohol, otras_sustancias, sintomas_gi, gi_detalle,
-             ${LIKERT.map((k) => COLUMNA_LIKERT[k]).join(', ')}, notas_adicionales
-           ) values (
-             $1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9,$10,$11,
-             $12,$13,$14,$15::jsonb,$16,$17,$18,$19,$20,$21,$22
-           )
-           on conflict (clinica_id, paciente_id) do update set
-             consulta_id = coalesce(excluded.consulta_id, historial_clinico.consulta_id),
-             profesional_id = excluded.profesional_id,
-             apf = excluded.apf, app = excluded.app,
-             tipo_actividad = excluded.tipo_actividad,
-             sesiones_semana = excluded.sesiones_semana,
-             duracion_min = excluded.duracion_min,
-             faf = excluded.faf,
-             actividad_detalle = excluded.actividad_detalle,
-             fuma = excluded.fuma, alcohol = excluded.alcohol,
-             otras_sustancias = excluded.otras_sustancias,
-             sintomas_gi = excluded.sintomas_gi, gi_detalle = excluded.gi_detalle,
-             alimentacion_emocional = excluded.alimentacion_emocional,
-             salteo_comidas = excluded.salteo_comidas,
-             atracones = excluded.atracones,
-             culpa_al_comer = excluded.culpa_al_comer,
-             dietas_frecuentes = excluded.dietas_frecuentes,
-             notas_adicionales = excluded.notas_adicionales
-           returning ${CAMPOS}`,
+          SQL_UPSERT_HISTORIAL,
           [
             tenantId, id, consultaId, alcance.profesionalId,
             json(c['apf'], '[]'), json(c['app'], '[]'),
@@ -247,8 +315,9 @@ export async function registerHistorialRoutes(app: FastifyInstance): Promise<voi
             faf, texto('actividadDetalle'),
             booleano('fuma'), booleano('alcohol'), texto('otrasSustancias'),
             json(c['sintomasGi'], '[]'), texto('giDetalle'),
-            likert('alimentacionEmocional'), likert('salteoComidas'), likert('atracones'),
-            likert('culpaAlComer'), likert('dietasFrecuentes'),
+            // El mismo orden que COLS_LIKERT, derivado de la misma lista.
+            ...LIKERT_TODOS.map((k) => likert(k)),
+            texto('observacionesClinicas'),
             texto('notasAdicionales'),
           ],
         )
@@ -272,6 +341,59 @@ export async function registerHistorialRoutes(app: FastifyInstance): Promise<voi
       } finally {
         cliente.release()
       }
+    },
+  )
+
+  /* ---------------------------------------------------------------- */
+  /* PUT /api/pacientes/:id/historial/observaciones                     */
+  /* ---------------------------------------------------------------- */
+  /**
+   * Solo las observaciones clínicas del historial (R44).
+   *
+   * Endpoint aparte del PUT del historial completo, que reemplaza la
+   * fila entera: esta sección vive en su propia tarjeta —después de
+   * Hábitos— y no tiene a mano el resto del formulario. Mandarla por el
+   * PUT grande con el resto en blanco borraría antecedentes, síntomas y
+   * tamizaje de un golpe.
+   *
+   * Es un upsert y no un update: el historial puede no existir todavía
+   * —esta puede ser la primera cosa que se escriba del paciente— y un
+   * update afectaría a cero filas sin decir nada.
+   */
+  app.put<{ Params: { id: string } }>(
+    '/api/pacientes/:id/historial/observaciones',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { tenantId, sub, roles } = request.auth
+      const alcance = await resolverAlcance(tenantId, sub, roles)
+      if (!alcance) return reply.code(403).send(sinProfesional())
+
+      const { id } = request.params
+      if (!(await pacienteVisible(id, tenantId, alcance.restringirA))) {
+        return reply.code(404).send(noEncontradoPaciente())
+      }
+
+      const c = (request.body ?? {}) as Record<string, unknown>
+      const bruto = c['observacionesClinicas']
+      if (bruto !== null && bruto !== undefined && typeof bruto !== 'string') {
+        return reply.code(400).send({
+          error: 'validacion',
+          message: 'Las observaciones clínicas deben ser texto',
+          errores: [{ campo: 'observacionesClinicas', mensaje: 'Debe ser texto o nulo' }],
+        })
+      }
+      const observaciones =
+        typeof bruto === 'string' && bruto.trim() !== '' ? bruto.trim() : null
+
+      const { rows } = await pool.query(
+        `insert into historial_clinico (clinica_id, paciente_id, profesional_id, observaciones_clinicas)
+              values ($1, $2, $3, $4)
+         on conflict (clinica_id, paciente_id) do update set
+           observaciones_clinicas = excluded.observaciones_clinicas
+         returning ${CAMPOS}`,
+        [tenantId, id, alcance.profesionalId, observaciones],
+      )
+      return reply.send(aHistorial(rows[0] as Record<string, unknown>))
     },
   )
 

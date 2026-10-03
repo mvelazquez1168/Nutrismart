@@ -1,6 +1,15 @@
 /** Historial clínico, farmacología y evaluación dietética — EVAL-03, EVAL-04. */
 import { apiDelete, apiGet, apiPost, apiPut } from './client'
 
+/**
+ * Tipos de actividad física con su factor.
+ *
+ * Ya NO se ofrecen en pantalla: la R44 retiró las tarjetas de selección
+ * del bloque «Actividad física» del Clínico. La tabla se queda porque es
+ * la referencia de lo que significa cada `tipo_actividad` guardado —el
+ * servidor sigue derivando el `faf` de esa columna— y porque sin ella no
+ * hay forma de volver a pintar lo ya registrado si el selector regresa.
+ */
 export const TIPOS_ACTIVIDAD = [
   { clave: 'sedentario', etiqueta: 'Sedentario', faf: 1.2, descripcion: 'Trabajo de oficina, sin ejercicio' },
   { clave: 'leve', etiqueta: 'Leve', faf: 1.375, descripcion: 'Ejercicio ligero 1-3 días' },
@@ -28,15 +37,53 @@ export const SINTOMAS_GI = [
   'Colon irritable',
   'Enfermedad inflamatoria intestinal',
   'Intolerancia alimentaria',
+  // R44. Son diagnósticos concretos dentro de «enfermedad inflamatoria
+  // intestinal», que se queda: no todo caso tiene el subtipo precisado.
+  'CUCI (Colitis Ulcerosa Crónica Idiopática)',
+  'Enfermedad de Crohn',
 ] as const
 
+/**
+ * Tamizaje de relación con los alimentos — siete preguntas (R44).
+ *
+ * Están redactadas en segunda persona porque se leen en voz alta al
+ * paciente, no se interpretan desde la ficha.
+ *
+ * Dos conservan su columna de antes: la de culpa y la de emociones
+ * preguntan lo mismo con otras palabras, así que lo ya respondido sigue
+ * siendo válido y aparece al abrir el historial.
+ */
 export const LIKERT = [
-  { clave: 'alimentacionEmocional', etiqueta: 'Come por emociones' },
-  { clave: 'salteoComidas', etiqueta: 'Se salta comidas' },
-  { clave: 'atracones', etiqueta: 'Episodios de atracón' },
-  { clave: 'culpaAlComer', etiqueta: 'Culpa al comer' },
-  { clave: 'dietasFrecuentes', etiqueta: 'Dietas frecuentes' },
+  { clave: 'culpaAlComer', etiqueta: '¿Hay alimentos que generen culpa o vergüenza?' },
+  {
+    clave: 'mereceComerTrasEjercicio',
+    etiqueta: '¿Sientes que mereces comer solo después de hacer ejercicio?',
+  },
+  { clave: 'alimentacionEmocional', etiqueta: '¿Las emociones influyen en cómo y qué comes?' },
+  {
+    clave: 'identificaHambreSaciedad',
+    etiqueta: '¿Te resulta fácil identificar cuándo tienes hambre o estás satisfecho/a?',
+  },
+  { clave: 'valorPersonalApariencia', etiqueta: '¿Sientes que tu valor personal depende de cómo luces?' },
+  {
+    clave: 'comidaOcupaPensamientos',
+    etiqueta: '¿La comida ocupa gran parte de tus pensamientos durante el día?',
+  },
+  {
+    clave: 'clasificaAlimentosBuenosMalos',
+    etiqueta: '¿Clasificas ciertos alimentos o grupos de alimentos como «buenos» o «malos»?',
+  },
 ] as const
+
+/**
+ * Preguntas retiradas del cuestionario en la R44.
+ *
+ * No se preguntan ni se pintan, pero sus respuestas siguen en la base y
+ * el formulario las devuelve tal cual al guardar: el PUT del historial
+ * reemplaza la fila entera, así que sin este viaje de ida y vuelta se
+ * borrarían. Mismo patrón que `notasAdicionales` desde la R41.
+ */
+export const LIKERT_RETIRADOS = ['salteoComidas', 'atracones', 'dietasFrecuentes'] as const
 
 export const ESCALA_LIKERT = ['Nunca', 'Casi nunca', 'A veces', 'A menudo', 'Siempre'] as const
 
@@ -60,6 +107,19 @@ export interface Historial {
   atracones: number | null
   culpaAlComer: number | null
   dietasFrecuentes: number | null
+  mereceComerTrasEjercicio: number | null
+  identificaHambreSaciedad: number | null
+  valorPersonalApariencia: number | null
+  comidaOcupaPensamientos: number | null
+  clasificaAlimentosBuenosMalos: number | null
+  /**
+   * Observaciones del historial (R44), del PACIENTE.
+   *
+   * No confundir con `Conclusion.observacionesClinicas`, que es el
+   * juicio de UNA consulta. Comparten rótulo porque viven en carpetas
+   * distintas de la valoración.
+   */
+  observacionesClinicas: string | null
   notasAdicionales: string | null
 }
 
@@ -126,6 +186,22 @@ export function guardarHistorial(
   datos: Record<string, unknown>,
 ): Promise<Historial> {
   return apiPut<Historial>(`/api/pacientes/${pacienteId}/historial`, datos)
+}
+
+/**
+ * Guarda SOLO las observaciones del historial.
+ *
+ * Endpoint propio y no `guardarHistorial`: ese PUT reemplaza la fila
+ * entera, y esta sección vive en su propia tarjeta con su propio botón
+ * —después de Hábitos— sin el estado del resto del formulario a mano.
+ */
+export function guardarObservacionesHistorial(
+  pacienteId: string,
+  observacionesClinicas: string | null,
+): Promise<Historial> {
+  return apiPut<Historial>(`/api/pacientes/${pacienteId}/historial/observaciones`, {
+    observacionesClinicas,
+  })
 }
 
 /* ---- Farmacología ---- */

@@ -109,6 +109,28 @@ export async function registerConsultasRoutes(app: FastifyInstance): Promise<voi
       }
 
       /*
+       * El tipo lo elige quien abre la consulta (R44).
+       *
+       * Antes se derivaba del ordinal —la primera era inicial y el resto
+       * seguimiento— y eso es un buen valor por omisión, pero no es
+       * siempre cierto: un paciente que vuelve tras dos años se valora
+       * de cero, y una tercera visita puede ser un control rutinario.
+       * Si el cuerpo no lo trae, se mantiene la regla de antes.
+       */
+      const tipoPedido = (request.body ?? {}) as { tipo?: unknown }
+      const tipo =
+        tipoPedido.tipo === 'inicial' || tipoPedido.tipo === 'seguimiento'
+          ? tipoPedido.tipo
+          : null
+      if (tipoPedido.tipo !== undefined && tipo === null) {
+        return reply.code(400).send({
+          error: 'validacion',
+          message: 'El tipo de consulta debe ser «inicial» o «seguimiento»',
+          errores: [{ campo: 'tipo', mensaje: 'Una de: inicial, seguimiento' }],
+        })
+      }
+
+      /*
        * El ordinal se calcula y se inserta en la MISMA sentencia.
        *
        * Con un `select count(*)` previo, dos consultas creadas a la vez
@@ -119,11 +141,14 @@ export async function registerConsultasRoutes(app: FastifyInstance): Promise<voi
       const { rows } = await pool.query(
         `insert into consulta (clinica_id, paciente_id, profesional_id, numero_consulta, tipo)
          select $1, $2, $3, n.siguiente,
-                case when n.siguiente > 1 then 'seguimiento' else 'inicial' end::tipo_consulta
+                coalesce(
+                  $4::tipo_consulta,
+                  case when n.siguiente > 1 then 'seguimiento' else 'inicial' end::tipo_consulta
+                )
            from (select coalesce(max(numero_consulta), 0) + 1 as siguiente
                    from consulta where clinica_id = $1 and paciente_id = $2) n
          returning ${CAMPOS.replace(/c\./g, '')}`,
-        [tenantId, id, alcance.profesionalId],
+        [tenantId, id, alcance.profesionalId, tipo],
       )
 
       return reply.code(201).send(aConsulta(rows[0] as Record<string, unknown>))
