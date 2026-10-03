@@ -3,6 +3,12 @@ dist/
 build/
 .env
 .env.local
+
+# Produccion — nunca commitear. Trae las contrasenas de Postgres, el
+# admin de Keycloak y las claves de Resend/Anthropic.
+infra/.env.prod
+*.env.prod
+
 *.log
 .DS_Store
 coverage/

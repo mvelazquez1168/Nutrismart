@@ -1,0 +1,83 @@
+# ─────────────────────────────────────────────────────────────
+#  Caddyfile — NutriSmart producción
+#  Caddy obtiene y renueva certificados TLS automáticamente.
+#  Coloca este archivo en /etc/caddy/Caddyfile en el servidor.
+# ─────────────────────────────────────────────────────────────
+
+#  Este archivo se monta en el contenedor `caddy` del
+#  docker-compose.prod.yml (./Caddyfile → /etc/caddy/Caddyfile:ro). NO
+#  hay que copiarlo a /etc/caddy del servidor: vive en /opt/nutrismart/
+#  junto al compose.
+#
+#  OJO: los destinos son NOMBRES DE SERVICIO de Docker
+#  (web-professional, api, keycloak), y solo los resuelve el DNS interno
+#  de la red nutrismart_net. Por eso Caddy va como contenedor en esa red
+#  y no en el host: ningún otro contenedor publica puertos, así que desde
+#  el host "pelado" estos nombres no resolverían y todo daría 502.
+#
+#  Tras editar este archivo basta con recargar, sin reiniciar:
+#    docker compose -f docker-compose.prod.yml exec caddy \
+#      caddy reload --config /etc/caddy/Caddyfile
+
+# Aplicación web profesional
+nutrismart.solutechit.com {
+	encode gzip
+
+	# La API cuelga del MISMO dominio que la app, bajo /api/*.
+	#
+	# Sin esta ruta el frontend no tendría NINGUNA forma de alcanzar la
+	# API: el contenedor `api` no publica puertos y no existe un
+	# subdominio para él.
+	#
+	# Mismo origen = sin preflight CORS, sin registro DNS extra y sin un
+	# certificado más que renovar. A cambio, VITE_API_URL debe ser el
+	# origen a secas (https://nutrismart.solutechit.com) y NO terminar en
+	# /api: las rutas del cliente ya empiezan por /api/.
+	handle /api/* {
+		reverse_proxy api:4000
+	}
+
+	handle {
+		reverse_proxy web-professional:80
+	}
+
+	log {
+		output file /var/log/caddy/web-professional.log
+	}
+}
+
+# Aplicación web paciente
+pacientes-nutrismart.solutechit.com {
+	encode gzip
+
+	# Igual que arriba: el móvil del paciente llama a la API por su
+	# propio dominio. Es el mismo contenedor `api` detrás.
+	handle /api/* {
+		reverse_proxy api:4000
+	}
+
+	handle {
+		reverse_proxy web-patient:80
+	}
+
+	log {
+		output file /var/log/caddy/web-patient.log
+	}
+}
+
+# Keycloak — autenticación
+auth-nutrismart.solutechit.com {
+	# Keycloak necesita saber que la petición llegó por HTTPS para
+	# construir bien las URLs de los redirect_uri. Caddy ya envía
+	# X-Forwarded-Proto, -Host y -For por sí mismo —declararlas a mano
+	# era redundante y `caddy validate` lo advertía—, y el compose activa
+	# KC_PROXY_HEADERS=xforwarded para que Keycloak se fíe de ellas.
+	#
+	# X-Real-IP sí se declara: esa no la pone Caddy por defecto.
+	reverse_proxy keycloak:8080 {
+		header_up X-Real-IP {remote_host}
+	}
+	log {
+		output file /var/log/caddy/keycloak.log
+	}
+}

@@ -1,0 +1,248 @@
+# ─────────────────────────────────────────────────────────────
+#  NutriSmart — Producción
+#  Subdominos:
+#    nutrismart.solutechit.com        → web-professional
+#    pacientes-nutrismart.solutechit.com → web-patient
+#    auth-nutrismart.solutechit.com   → keycloak
+#
+#  Caddy corre como CONTENEDOR dentro de nutrismart_net y hace el proxy
+#  + HTTPS automático. Es el único servicio que publica puertos (80/443);
+#  ningún otro queda expuesto directamente al exterior.
+# ─────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Base de datos NutriSmart ─────────────────────────────────
+  db:
+    image: postgres:17-alpine
+    container_name: nutrismart-db-prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      # Script de inicio: crea la base de keycloak en el mismo servidor
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    networks:
+      - nutrismart_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Keycloak ────────────────────────────────────────────────
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3
+    container_name: nutrismart-keycloak-prod
+    restart: unless-stopped
+    command: start
+    environment:
+      KC_DB:                    postgres
+      KC_DB_URL_HOST:           db
+      KC_DB_URL_PORT:           5432
+      KC_DB_URL_DATABASE:       ${KC_DB_DATABASE}
+      KC_DB_USERNAME:           ${KC_DB_USERNAME}
+      KC_DB_PASSWORD:           ${KC_DB_PASSWORD}
+      KC_HOSTNAME:              auth-nutrismart.solutechit.com
+      KC_HOSTNAME_STRICT:       "true"
+      KC_HTTP_ENABLED:          "true"
+      # KC_PROXY quedo obsoleto en Keycloak 24 y se ignora en la 26. El
+      # sustituto es este: confia en las X-Forwarded-* que pone Caddy.
+      KC_PROXY_HEADERS:         xforwarded
+      # /health/* no existe salvo que se habilite explicitamente, y el
+      # healthcheck de abajo depende de el.
+      KC_HEALTH_ENABLED:        "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
+      # Límite de memoria JVM — crítico en t3.small
+      JAVA_OPTS_APPEND: "-Xms256m -Xmx512m"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - nutrismart_net
+    healthcheck:
+      # El check anterior (curl http://localhost:8080/health/ready) no
+      # podia pasar nunca, por DOS motivos a la vez:
+      #   1. La imagen de Keycloak no trae curl ni wget (base ubi9-micro).
+      #   2. Desde Keycloak 25 /health/* vive en el puerto de GESTION
+      #      9000, no en el 8080.
+      # Al quedarse 'unhealthy' para siempre y depender de el con
+      # service_healthy, la API —y con ella los dos frontends— no
+      # arrancaban nunca: el despliegue entero se quedaba a medias.
+      #
+      # /dev/tcp es una funcion de bash, que si esta en la imagen. Se
+      # busca 'UP' y no '"status": "UP"' para no depender del espaciado
+      # del JSON; el estado contrario es 'DOWN', que no contiene 'UP'.
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q UP <&3
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+
+  # ── API Fastify ──────────────────────────────────────────────
+  api:
+    image: ${ECR_REGISTRY}/nutrismart-api:${IMAGE_TAG}
+    container_name: nutrismart-api-prod
+    restart: unless-stopped
+    environment:
+      NODE_ENV:           production
+      DATABASE_URL:       postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+
+      # ── CORS: lista CERRADA de origenes ──────────────────────
+      # Los nombres son los que lee apps/api/src/config.ts. En
+      # particular es FRONTEND_PAC_URL (PAC, de paciente); con
+      # FRONTEND_PAT_URL la API caeria al valor por defecto
+      # (http://localhost:5175) y el navegador del paciente veria
+      # "no hay conexion con el servidor" teniendo la API delante.
+      FRONTEND_PRO_URL:   https://nutrismart.solutechit.com
+      FRONTEND_PAC_URL:   https://pacientes-nutrismart.solutechit.com
+
+      # ── Keycloak ────────────────────────────────────────────
+      # La API NO usa KEYCLOAK_URL/REALM/CLIENT_ID: valida el token con
+      # estas tres, y las tres son OBLIGATORIAS (config.ts lanza al
+      # arrancar si falta alguna).
+      #
+      # ISSUER es el claim 'iss' del token, es decir la direccion por la
+      # que el NAVEGADOR llego a Keycloak: el dominio publico. Admite
+      # lista separada por comas.
+      KEYCLOAK_ISSUER:    https://auth-nutrismart.solutechit.com/realms/${KEYCLOAK_REALM}
+      # JWKS_URL es una ruta de RED que recorre la API, no el navegador:
+      # va por el hostname interno de Docker. Con el dominio publico la
+      # peticion saldria a internet y volveria por Caddy para nada.
+      KEYCLOAK_JWKS_URL:  http://keycloak:8080/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs
+      KEYCLOAK_AUDIENCE:  ${KEYCLOAK_AUDIENCE}
+
+      # Es API_PORT, no PORT. Con PORT la API escucharia en su valor por
+      # defecto; coincide con 4000, asi que el error no se nota aqui —
+      # pero se notaria al cambiarlo.
+      API_PORT:           4000
+
+      # ── Almacen de archivos clinicos ────────────────────────
+      # Ruta DENTRO del contenedor, respaldada por el volumen de abajo.
+      ARCHIVOS_DIR:       /datos/archivos
+
+      # ── Enlaces que salen por correo ────────────────────────
+      PAC_APP_URL:        https://pacientes-nutrismart.solutechit.com
+      # Base publica del callback de OAuth de wearables (RPM-01). Tiene
+      # que coincidir EXACTA con lo registrado en cada proveedor.
+      APP_PUBLIC_URL:     https://nutrismart.solutechit.com
+
+      # ── Opcionales ──────────────────────────────────────────
+      # Vacias a proposito si no se configuran: la API arranca igual y
+      # solo esa funcion responde 503. Es la regla de oro — nunca
+      # bloquear el acceso clinico por una integracion accesoria.
+      RESEND_API_KEY:           ${RESEND_API_KEY:-}
+      RESEND_FROM:              ${RESEND_FROM:-}
+      ANTHROPIC_API_KEY:        ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODELO:         ${ANTHROPIC_MODELO:-}
+      WEARABLE_ENCRYPTION_KEY:  ${WEARABLE_ENCRYPTION_KEY:-}
+      FITBIT_CLIENT_ID:         ${FITBIT_CLIENT_ID:-}
+      FITBIT_CLIENT_SECRET:     ${FITBIT_CLIENT_SECRET:-}
+      GOOGLE_FIT_CLIENT_ID:     ${GOOGLE_FIT_CLIENT_ID:-}
+      GOOGLE_FIT_CLIENT_SECRET: ${GOOGLE_FIT_CLIENT_SECRET:-}
+      WITHINGS_CLIENT_ID:       ${WITHINGS_CLIENT_ID:-}
+      WITHINGS_CLIENT_SECRET:   ${WITHINGS_CLIENT_SECRET:-}
+    volumes:
+      # Sin este volumen los informes de laboratorio y el material de la
+      # biblioteca desaparecen en cada despliegue: son documentos
+      # clinicos y no viven en Postgres.
+      - archivos_data:/datos/archivos
+    depends_on:
+      db:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    networks:
+      - nutrismart_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4000/health || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── Web Profesional ──────────────────────────────────────────
+  web-professional:
+    image: ${ECR_REGISTRY}/nutrismart-web-professional:${IMAGE_TAG}
+    container_name: nutrismart-web-pro-prod
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - nutrismart_net
+
+  # ── Web Paciente ─────────────────────────────────────────────
+  web-patient:
+    image: ${ECR_REGISTRY}/nutrismart-web-patient:${IMAGE_TAG}
+    container_name: nutrismart-web-pat-prod
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - nutrismart_net
+
+  # ── Caddy — proxy inverso y TLS automático ───────────────────
+  #
+  # Va DENTRO de nutrismart_net a proposito: el Caddyfile enruta por
+  # NOMBRE DE SERVICIO (web-professional:80, web-patient:80,
+  # keycloak:8080, api:4000) y esos nombres solo los resuelve el DNS
+  # interno de Docker. Corriendo en el host no resolverian y los tres
+  # dominios responderian 502.
+  #
+  # Es el UNICO servicio que publica puertos. El resto queda alcanzable
+  # solo desde la red interna: ni Postgres, ni Keycloak, ni la API tienen
+  # superficie expuesta a internet.
+  caddy:
+    image: caddy:2-alpine
+    container_name: nutrismart-caddy-prod
+    restart: unless-stopped
+    ports:
+      # El 80 no es opcional aunque todo vaya por HTTPS: por ahi entra el
+      # reto HTTP-01 de Let's Encrypt y la redireccion a HTTPS.
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # /data guarda los CERTIFICADOS y la clave de cuenta ACME. Sin
+      # volumen, cada recreacion del contenedor vuelve a emitirlos, y
+      # Let's Encrypt limita a 5 por dominio y semana: unos cuantos
+      # despliegues seguidos y los tres dominios se quedan sin TLS.
+      - caddy_data:/data
+      - caddy_config:/config
+      # Los logs que declara el Caddyfile. Sin esto viven en la capa
+      # efimera del contenedor y se pierden en cada despliegue.
+      - caddy_logs:/var/log/caddy
+    depends_on:
+      - web-professional
+      - web-patient
+      - keycloak
+    networks:
+      - nutrismart_net
+
+volumes:
+  db_data:
+    name: nutrismart_db_data
+  archivos_data:
+    name: nutrismart_archivos_data
+  caddy_data:
+    name: nutrismart_caddy_data
+  caddy_config:
+    name: nutrismart_caddy_config
+  caddy_logs:
+    name: nutrismart_caddy_logs
+
+networks:
+  nutrismart_net:
+    name: nutrismart_net
+    driver: bridge

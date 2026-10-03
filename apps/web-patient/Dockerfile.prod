@@ -1,0 +1,73 @@
+# ============================================================
+# App del paciente (PWA) — imagen de PRODUCCIÓN (estático + nginx)
+#
+# Contexto de build: la RAÍZ del repo. Imprescindible, no conveniente:
+# la app importa @nutrismart/design-system, que es un workspace hermano
+# y no existiría en un contexto limitado a apps/web-patient.
+#
+#   docker build -f apps/web-patient/Dockerfile.prod \
+#     --build-arg VITE_API_URL=https://pacientes-nutrismart.solutechit.com ... .
+# ============================================================
+
+# Mismo major que la API y que el compose de desarrollo. Ver la nota en
+# apps/api/Dockerfile.prod sobre por qué no es node:20.
+ARG NODE_VERSION=24-alpine
+
+# ---------- build ----------
+FROM node:${NODE_VERSION} AS build
+WORKDIR /repo
+
+COPY package.json package-lock.json ./
+COPY apps/api/package.json apps/api/
+COPY apps/web-professional/package.json apps/web-professional/
+COPY apps/web-patient/package.json apps/web-patient/
+COPY packages/design-system/package.json packages/design-system/
+
+# El workspace de la API arrastra puppeteer, que descargaría ~180 MB de
+# Chromium para construir un frontend que no lo usa.
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+
+RUN npm ci
+
+COPY tsconfig.base.json ./
+COPY packages/design-system ./packages/design-system
+COPY apps/web-patient ./apps/web-patient
+
+# Las variables VITE_ se resuelven EN EL BUILD, no en runtime: Vite las
+# incrusta en el bundle. Por eso llegan como ARG y no por env_file como
+# en la API — pasarlas al contenedor en runtime no tendría ningún efecto.
+#
+# Todas son URLs que resuelve el NAVEGADOR del paciente, no el
+# contenedor: nginx aquí solo sirve archivos estáticos; quien llama a la
+# API es el móvil, desde fuera de Docker.
+#
+# VITE_API_URL es el ORIGEN de la API, SIN /api al final: el cliente
+# (src/lib/api.ts) hace fetch(`${BASE}${ruta}`) y cada ruta ya empieza
+# por /api/.
+#
+# OJO con el nombre del cliente: aquí es VITE_KEYCLOAK_CLIENT_ID_PACIENTE
+# (src/lib/keycloak.ts), NO VITE_KEYCLOAK_CLIENT_ID. Son dos clientes
+# distintos del realm, y la app lanza al arrancar si falta.
+ARG VITE_API_URL
+ARG VITE_KEYCLOAK_URL
+ARG VITE_KEYCLOAK_REALM
+ARG VITE_KEYCLOAK_CLIENT_ID_PACIENTE
+
+ENV VITE_API_URL=$VITE_API_URL \
+    VITE_KEYCLOAK_URL=$VITE_KEYCLOAK_URL \
+    VITE_KEYCLOAK_REALM=$VITE_KEYCLOAK_REALM \
+    VITE_KEYCLOAK_CLIENT_ID_PACIENTE=$VITE_KEYCLOAK_CLIENT_ID_PACIENTE
+
+RUN npm run build -w @nutrismart/web-patient
+
+# ---------- runtime ----------
+FROM nginx:alpine AS runtime
+
+# nginx.conf trae el fallback de SPA —crítico aquí: el enlace de
+# invitación llega por correo a /activar?token=…— y las cabeceras de
+# caché. No se escribe en línea para no duplicar lo que ya usa el
+# compose de desarrollo.
+COPY apps/web-patient/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /repo/apps/web-patient/dist /usr/share/nginx/html
+
+EXPOSE 80

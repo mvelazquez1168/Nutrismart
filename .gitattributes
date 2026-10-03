@@ -1,0 +1,26 @@
+# Finales de linea.
+#
+# Este repo se edita en Windows con core.autocrlf=true, que convierte a
+# CRLF al hacer checkout. Para un .ts o un .tsx es indiferente, pero
+# estos archivos se EJECUTAN en Linux —dentro de un contenedor o en la
+# instancia EC2— y ahi el CRLF no es cosmetico:
+#
+#   ./deploy.sh  ->  bad interpreter: /bin/bash^M: no such file or directory
+#
+# El sintoma no apunta al problema: el script "existe" y aun asi no
+# arranca. Pasa en cuanto alguien clona el repo en Windows y copia
+# infra/ al servidor, asi que se fija aqui y no en la configuracion
+# local de cada maquina.
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+Dockerfile.* text eol=lf
+Caddyfile   text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.sql       text eol=lf
+
+# Plantillas de entorno: se copian al servidor como .env.prod y las lee
+# `source` desde bash. Una variable con \r al final arrastra ese
+# caracter a su valor — una contrasena de Postgres con \r invisible
+# falla la autenticacion sin decir por que.
+*.example   text eol=lf

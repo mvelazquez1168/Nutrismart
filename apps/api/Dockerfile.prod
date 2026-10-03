@@ -1,0 +1,133 @@
+# ============================================================
+# API de NutriSmart — imagen de PRODUCCIÓN
+#
+# OJO: el contexto de build es la RAÍZ del repo, no apps/api. Hace falta
+# el package-lock.json de la raíz para que npm ci reproduzca las mismas
+# versiones que en desarrollo.
+#
+#   docker build -f apps/api/Dockerfile.prod -t nutrismart-api .
+#
+# Diferencias frente a apps/api/Dockerfile (la de desarrollo):
+#   - curl, porque el healthcheck de docker-compose.prod.yml lo invoca y
+#     node:alpine NO lo trae. Sin él el contenedor queda 'unhealthy' para
+#     siempre y los frontends, que dependen de `service_healthy`, nunca
+#     arrancan.
+#   - Chromium del sistema para puppeteer (export a PDF, CLI-05). Ver la
+#     nota larga más abajo.
+# ============================================================
+
+# Misma versión de Node que la imagen de desarrollo. NO se usa node:20
+# a propósito: Node 20 salió de soporte en abril de 2026 y esto sirve
+# datos clínicos — no debe correr sobre un runtime sin parches. Mantener
+# el mismo major en dev y en producción evita además el "en mi máquina
+# funciona" más caro de diagnosticar.
+ARG NODE_VERSION=24-alpine
+
+# ---------- build ----------
+FROM node:${NODE_VERSION} AS build
+WORKDIR /repo
+
+# puppeteer descarga ~180 MB de Chromium en su postinstall, y el binario
+# que descarga está enlazado contra glibc: en Alpine (musl) no arranca.
+# Se usa el Chromium de la distribución, así que esa descarga es tiempo
+# y ancho de banda tirados — en las DOS etapas.
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+
+# Los package.json de TODOS los workspaces van antes que el código: npm ci
+# valida el lockfile contra ellos y falla si falta alguno. Copiarlos
+# aparte también aprovecha la caché de capas: cambiar código fuente no
+# vuelve a disparar la instalación.
+COPY package.json package-lock.json ./
+COPY apps/api/package.json apps/api/
+COPY apps/web-professional/package.json apps/web-professional/
+COPY apps/web-patient/package.json apps/web-patient/
+COPY packages/design-system/package.json packages/design-system/
+
+RUN npm ci
+
+COPY tsconfig.base.json ./
+COPY apps/api ./apps/api
+
+RUN npm run build -w @nutrismart/api
+
+# ---------- runtime ----------
+FROM node:${NODE_VERSION} AS runtime
+WORKDIR /repo
+
+# Deja fuera pino-pretty y las herramientas de compilación.
+ENV NODE_ENV=production
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+
+# Chromium pesa 807 MB sobre la imagen (medido): la deja en ~1 GB en
+# lugar de ~270 MB. En una t3.small con 8 GB de disco, y descargándola
+# de ECR en cada despliegue, eso se nota.
+#
+# Por defecto va INCLUIDO: el export a PDF del expediente (CLI-05) ya
+# existe, y perderlo en producción sin avisar sería una regresión.
+#
+# Para prescindir de él:
+#   docker build --build-arg INCLUDE_CHROMIUM=false …
+# El export seguirá respondiendo, pero devolverá un HTML imprimible en
+# vez de un PDF — es la degradación que ya contempla pdf/generar.ts, no
+# un error. Nada más de la plataforma depende de Chromium.
+ARG INCLUDE_CHROMIUM=true
+
+# curl va siempre: lo invoca el healthcheck de docker-compose.prod.yml y
+# node:alpine no lo trae. Sin él el contenedor queda 'unhealthy' para
+# siempre y los frontends, que dependen de `service_healthy`, nunca
+# arrancan.
+RUN apk add --no-cache curl \
+ && if [ "$INCLUDE_CHROMIUM" = "true" ]; then \
+      apk add --no-cache \
+        chromium \
+        nss \
+        freetype \
+        harfbuzz \
+        ca-certificates \
+        ttf-freefont; \
+    else \
+      echo "INCLUDE_CHROMIUM=false — sin Chromium: el export a PDF devolvera HTML."; \
+    fi
+
+# puppeteer.launch() no recibe executablePath en el código: lee esta
+# variable. Así la elección de binario es de la imagen, no del código.
+# Si se construyó con INCLUDE_CHROMIUM=false, la ruta no existe y
+# puppeteer falla al lanzar — que es exactamente el caso que generar.ts
+# ya captura para devolver HTML.
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+
+COPY package.json package-lock.json ./
+COPY apps/api/package.json apps/api/
+COPY apps/web-professional/package.json apps/web-professional/
+COPY apps/web-patient/package.json apps/web-patient/
+COPY packages/design-system/package.json packages/design-system/
+
+RUN npm ci --omit=dev && npm cache clean --force
+
+COPY --from=build /repo/apps/api/dist ./apps/api/dist
+
+# Los .sql NO se compilan: el runner los lee del disco en tiempo de
+# ejecución, así que tienen que viajar en la imagen.
+COPY apps/api/migrations ./apps/api/migrations
+COPY apps/api/seed ./apps/api/seed
+
+# El almacén de archivos clínicos, creado ANTES de bajar de privilegios.
+#
+# Docker crea el punto de montaje del volumen como root si no existe. La
+# API corre como 'node' (uid 1000) y entonces no puede escribir: la
+# subida falla con EACCES al intentar crear la carpeta de la clínica.
+#
+# Creándolo aquí con el dueño correcto, Docker respeta ese propietario al
+# montar el volumen encima. Afecta a todo lo que sube archivos: informes
+# de laboratorio (R5) y material de la biblioteca (R30).
+RUN mkdir -p /datos/archivos && chown -R node:node /datos
+
+# Sin privilegios de root: la imagen de node ya trae el usuario 'node'.
+USER node
+
+WORKDIR /repo/apps/api
+EXPOSE 4000
+
+# El entrypoint real es dist/server.js (no dist/index.js): el fuente es
+# apps/api/src/server.ts y tsconfig usa rootDir=src, outDir=dist.
+CMD ["node", "dist/server.js"]
