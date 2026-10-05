@@ -1,4 +1,4 @@
-﻿{
+{
   "id": "86ff0a19-7ccc-4a66-ab64-cb6d11ec7830",
   "realm": "nutrismart",
   "displayName": "NutriSmart",
@@ -971,7 +971,7 @@
       "nodeReRegistrationTimeout": -1,
       "protocolMappers": [
         {
-          "id": "71b6d9a8-3763-4693-b58f-4b8a631f82e4",
+          "id": "c4e1f0a7-2b35-4d18-9a6c-5f0719e3b2d4",
           "name": "tenant_id",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-usermodel-attribute-mapper",
@@ -987,7 +987,7 @@
           }
         },
         {
-          "id": "edb0da46-d601-40e2-9d8e-847d3db72ea1",
+          "id": "f20d7c5e-6a81-4b93-8c27-1de4a90f6b58",
           "name": "aud-nutrismart-api",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-audience-mapper",
@@ -2759,4 +2759,3 @@
     }
   ]
 }
-

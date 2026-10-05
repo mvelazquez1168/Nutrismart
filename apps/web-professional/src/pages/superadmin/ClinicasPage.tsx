@@ -9,15 +9,13 @@
  * para que establezca su contraseña — sin intervención manual.
  */
 import { useCallback, useEffect, useState } from 'react'
-import { ApiError, apiGet, apiPost } from '../../api/client'
-
-interface Clinica {
-  id: string
-  nombre_comercial: string
-  nombre_fiscal: string | null
-  pais: string
-  created_at: string
-}
+import { ApiError } from '../../api/client'
+import {
+  crearAdminClinica,
+  crearClinica as crearClinicaApi,
+  getClinicas,
+  type Clinica,
+} from '../../api/superadmin'
 
 const control =
   'w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none placeholder:text-muted focus:border-primary'
@@ -51,7 +49,7 @@ export function ClinicasPage() {
     setCargando(true)
     setError(null)
     try {
-      setClinicas(await apiGet<Clinica[]>('/api/superadmin/clinicas'))
+      setClinicas(await getClinicas())
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudo cargar la lista de clínicas')
     } finally {
@@ -68,7 +66,7 @@ export function ClinicasPage() {
     setCargandoClinica(true)
     setErrorClinica(null)
     try {
-      await apiPost('/api/superadmin/clinicas', {
+      await crearClinicaApi({
         nombre_comercial: nombreClinica.trim(),
         pais: paisClinica.trim(),
       })
@@ -88,7 +86,7 @@ export function ClinicasPage() {
     setErrorAdmin(null)
     setExitoAdmin(null)
     try {
-      await apiPost(`/api/superadmin/clinicas/${clinicaSeleccionada.id}/admin`, {
+      await crearAdminClinica(clinicaSeleccionada.id, {
         nombre: nombreAdmin.trim(),
         correo: correoAdmin.trim(),
       })
