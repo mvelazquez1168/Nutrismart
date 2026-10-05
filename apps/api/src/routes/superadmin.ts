@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Rutas del super-administrador de NutriSmart (plataforma).
  *
  * Estas rutas crean clínicas y sus primeros usuarios admin. Solo son
@@ -15,13 +15,17 @@
  *
  * `requireAuth` exige el claim `tenant_id` y responde **401** si falta. El
  * operador de plataforma no pertenece a ninguna clínica, así que con
- * `requireAuth` todo este módulo devolvía 401 antes de llegar a comprobar
- * ningún rol, y la única salida habría sido inventarle en Keycloak el
- * `tenant_id` de una clínica que no existe — un UUID falso que acabaría
- * usándose como filtro en alguna query.
+ * `requireAuth` todo este módulo devolvía 401 antes de comprobar ningún
+ * rol, y la única salida habría sido inventarle en Keycloak el `tenant_id`
+ * de una clínica que no existe — un UUID falso que acabaría usándose como
+ * filtro en alguna query.
  *
- * `requireSuperAdmin` valida firma, emisor y audiencia igual, no pide
- * tenant, y exige el rol. Ver la nota de `AuthSuperAdmin` en auth.ts.
+ * **Con este preHandler, `request.auth` NO existe: el contexto está en
+ * `request.authSuper`.** Añadir aquí una guarda del tipo
+ * `request.auth.roles.includes(...)` no es redundancia inofensiva: revienta
+ * con «Cannot read properties of null» en TODAS las rutas del módulo, y el
+ * compilador no lo ve porque `auth` está declarado como no-nulo. El rol ya
+ * lo exige `requireSuperAdmin`, que responde 403 por su cuenta.
  *
  * La clínica sobre la que se actúa viaja en la ruta y se comprueba contra
  * la base, que es más estricto que confiar en un claim.
@@ -149,9 +153,6 @@ export async function registerSuperAdminRoutes(app: FastifyInstance): Promise<vo
           username,
           email: correo,
           firstName: nombre,
-          // La clínica que se acaba de crear. Sin este atributo su token
-          // sale sin claim `tenant_id` y recibe 401 en TODO, con el alta
-          // aparentemente correcta. Ver la nota de `crearUsuarioKeycloak`.
           tenantId: clinicaId,
         })
       } catch (err: unknown) {
@@ -164,23 +165,17 @@ export async function registerSuperAdminRoutes(app: FastifyInstance): Promise<vo
 
       // Asignar rol admin_clinica en Keycloak para que el token ya lo traiga
       // desde el primer login. Si falla, hacemos rollback del usuario.
-      //
-      // El rollback va ANTES del insert a propósito: un admin sin su rol
-      // entra y no puede administrar nada, así que no sirve de nada
-      // dejarlo a medias. Aquí todavía no hay fila en la base, de modo que
-      // borrar el usuario deja el sistema como estaba y el operador puede
-      // reintentar con el mismo correo.
       try {
         await asignarRolKeycloak(keycloakUserId, 'admin_clinica')
       } catch (rolErr) {
         // Se ESPERA el borrado. Lanzado sin await, la respuesta de error
-        // puede salir antes de que Keycloak lo procese, y un reintento
-        // inmediato choca con "ya existe un usuario con ese correo".
+        // puede salir antes de que Keycloak lo procese, y el reintento
+        // inmediato choca con «ya existe un usuario con ese correo».
         await eliminarUsuarioKeycloak(keycloakUserId)
 
-        // Y se devuelve el motivo real en vez de dejar que esto sea un 500.
-        // Lo que falla aquí es casi siempre configuración del realm —el rol
-        // no existe, o al service account le falta permiso—, y «el servidor
+        // Y se devuelve el motivo real en vez de dejarlo como un 500. Lo
+        // que falla aquí es casi siempre configuración del realm —el rol no
+        // existe, o al service account le falta permiso— y «el servidor
         // tuvo un problema» manda a buscar en el sitio equivocado.
         const motivo =
           rolErr instanceof Error ? rolErr.message : 'No se pudo asignar el rol admin_clinica'

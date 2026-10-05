@@ -1,4 +1,4 @@
-{
+﻿{
   "id": "86ff0a19-7ccc-4a66-ab64-cb6d11ec7830",
   "realm": "nutrismart",
   "displayName": "NutriSmart",
@@ -92,6 +92,13 @@
         "composite": false,
         "clientRole": false,
         "containerId": "86ff0a19-7ccc-4a66-ab64-cb6d11ec7830",
+        "attributes": {}
+      },
+      {
+        "name": "super_admin",
+        "description": "Operador de plataforma NutriSmart — accede al panel /superadmin",
+        "composite": false,
+        "clientRole": false,
         "attributes": {}
       },
       {
@@ -1007,10 +1014,44 @@
         "organization",
         "microprofile-jwt"
       ],
-      "name": "NutriSmart · App del paciente",
+      "name": "NutriSmart Â· App del paciente",
       "description": "Cliente publico (PKCE S256) de apps/web-patient",
       "rootUrl": "http://localhost:5175",
       "baseUrl": "/activar"
+    },
+    {
+      "clientId": "nutrismart-backend",
+      "name": "NutriSmart backend (service account)",
+      "description": "Service account que la API usa contra el Admin API para crear usuarios y asignar roles. No es para personas: sin flujo estandar ni concesion directa.",
+      "enabled": true,
+      "publicClient": false,
+      "bearerOnly": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "dev-only-nutrismart-backend-secret",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "redirectUris": [],
+      "webOrigins": [],
+      "protocol": "openid-connect",
+      "attributes": {},
+      "fullScopeAllowed": false,
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "basic",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "organization",
+        "microprofile-jwt"
+      ]
     }
   ],
   "clientScopes": [
@@ -2703,5 +2744,19 @@
   },
   "clientPolicies": {
     "policies": []
-  }
+  },
+  "users": [
+    {
+      "username": "service-account-nutrismart-backend",
+      "enabled": true,
+      "emailVerified": false,
+      "serviceAccountClientId": "nutrismart-backend",
+      "clientRoles": {
+        "realm-management": [
+          "manage-users"
+        ]
+      }
+    }
+  ]
 }
+
