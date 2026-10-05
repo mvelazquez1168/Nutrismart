@@ -26,6 +26,17 @@ export interface Yo {
   adminEnToken: boolean
   /** Rol en la base: puede quitar, nunca dar. */
   adminEnBase: boolean
+  /**
+   * Si la API puede crear cuentas de Keycloak por su cuenta.
+   *
+   * La pantalla de Equipo cambia lo que PROMETE según este valor: con él
+   * activo, dar de alta crea la cuenta y manda el correo de activación;
+   * sin él, solo crea la ficha y alguien tiene que ir a Keycloak. Decir
+   * lo contrario de lo que va a pasar es peor que no decir nada.
+   */
+  cuentasAutomaticas: boolean
+  /** Operador de plataforma. Solo es true si además tiene ficha aquí. */
+  esSuperAdmin: boolean
 }
 
 let cache: Yo | null = null

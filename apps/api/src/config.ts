@@ -44,6 +44,17 @@ function optionalPort(name: string, fallback: number): number {
 }
 
 const databaseUrl = required('DATABASE_URL')
+
+// Service account para el Keycloak Admin API.
+// KEYCLOAK_ADMIN_URL es la URL interna de Keycloak (http://keycloak:8080).
+// KEYCLOAK_REALM es el realm donde viven los usuarios (nutrismart).
+// El service account debe tener el rol manage-users de realm-management.
+const keycloakAdminUrl = optional('KEYCLOAK_ADMIN_URL') ?? 'http://keycloak:8080'
+const keycloakRealm = optional('KEYCLOAK_REALM') ?? 'nutrismart'
+const keycloakSvcClientId = optional('KEYCLOAK_SVC_CLIENT') ?? ''
+const keycloakSvcClientSecret = optional('KEYCLOAK_SVC_SECRET') ?? ''
+/** true cuando el service account está configurado y la API puede crear usuarios en Keycloak. */
+const keycloakAdminEnabled = keycloakSvcClientId !== '' && keycloakSvcClientSecret !== ''
 /**
  * Issuer(s) aceptados en el claim 'iss'.
  *
@@ -197,6 +208,16 @@ export const config = {
     jwksUrl,
     /** El token debe nombrar a la API en su claim 'aud'. Tampoco cambia. */
     audience,
+    /** URL interna de Keycloak para llamadas server-to-server. */
+    adminUrl: keycloakAdminUrl,
+    /** Realm de la aplicación. */
+    realm: keycloakRealm,
+    /** Client ID del service account con manage-users. */
+    svcClientId: keycloakSvcClientId,
+    /** Client secret del service account. */
+    svcClientSecret: keycloakSvcClientSecret,
+    /** true cuando el service account está configurado. */
+    adminEnabled: keycloakAdminEnabled,
   },
   /**
    * Solo desarrollo: 'sub' del usuario de prueba del realm. Lo usa el

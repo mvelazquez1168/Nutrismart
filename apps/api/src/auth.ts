@@ -144,6 +144,80 @@ export async function requireAuthPaciente(
   }
 }
 
+/** Rol de realm del operador de plataforma. No pertenece a ninguna clinica. */
+export const ROL_SUPER_ADMIN = 'super_admin'
+
+/**
+ * Contexto del OPERADOR DE PLATAFORMA (super-admin).
+ *
+ * Como el del paciente, no lleva tenantId, y por el mismo motivo
+ * estructural: no tiene ninguno. El operador de plataforma crea clinicas;
+ * no trabaja dentro de una. Exigirle el claim `tenant_id` obligaria a
+ * inventarle un UUID de clinica falsa en Keycloak solo para que el token
+ * pase la validacion — y ese UUID acabaria usandose como filtro en alguna
+ * query, apuntando a una clinica que no existe.
+ *
+ * La clinica sobre la que actua viaja SIEMPRE en la ruta (`/clinicas/:id`)
+ * y se comprueba contra la base en cada peticion.
+ */
+export interface AuthSuperAdmin {
+  /** 'sub' del token del operador de plataforma. */
+  sub: string
+  roles: string[]
+}
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    authSuper: AuthSuperAdmin
+  }
+}
+
+/**
+ * preHandler de las rutas de plataforma. Valida firma, emisor y audiencia
+ * igual que `requireAuth`, NO exige tenant_id, y exige el rol
+ * `super_admin`.
+ *
+ * Los dos fallos se distinguen a proposito: 401 cuando el token no vale,
+ * 403 cuando vale pero no es de un operador de plataforma. Aqui el 403 no
+ * filtra nada —no hay ningun identificador ajeno que confirmar, solo se
+ * dice que esta zona no es para ti— y devolver 401 en su lugar mandaria al
+ * front a renovar un token que esta perfectamente bien, en bucle.
+ */
+export async function requireSuperAdmin(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  let sub: string
+  let roles: string[]
+
+  try {
+    const token = extractBearer(request)
+    const { payload } = await jwtVerify(token, jwks, {
+      issuer: config.keycloak.issuer,
+      audience: config.keycloak.audience,
+    })
+
+    if (!payload.sub) throw new AuthError('El token no trae "sub"')
+    sub = payload.sub
+    roles = readRoles(payload)
+  } catch (error) {
+    const motivo = error instanceof Error ? error.message : 'token invalido'
+    request.log.warn({ motivo }, 'auth-super: peticion rechazada')
+    await reply.code(401).send({ error: 'unauthorized', message: 'Token ausente o invalido' })
+    return
+  }
+
+  if (!roles.includes(ROL_SUPER_ADMIN)) {
+    await reply.code(403).send({
+      error: 'solo_super_admin',
+      message: 'Esta sección es solo para el operador de la plataforma',
+    })
+    return
+  }
+
+  request.authSuper = { sub, roles }
+}
+
 /**
  * preHandler que exige un token valido. Uso:
  *   app.get('/api/algo', { preHandler: requireAuth }, handler)
@@ -186,4 +260,5 @@ export function registerAuth(app: FastifyInstance): void {
   // tipo que se garantiza en tiempo de ejecucion.
   app.decorateRequest('auth', null as unknown as AuthContext)
   app.decorateRequest('authPac', null as unknown as AuthPaciente)
+  app.decorateRequest('authSuper', null as unknown as AuthSuperAdmin)
 }

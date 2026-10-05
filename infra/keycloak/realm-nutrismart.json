@@ -78,6 +78,15 @@
         "attributes": {}
       },
       {
+        "id": "5a9c1d72-8e41-4b6f-9d23-7c0b4f1e8a56",
+        "name": "super_admin",
+        "description": "Operador de la plataforma. No pertenece a ninguna clinica: crea clinicas y su primer administrador.",
+        "composite": false,
+        "clientRole": false,
+        "containerId": "86ff0a19-7ccc-4a66-ab64-cb6d11ec7830",
+        "attributes": {}
+      },
+      {
         "id": "ca4357de-205d-48af-80ea-ba8498dd816d",
         "name": "nutricionista",
         "composite": false,

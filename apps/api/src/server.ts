@@ -47,6 +47,7 @@ import { registerAlertasRoutes } from './routes/alertas.js'
 import { registerEquipoRoutes } from './routes/equipo.js'
 import { registerEstadisticasRoutes } from './routes/estadisticas.js'
 import { registerWearablesRoutes } from './routes/wearables.js'
+import { registerSuperAdminRoutes } from './routes/superadmin.js'
 import { evaluarAlertas } from './rpm/evaluar-alertas.js'
 import { enviarAlertasPendientes } from './rpm/email-alerta.js'
 import cron from 'node-cron'
@@ -190,6 +191,7 @@ async function start(): Promise<void> {
     await registerEquipoRoutes(app)
     await registerEstadisticasRoutes(app)
     await registerWearablesRoutes(app)
+    await registerSuperAdminRoutes(app)
 
     // ---- Recordatorios de cita (AGE-03) ----
     //

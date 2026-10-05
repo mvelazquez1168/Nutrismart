@@ -270,6 +270,12 @@ export interface DatosEstudioEnvio {
  */
 export const ROL_ADMIN_CLINICA = 'admin_clinica'
 
+/**
+ * Rol de plataforma: accede al panel de super-administrador.
+ * Se asigna directamente en Keycloak — la aplicación no puede concederlo.
+ */
+export const ROL_SUPER_ADMIN = 'super_admin'
+
 /* ------------------------------------------------------------------ */
 /* Sociodemografía (CLI-07)                                            */
 /* ------------------------------------------------------------------ */

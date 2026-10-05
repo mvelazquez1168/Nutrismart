@@ -16,13 +16,32 @@
  * a alguien aquí surte efecto de inmediato; ascenderlo requiere además
  * el rol en Keycloak. La pantalla lo dice, para que nadie ascienda a un
  * compañero y se pregunte por qué no entra.
+ *
+ * ── Lo que cambió al tener el Admin API ────────────────────────────
+ *
+ * Con el service account configurado, el **alta** sí concede el rol en
+ * Keycloak: nace completa, con cuenta y con permisos. Eso es seguro
+ * porque el alta la hace un administrador que ya lo es, y la persona que
+ * nace no tenía nada que escalar.
+ *
+ * El **PATCH de rol sigue sin tocar Keycloak**, y es a propósito. Ahí
+ * sí habría escalada: quien solo tuviera la columna en la base podría
+ * ascenderse a sí mismo o a un cómplice desde este mismo formulario. La
+ * asimetría se mantiene.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { pool } from '../db.js'
-import { requireAuth } from '../auth.js'
+import { requireAuth, ROL_SUPER_ADMIN } from '../auth.js'
 import { esUuid } from '../pacientes/validacion.js'
 import { ROL_ADMIN_CLINICA } from '../pacientes/acceso.js'
 import { enviarBienvenidaProfesional } from '../equipo/email.js'
+import {
+  crearUsuarioKeycloak,
+  enviarEmailActivacion,
+  eliminarUsuarioKeycloak,
+  intentarAsignarRol,
+} from '../keycloak-admin.js'
+import { config } from '../config.js'
 
 const ROLES = ['admin_clinica', 'nutricionista'] as const
 type Rol = (typeof ROLES)[number]
@@ -127,6 +146,18 @@ export async function registerEquipoRoutes(app: FastifyInstance): Promise<void> 
       esAdmin: enToken && enBase,
       adminEnToken: enToken,
       adminEnBase: enBase,
+      /**
+       * Si la API puede crear cuentas de Keycloak por su cuenta.
+       *
+       * La pantalla de Equipo necesita saberlo para no mentir: con el
+       * service account configurado, dar de alta CREA la cuenta y manda
+       * el correo de activación; sin él, solo crea la ficha y alguien
+       * tiene que ir a Keycloak. Son dos mensajes opuestos, y el
+       * administrador no tiene forma de adivinar cuál aplica.
+       */
+      cuentasAutomaticas: config.keycloak.adminEnabled,
+      /** Rol de operador de plataforma: abre el panel de super-admin. */
+      esSuperAdmin: roles.includes(ROL_SUPER_ADMIN),
     })
   })
 
@@ -346,12 +377,95 @@ export async function registerEquipoRoutes(app: FastifyInstance): Promise<void> 
         })
       }
 
-      // Nace en `invitacion_pendiente`, no activo.
-      //
-      // Esta fila NO crea la cuenta: eso lo hace el administrador de
-      // Keycloak. El profesional queda vinculado en su primer acceso,
-      // cuando su `keycloak_user_id` se escribe aquí. Decir que está
-      // «activo» antes de eso sería afirmar que puede entrar, y no puede.
+      const { rows: cli } = await pool.query<{ clinica: string }>(
+        `select coalesce(nombre_comercial, nombre_fiscal) as clinica from clinica where id = $1`,
+        [request.auth.tenantId],
+      )
+      const nombreClinica = cli[0]?.clinica ?? 'tu clínica'
+
+      // Si el service account de Keycloak está configurado, creamos el
+      // usuario directamente en Keycloak y dejamos al profesional activo
+      // desde el primer momento. Si no está configurado, el flujo viejo
+      // sigue funcionando: el admin crea la cuenta a mano en Keycloak.
+      if (config.keycloak.adminEnabled) {
+        // Derivamos username del correo (parte antes del @).
+        const username = correo.split('@')[0]!
+
+        let keycloakUserId: string
+        try {
+          keycloakUserId = await crearUsuarioKeycloak({
+            username,
+            email: correo,
+            firstName: nombre,
+            // Sin esto su token sale sin claim `tenant_id` y recibe 401
+            // en todo, con el alta aparentemente correcta. Ver la nota de
+            // `crearUsuarioKeycloak`.
+            tenantId: request.auth.tenantId,
+          })
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'Error al crear usuario en Keycloak'
+          if (msg.includes('Ya existe')) {
+            return reply.code(409).send({ error: 'correo_repetido_keycloak', message: msg })
+          }
+          throw err
+        }
+
+        let profesionalId: string
+        try {
+          const { rows } = await pool.query<{ id: string }>(
+            `insert into profesional (clinica_id, keycloak_user_id, nombre, correo, colegiatura, rol, estado)
+             values ($1, $2, $3, $4, $5, $6::profesional_rol, 'activo')
+             returning id`,
+            [request.auth.tenantId, keycloakUserId, nombre, correo, colegiatura, rol as Rol],
+          )
+          profesionalId = rows[0]!.id
+        } catch (dbErr) {
+          // Rollback: eliminar el usuario recién creado en Keycloak
+          void eliminarUsuarioKeycloak(keycloakUserId)
+          throw dbErr
+        }
+
+        // ── El rol en Keycloak ───────────────────────────────────────
+        //
+        // Solo para `admin_clinica`, y por una razón concreta: es el
+        // ÚNICO rol que la API comprueba en el token (ver `comoAdmin`
+        // arriba). Un nutricionista no necesita ningún realm role —su
+        // alcance sale de la fila en `profesional`—, así que pedirle a
+        // Keycloak un rol `nutricionista` que nadie ha creado solo
+        // produciría un aviso en cada alta.
+        //
+        // Esto cierra el hueco que describe la cabecera de este archivo:
+        // la columna «podía quitar pero nunca dar» porque el rol de
+        // Keycloak se ponía a mano. En el ALTA ya no hace falta. En el
+        // PATCH sigue igual a propósito: ascender a un compañero desde
+        // esta misma pantalla seguiría siendo una escalada de
+        // privilegios con formulario propio.
+        let avisoRol: string | null = null
+        if (rol === ROL_ADMIN_CLINICA) {
+          avisoRol = await intentarAsignarRol(keycloakUserId, ROL_ADMIN_CLINICA)
+        }
+
+        // Enviar email de activación para que establezca su contraseña.
+        // No bloquea la respuesta: el profesional ya existe.
+        void enviarEmailActivacion(keycloakUserId)
+
+        return reply.code(201).send({
+          id: profesionalId,
+          estado: 'activo',
+          /** La cuenta se creó en Keycloak y se le mandó el correo. */
+          cuentaCreada: true,
+          /**
+           * `true` cuando el rol quedó asignado. Para un nutricionista es
+           * `true` sin más: no necesita ninguno.
+           */
+          rolAsignado: avisoRol === null,
+          ...(avisoRol !== null ? { avisoRol } : {}),
+        })
+      }
+
+      // ── Flujo legacy (sin service account configurado) ──────────────
+      // Crea la fila en invitacion_pendiente y el admin asigna la
+      // cuenta de Keycloak manualmente.
       const { rows } = await pool.query<{ id: string }>(
         `insert into profesional (clinica_id, nombre, correo, colegiatura, rol, estado)
          values ($1, $2, $3, $4, $5::profesional_rol, 'invitacion_pendiente')
@@ -359,19 +473,19 @@ export async function registerEquipoRoutes(app: FastifyInstance): Promise<void> 
         [request.auth.tenantId, nombre, correo, colegiatura, rol as Rol],
       )
 
-      const { rows: cli } = await pool.query<{ clinica: string }>(
-        `select coalesce(nombre_comercial, nombre_fiscal) as clinica from clinica where id = $1`,
-        [request.auth.tenantId],
-      )
-
       // Que el correo no salga no puede tumbar el alta: la fila ya está.
       void enviarBienvenidaProfesional({
         nombre,
         correo,
-        clinica: cli[0]?.clinica ?? 'tu clínica',
+        clinica: nombreClinica,
       })
 
-      return reply.code(201).send({ id: rows[0]!.id, estado: 'invitacion_pendiente' })
+      return reply.code(201).send({
+        id: rows[0]!.id,
+        estado: 'invitacion_pendiente',
+        cuentaCreada: false,
+        rolAsignado: false,
+      })
     },
   )
 

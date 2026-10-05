@@ -4464,6 +4464,166 @@ Lo que se comprobó ejecutando el SQL real, no leyéndolo:
 
 ---
 
+# Rebanada 45 — Altas de verdad: panel de plataforma y cuentas automáticas
+
+Hasta aquí, dar de alta a un profesional creaba una **ficha**, no una cuenta: alguien tenía que entrar a Keycloak a mano. Esta rebanada cierra ese hueco por los dos extremos.
+
+- **Panel de plataforma** (`/superadmin`): crear clínicas y su primer administrador.
+- **Alta de equipo** (`/ajustes/equipo`): la pantalla ya existía; ahora crea la cuenta de verdad y dice qué pasó.
+- **El rol en Keycloak** se asigna desde la API al dar de alta a un administrador.
+
+## Antes de empezar
+
+No hay migración. Sí hay **configuración de Keycloak**, y sin ella nada de esto funciona.
+
+### 1 · El service account de la API
+
+El cliente que la API usa para hablar con el Admin API. Si falta, la plataforma sigue funcionando: las altas vuelven al flujo viejo (ficha en «invitación pendiente») y el panel de plataforma responde **503** explicando qué falta.
+
+| Dónde | Qué |
+|---|---|
+| Clients → Create client | Client ID `nutrismart-backend`, **Client authentication: On**, **Service accounts roles: On** |
+| | **Standard flow: Off**, **Direct access grants: Off** — este cliente no es para personas |
+| Credentials | Copiar el secret a `KEYCLOAK_SVC_SECRET` |
+| Service accounts roles → Assign role → **Filter by clients** | `realm-management` → **`manage-users`**, nada más |
+
+> **`manage-users` basta, y no es casualidad.** Asignar un rol necesita su `{id, name}`, y lo evidente —`GET /roles/{nombre}`— exigiría además **`view-realm`**, que abre la lectura de toda la configuración del realm. La API lo busca en los endpoints de role-mappings *del usuario*, que `manage-users` ya cubre. Si alguien amplía esto, que no amplíe los permisos del service account sin motivo.
+
+```
+KEYCLOAK_ADMIN_URL=http://keycloak:8080
+KEYCLOAK_REALM=nutrismart
+KEYCLOAK_SVC_CLIENT=nutrismart-backend
+KEYCLOAK_SVC_SECRET=<el secret de Credentials>
+```
+
+### 2 · El rol `super_admin` y su usuario
+
+El rol ya está en `infra/keycloak/realm-nutrismart.json`; en un realm ya importado hay que crearlo a mano (Realm roles → Create role → `super_admin`).
+
+El usuario operador se crea en Keycloak, y hay **una cosa que NO se le pone**:
+
+| Dónde | Qué |
+|---|---|
+| Users → Add user | Username y email del operador |
+| Credentials | Contraseña (o Required action `Update Password`) |
+| Role mapping | **`super_admin`** |
+| Attributes | **ningún `tenant_id`** |
+
+> **El operador de plataforma no lleva `tenant_id`, y es deliberado.** No pertenece a ninguna clínica. Ponerle el UUID de una clínica cualquiera para «que el token pase» haría que ese UUID acabara usándose como filtro en alguna query, apuntando a una clínica que no es la suya. Las rutas de plataforma usan `requireSuperAdmin`, que no pide el claim.
+
+## 1 · El panel solo se abre con el rol
+
+| Paso | Qué comprobar |
+|---|---|
+| Entrar como `luis@vida.cr` (nutricionista) → teclear `/superadmin` en la URL | Redirige a **Pacientes**. En la barra lateral **no** hay «Plataforma» |
+| Entrar como admin de clínica → `/superadmin` | Redirige a **Pacientes** |
+| `curl` a `/api/superadmin/clinicas` con el token de cualquiera de los dos | **403** `solo_super_admin` |
+
+> El redirect del navegador **no es la defensa**: es para no ofrecer un enlace que la API va a rechazar. Quien manda es el 403.
+
+## 2 · El operador entra sin clínica
+
+| Paso | Qué comprobar |
+|---|---|
+| Entrar con el usuario `super_admin` | Se pinta el panel de plataforma **sin barra lateral de clínica** |
+| Cabecera | «NutriSmart · Plataforma» y el correo del operador |
+| Consola del navegador | **Ningún 404** de `/api/profesional/yo` ni de `/api/me` |
+| Cualquier otra URL (`/pacientes`, `/agenda`) | Redirige a `/superadmin` |
+
+> Los 404 son la comprobación interesante: un operador no tiene ficha en ninguna clínica, así que esas dos peticiones **no deben salir**. Si aparecen, es que la condición de la app mira solo la sesión y no el tenant.
+
+## 3 · Crear una clínica
+
+| Paso | Qué comprobar |
+|---|---|
+| Nombre comercial + país → **Crear clínica** | Aparece arriba de la lista, marcada **«Sin administrador»** en ámbar |
+| Debajo | Se abre solo el formulario del primer administrador, con el nombre de la clínica en el título |
+| Pie de la lista | «Hay una clínica sin administrador: existe, pero nadie puede entrar en ella.» |
+| Nombre vacío | El botón está deshabilitado |
+
+## 4 · El primer administrador
+
+| Paso | Qué comprobar |
+|---|---|
+| Nombre + correo → **Crear administrador** | Recibo con borde **verde**: «… ya es administrador de su clínica» |
+| La fila de la clínica | Pasa a **«1 administrador»** y Equipo a **1** |
+| Keycloak → Users → el correo → **Attributes** | `tenant_id` = el UUID de la clínica recién creada |
+| Keycloak → Users → el correo → **Role mapping** | **`admin_clinica`** |
+| Keycloak → Users → el correo → **Details** | Required action **Update Password** |
+
+> **`tenant_id` en Attributes es la comprobación que más duele si falla.** El claim del token sale de ese atributo vía protocol mapper. Sin él, la persona establece su contraseña, Keycloak la autentica **sin un solo error**, y la aplicación le dice «tu sesión no es válida». Nada en el log de Keycloak apunta al problema, porque desde su punto de vista no hay ninguno.
+
+### Que el administrador nuevo pueda entrar de verdad
+
+| Paso | Qué comprobar |
+|---|---|
+| Abrir el enlace de activación (o fijar la contraseña desde Keycloak) | Entra a la app profesional |
+| Barra lateral | Dashboard, Clínica, Equipo y Marca **llevan a algún sitio** (es administrador) |
+| Pacientes | Vacío, sin error |
+| Ajustes → Clínica | Sale el nombre y el país que puso el operador |
+
+> Si entra pero Equipo y Clínica aparecen apagadas, lo que falta es el **rol en Keycloak** (paso 4), no un permiso de la base.
+
+## 5 · Cuando el rol no se puede asignar
+
+Se provoca quitándole `view-realm` al service account, o borrando el rol `admin_clinica` del realm.
+
+| Paso | Qué comprobar |
+|---|---|
+| Crear un administrador | El alta **no falla**: recibo con borde **ámbar** |
+| Texto del recibo | «Se creó su cuenta pero no se le pudo dar el rol `admin_clinica`… Asígnaselo en Keycloak → Users → … → Role mapping», con el motivo exacto debajo |
+| La clínica | Figura con 1 administrador en la base |
+
+> **No falla a propósito.** Al llegar a ese punto el usuario ya existe en Keycloak y el profesional ya está en la base. Un 500 diría «no se pudo crear» sobre alguien que **sí** quedó creado, y el segundo intento chocaría con «correo repetido» — dejando al operador convencido de que hay dos usuarios cuando hay uno a medias.
+
+## 6 · Alta de equipo con cuentas automáticas
+
+Como administrador de clínica, en **Ajustes → Equipo**.
+
+| Paso | Qué comprobar |
+|---|---|
+| Texto bajo «Dar de alta a alguien» | «Esto crea su ficha **y su cuenta de acceso**, y le envía un correo…» |
+| Alta de un **nutricionista** | Estado **Activo** (no «Sin cuenta todavía»). Recibo: «… ya tiene cuenta» |
+| Keycloak → ese usuario → Attributes | `tenant_id` = la clínica del administrador que dio el alta |
+| Keycloak → ese usuario → Role mapping | **Sin roles de realm** — un nutricionista no necesita ninguno |
+| Alta de un **administrador** | Recibo verde, y en Keycloak **sí** aparece `admin_clinica` |
+| Mismo correo otra vez | **409** «Ya hay alguien con ese correo en la clínica» |
+
+### Sin el service account configurado
+
+Quitar `KEYCLOAK_SVC_SECRET` del entorno y reiniciar la API.
+
+| Paso | Qué comprobar |
+|---|---|
+| Texto bajo «Dar de alta a alguien» | Vuelve a «Esto crea su ficha en la clínica, **no** su cuenta de acceso…» |
+| Alta | Estado **«Sin cuenta todavía»**. Recibo: «… está en la clínica, sin cuenta todavía» |
+| Panel de plataforma → crear administrador | **503** `keycloak_admin_no_configurado` |
+
+> Las dos frases son opuestas y el administrador no puede adivinar cuál aplica. El texto lo decide `cuentasAutomaticas`, que viene de `/api/profesional/yo`, no una suposición escrita a mano.
+
+## 7 · Lo que el cambio de rol sigue sin hacer
+
+| Paso | Qué comprobar |
+|---|---|
+| En la tabla de Equipo, cambiar un nutricionista a **Administrador** | La columna cambia; en Keycloak **no** aparece `admin_clinica` |
+| Que esa persona vuelva a entrar | Sigue entrando **como nutricionista** |
+| Pie de la pantalla | Lo dice: «Concederlos ahí necesita además el rol en Keycloak» |
+
+> **Es a propósito, y es la asimetría que sostiene el modelo.** El *alta* sí concede el rol: la hace un administrador que ya lo es, sobre una persona que no tenía nada que escalar. El *cambio de rol* no: si lo hiciera, cualquiera con la columna en la base podría ascenderse desde ese mismo formulario. Degradar surte efecto de inmediato; ascender no.
+
+## 8 · Aislamiento entre clínicas
+
+| Paso | Qué comprobar |
+|---|---|
+| Crear dos clínicas con un administrador cada una | — |
+| Entrar como el admin de la clínica A → Equipo | Solo su equipo. El admin de B **no aparece** |
+| `GET /api/admin/profesionales` con el token de A | Ninguna fila de B |
+| Entrar como el admin de A → `/superadmin` | Redirige a Pacientes (no es operador de plataforma) |
+
+---
+
+---
+
 # Tropiezos de entorno
 
 Fallos reales encontrados durante el desarrollo. Casi todos tardaron más en diagnosticarse que en corregirse.

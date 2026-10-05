@@ -8,7 +8,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import { useBrand, urlLogo } from '../contexts/BrandContext'
 import { API_BASE } from '../api/client'
-import { ROL_ADMIN_CLINICA } from '../api/tipos'
+import { ROL_ADMIN_CLINICA, ROL_SUPER_ADMIN } from '../api/tipos'
 import { NotificacionesCampana } from './notificaciones/NotificacionesCampana'
 
 interface ItemNav {
@@ -23,9 +23,12 @@ interface ItemNav {
  * administrador de la clínica. Para un nutricionista siguen apagadas,
  * como las secciones que aún no existen: mostrarle un enlace que la
  * API va a rechazar con 403 sería prometer algo que no puede hacer.
+ *
+ * esSuperAdmin añade una sección de plataforma al final: solo visible
+ * para el super-admin de NutriSmart, nunca para los profesionales.
  */
-function navDe(esAdmin: boolean): ItemNav[] {
-  return [
+function navDe(esAdmin: boolean, esSuperAdmin: boolean): ItemNav[] {
+  const items: ItemNav[] = [
     {
       clave: 'dashboard',
       etiqueta: 'Dashboard',
@@ -62,6 +65,18 @@ function navDe(esAdmin: boolean): ItemNav[] {
       ...(esAdmin ? { ruta: '/ajustes/marca' } : {}),
     },
   ]
+
+  // El panel de plataforma solo aparece para el super_admin: ningún
+  // profesional de clínica, ni siquiera el administrador, lo ve.
+  if (esSuperAdmin) {
+    items.push({
+      clave: 'superadmin',
+      etiqueta: 'Plataforma',
+      ruta: '/superadmin/clinicas',
+    })
+  }
+
+  return items
 }
 
 function inicialesDe(nombre: string): string {
@@ -74,16 +89,19 @@ function inicialesDe(nombre: string): string {
 export function Shell({
   seccionActiva,
   nombreClinica,
+  esSuperAdmin = false,
   children,
 }: {
   seccionActiva: string
   nombreClinica: string | null
+  esSuperAdmin?: boolean
   children: ReactNode
 }) {
   const { perfil, logout } = useAuth()
   const { brand } = useBrand()
 
   const esAdmin = perfil?.roles.includes(ROL_ADMIN_CLINICA) ?? false
+  const _superAdmin = esSuperAdmin || (perfil?.roles.includes(ROL_SUPER_ADMIN) ?? false)
   const logo = urlLogo(brand, API_BASE)
 
   return (
@@ -118,7 +136,7 @@ export function Shell({
 
         <nav className="flex-1 px-3">
           <ul className="space-y-1">
-            {navDe(esAdmin).map((item) => {
+            {navDe(esAdmin, _superAdmin).map((item) => {
               const activo = item.clave === seccionActiva
 
               if (activo) {

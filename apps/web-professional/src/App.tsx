@@ -17,8 +17,9 @@ import { ClinicaPage } from './pages/ajustes/ClinicaPage'
 import { EquipoPage } from './pages/ajustes/EquipoPage'
 import { ReglasNotificacion } from './pages/ReglasNotificacion'
 import { ValoracionPaciente } from './pages/ValoracionPaciente'
+import { ClinicasPage } from './pages/superadmin/ClinicasPage'
 import { getMe } from './api/pacientes'
-import { ROL_ADMIN_CLINICA } from './api/tipos'
+import { ROL_ADMIN_CLINICA, ROL_SUPER_ADMIN } from './api/tipos'
 import type { Me } from './api/tipos'
 
 function Centrado({ children }: { children: ReactNode }) {
@@ -40,21 +41,70 @@ function seccionDe(pathname: string): string {
   if (pathname.startsWith('/notificaciones')) return 'reglas'
   if (pathname.startsWith('/recursos')) return 'recursos'
   if (pathname.startsWith('/monitoreo')) return 'monitoreo'
+  if (pathname.startsWith('/superadmin')) return 'superadmin'
   return 'pacientes'
+}
+
+/**
+ * Marco mínimo para el operador de la plataforma.
+ *
+ * El Shell no sirve aquí: se alimenta de la clínica del token —logo,
+ * paleta, nombre en la cabecera, menú entero— y el operador no tiene
+ * ninguna. Dentro del Shell, su menú llevaría a pantallas que responden
+ * 401 y la cabecera mostraría una clínica inexistente.
+ */
+function MarcoPlataforma({ children }: { children: ReactNode }) {
+  const { perfil, logout } = useAuth()
+
+  return (
+    <div className="min-h-full bg-background">
+      <header
+        className="flex items-center justify-between gap-4 px-6 py-3 text-white"
+        style={{ backgroundColor: 'var(--nav)' }}
+      >
+        <div className="min-w-0">
+          <p className="text-sm font-semibold">NutriSmart · Plataforma</p>
+          <p className="truncate text-xs text-white/70">
+            {perfil?.correo ?? perfil?.nombre ?? 'Operador'}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={logout}
+          className="shrink-0 rounded-md border border-white/35 px-3 py-1.5 text-xs font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+        >
+          Cerrar sesión
+        </button>
+      </header>
+      <main className="p-6">{children}</main>
+    </div>
+  )
 }
 
 function Contenido() {
   const { estado, error, perfil } = useAuth()
   const location = useLocation()
+
+  /**
+   * Un operador de plataforma no pertenece a ninguna clínica: su token no
+   * trae `tenant_id`, y tanto `/api/profesional/yo` como `/api/me` le
+   * responden 404 porque no tiene ficha en ningún sitio.
+   *
+   * Por eso las dos peticiones se condicionan al tenant y no solo a la
+   * sesión. Pedirlas igualmente pintaría un «no se pudo cargar el perfil»
+   * sobre una pantalla que no necesita ningún perfil de clínica.
+   */
+  const tieneClinica = perfil?.tenantId !== undefined
+
   // `estado === 'autenticado'` NO es opcional: ver la nota del hook. Si
   // se pide el perfil antes de que Keycloak este listo, la peticion
   // acaba redirigiendo al login y la aplicacion entra en bucle.
-  const { yo, cargado: cargadoYo } = useYo(estado === 'autenticado')
+  const { yo, cargado: cargadoYo } = useYo(estado === 'autenticado' && tieneClinica)
   const [me, setMe] = useState<Me | null>(null)
   const [errorMe, setErrorMe] = useState<string | null>(null)
 
   useEffect(() => {
-    if (estado !== 'autenticado') return
+    if (estado !== 'autenticado' || !tieneClinica) return
 
     const ctrl = new AbortController()
     getMe(ctrl.signal)
@@ -64,7 +114,7 @@ function Contenido() {
         setErrorMe(e instanceof Error ? e.message : 'No se pudo cargar el perfil')
       })
     return () => ctrl.abort()
-  }, [estado])
+  }, [estado, tieneClinica])
 
   if (estado === 'cargando') {
     return (
@@ -100,10 +150,29 @@ function Contenido() {
   // que no depende de nada que el navegador pueda alterar.
   const enToken = perfil?.roles.includes(ROL_ADMIN_CLINICA) ?? false
   const esAdmin = cargadoYo ? (yo?.esAdmin ?? false) : enToken
+  const esSuperAdmin = perfil?.roles.includes(ROL_SUPER_ADMIN) ?? false
+
+  /**
+   * El operador de plataforma SIN clínica no pasa por el Shell ni por
+   * BrandProvider: no hay marca que cargar ni sección que ofrecerle.
+   *
+   * Quien es operador Y además trabaja en una clínica sí ve el Shell, con
+   * «Plataforma» como una sección más. Ese caso no necesita excepción.
+   */
+  if (esSuperAdmin && !tieneClinica) {
+    return (
+      <MarcoPlataforma>
+        <Routes>
+          <Route path="/superadmin/clinicas" element={<ClinicasPage />} />
+          <Route path="*" element={<Navigate to="/superadmin/clinicas" replace />} />
+        </Routes>
+      </MarcoPlataforma>
+    )
+  }
 
   return (
     <BrandProvider clinicaId={perfil?.tenantId}>
-      <Shell seccionActiva={seccionDe(location.pathname)} nombreClinica={me?.clinica.nombre ?? null}>
+      <Shell seccionActiva={seccionDe(location.pathname)} nombreClinica={me?.clinica.nombre ?? null} esSuperAdmin={esSuperAdmin}>
         {/*
           El fallo de /api/me no bloquea la pantalla: solo deja el nombre de
           la clinica sin mostrar. La lista de pacientes tiene su propio
@@ -146,6 +215,11 @@ function Contenido() {
           <Route
             path="/admin/dashboard"
             element={esAdmin ? <DashboardPage /> : <Navigate to="/pacientes" replace />}
+          />
+          {/* Panel de plataforma: solo accesible con el rol super_admin. */}
+          <Route
+            path="/superadmin/clinicas"
+            element={esSuperAdmin ? <ClinicasPage /> : <Navigate to="/pacientes" replace />}
           />
           {/* Cualquier otra ruta cae en Pacientes: es la unica seccion
               construida, y una pantalla de 404 aqui seria ruido. */}
