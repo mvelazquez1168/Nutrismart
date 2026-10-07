@@ -50,6 +50,7 @@ import { Link } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { getSociodemografico, guardarSociodemografico } from '../../api/sociodemografico'
 import { Campo, claseControl } from '../Campo'
+import { InputNumero } from '../InputNumero'
 import type { DatosSocioEnvio, Sociodemografia } from '../../api/tipos'
 
 interface Formulario {
@@ -208,30 +209,36 @@ export function HabitosClinicos({
       ) : (
         <>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Campo id="hab-sueno" etiqueta="Horas de sueño por noche">
-              <input
+            {/* InputNumero y no type="number": en tablet el spinner
+                nativo no se pinta y el saneado del campo cerraba el
+                teclado al escribir (R46). Las horas admiten medias. */}
+            <Campo id="hab-sueno" etiqueta="Horas de sueño por noche" ayuda="1 a 24">
+              <InputNumero
                 id="hab-sueno"
-                type="number"
+                etiqueta="horas de sueño por noche"
                 min={1}
                 max={24}
+                paso={0.5}
+                decimales
                 disabled={bloqueada}
-                value={form.horasSueno}
-                onChange={(e) => campo('horasSueno', e.target.value)}
-                className={claseControl(false)}
+                valor={form.horasSueno}
+                onChange={(v) => campo('horasSueno', v)}
               />
             </Campo>
 
-            <Campo id="hab-despertares" etiqueta="Veces que despierta durante la noche">
-              <input
+            <Campo
+              id="hab-despertares"
+              etiqueta="Veces que despierta durante la noche"
+              ayuda="0 a 30"
+            >
+              <InputNumero
                 id="hab-despertares"
-                type="number"
+                etiqueta="veces que despierta durante la noche"
                 min={0}
                 max={30}
-                step={1}
                 disabled={bloqueada}
-                value={form.vecesDespiertaNoche}
-                onChange={(e) => campo('vecesDespiertaNoche', e.target.value)}
-                className={claseControl(false)}
+                valor={form.vecesDespiertaNoche}
+                onChange={(v) => campo('vecesDespiertaNoche', v)}
               />
             </Campo>
           </div>

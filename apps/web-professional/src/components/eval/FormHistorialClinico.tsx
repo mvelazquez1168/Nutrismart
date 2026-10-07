@@ -18,6 +18,7 @@ import {
   type Historial,
 } from '../../api/clinico'
 import { Campo, claseControl } from '../Campo'
+import { InputNumero } from '../InputNumero'
 import { FormFarmacologia } from './FormFarmacologia'
 import { AvisoPrecarga } from './BannerSeguimiento'
 
@@ -261,26 +262,34 @@ export function FormHistorialClinico({
             FA se fija en la calculadora, que es quien lo usa. */}
         <Bloque titulo="Actividad física">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Campo id="ses" etiqueta="Sesiones por semana">
-              <input
+            {/* InputNumero y no type="number": en tablet el spinner
+                nativo no se pinta y el saneado del campo cerraba el
+                teclado al escribir (R46). */}
+            <Campo id="ses" etiqueta="Sesiones por semana" ayuda="0 a 21">
+              <InputNumero
                 id="ses"
-                type="number"
+                etiqueta="sesiones por semana"
                 min={0}
                 max={21}
-                value={sesiones}
-                onChange={(e) => setSesiones(e.target.value)}
-                className={claseControl(false)}
+                valor={sesiones}
+                onChange={(v) => {
+                  setSesiones(v)
+                  setOk(false)
+                }}
               />
             </Campo>
-            <Campo id="dur" etiqueta="Duración media (min)">
-              <input
+            <Campo id="dur" etiqueta="Duración media (min)" ayuda="0 a 600">
+              <InputNumero
                 id="dur"
-                type="number"
+                etiqueta="duración media en minutos"
                 min={0}
                 max={600}
-                value={duracion}
-                onChange={(e) => setDuracion(e.target.value)}
-                className={claseControl(false)}
+                paso={5}
+                valor={duracion}
+                onChange={(v) => {
+                  setDuracion(v)
+                  setOk(false)
+                }}
               />
             </Campo>
           </div>

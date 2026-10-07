@@ -4718,6 +4718,53 @@ cd apps/web-professional && grep -rnE "^  const [A-Z][A-Za-z0-9]* = \(" src/
 
 Sin coincidencias. Si alguna aparece, el candidato está remontando su subárbol en cada render: o sube a ámbito de módulo (si lleva props) o se convierte en elemento (si no).
 
+## 3 · Los campos numéricos cerraban el teclado y no tenían flechas en tablet
+
+**Dónde:** Nueva consulta → **Clínico** → **Actividad física** (sesiones por semana, duración media) y el bloque de **Hábitos**, debajo de Sustancias (horas de sueño, veces que despierta).
+
+Dos síntomas, dos causas, y ninguna es un descuido del CSS:
+
+**1. No había flechas.** Los navegadores táctiles **no dibujan el spinner** de un `<input type="number">`. Safari de iOS y Chrome de Android simplemente no lo pintan; no hay regla que quitar, porque no había ninguna puesta. La única forma de tener incremento y decremento a la vista en una tablet es dibujarlos.
+
+**2. El teclado se cerraba.** `type="number"` **se sanea solo**: mientras se escribe un valor a medias —«5.», «1e», «-»— la propiedad `value` del nodo vale **cadena vacía**, no lo escrito. Un campo controlado recibe `''`, lo guarda en el estado y React lo reescribe en el nodo: el valor desaparece, el caret salta y el teclado táctil lo cuenta como cambio de contexto y se recoge. En la pantalla Clínico esto se sumaba al remonte del §2, que lo hacía con cualquier campo.
+
+**Arreglo:** `InputNumero` (`components/InputNumero.tsx`) — `type="text"` con `inputMode="numeric"`/`"decimal"`, que saca el mismo teclado sin sanear nada, más dos flechas apiladas de **36 × 24 px** (el mínimo táctil de la WCAG 2.5.8, que el spinner nativo de escritorio ni siquiera alcanza). La lógica pura vive en `lib/numero.ts`.
+
+| Paso | Qué comprobar |
+|---|---|
+| Mirar cualquiera de los cuatro campos | Las dos flechas **▲▼** a la derecha, siempre visibles, también en tablet |
+| Tocar el campo en una tablet y escribir **120** en duración | El teclado numérico sale y **no se cierra** entre dígitos |
+| Escribir **7,5** en horas de sueño | La coma del teclado español se convierte en punto: `7.5` |
+| Escribir **7.** y quedarse ahí | Se queda «7.»; no se vacía a mitad de escritura |
+| Salir del campo con «7.» | Queda **7** |
+| Tocar **▲** con el teclado abierto | Sube el valor y **el teclado sigue abierto** (`preventDefault` en `pointerdown`) |
+| Flechas ↑ / ↓ del teclado físico | Hacen lo mismo que las del control |
+| Duración: **▲** desde vacío | **5** (su paso es de 5 min, no de 1) |
+| Horas de sueño: **▲** desde vacío | **1**, el mínimo; no un 0 que el campo no admite |
+| Escribir **500** en sesiones por semana y salir | Baja a **21**, el máximo |
+| Escribir **2.6** en «veces que despierta» y salir | **3**: es un campo entero |
+| Dejar un campo vacío y salir | Sigue **vacío** — no se rellena con el mínimo; vacío es «sin dato», no cero |
+| Letras o texto pegado | No entran |
+| Consulta finalizada | Las flechas salen deshabilitadas con el campo |
+
+**Lo que hay que mirar con atención:** que acotar y redondear ocurran **al salir del campo**, no en cada tecla. En un campo de 0 a 21, acotar mientras se escribe convertiría el «1» de quien va a escribir «10» en otra cosa.
+
+**Comprobación de la lógica, sin navegador:**
+
+```
+node --input-type=module -e "
+const m = await import('file:///C:/Nutrismart/apps/web-professional/src/lib/numero.ts');
+const SES = {min:0, max:21, decimales:false};
+console.log(m.limpiar('3 veces', {decimales:false, negativos:false}));  // 3
+console.log(m.limpiar('7.', {decimales:true, negativos:false}));        // 7.
+console.log(m.mover('', 1, 1, SES));                                     // 1
+console.log(m.normalizar('500', SES));                                   // 21
+console.log(m.normalizar('', SES));                                      // (vacio)
+"
+```
+
+**Pendiente a propósito:** el resto de la aplicación sigue con `type="number"`. `InputNumero` está listo para adoptarse campo a campo (antropometría, laboratorios, calculadora, app del paciente), pero cambiarlos todos en la misma rebanada que corrige cinco defectos mezclaría el arreglo con una migración.
+
 # Tropiezos de entorno
 
 Fallos reales encontrados durante el desarrollo. Casi todos tardaron más en diagnosticarse que en corregirse.
