@@ -359,16 +359,24 @@ export function getCunningham(ger: number, geeTotal: number): number {
  * Disponibilidad energética: la energía que queda para sostener al
  * cuerpo una vez descontado el ejercicio, por kilo de masa magra.
  *
- * (GET − GEE) / MLG. Es el indicador que define el RED-S, y por eso se
- * mide contra la MLG y no contra el peso total.
+ * (meta calórica − GEE) / MLG. Es el indicador que define el RED-S, y
+ * por eso se mide contra la MLG y no contra el peso total.
+ *
+ * El primer término es la META CALÓRICA PRESCRITA —el «REQ a utilizar»
+ * que pasa a la prescripción dietética—, no el GET. La DE mide lo que el
+ * paciente VA A INGERIR descontando el ejercicio; con el GET la cuenta
+ * se muerde la cola: el GET ya incluye el GEE que después se le resta,
+ * así que se reducía siempre a GER × 1.1 / MLG y la lectura no cambiaba
+ * al prescribir un superávit o un déficit —justo lo que el indicador
+ * tiene que detectar.
  */
 export function disponibilidadEnergetica(
-  get: number,
+  metaKcal: number,
   geeTotal: number,
   mlgKg: number,
 ): number | null {
   if (mlgKg <= 0) return null
-  return r1((get - geeTotal) / mlgKg)
+  return r1((metaKcal - geeTotal) / mlgKg)
 }
 
 export type NivelDE = 'severa' | 'baja' | 'optima' | 'excedente'

@@ -431,12 +431,33 @@ export function PanelCalculadora({
   const geeTotal = round1(geeEntradas.reduce((t, e) => t + e.gee, 0))
 
   const getCunn = esCunningham && geb !== null ? getCunningham(geb, geeTotal) : null
-  const de =
-    getCunn !== null && mlgN !== null ? disponibilidadEnergetica(getCunn, geeTotal, mlgN) : null
-  const lecturaDE = de !== null ? interpretarDE(de) : null
 
   /** El total que pasa a la Sección B, venga del camino que venga. */
   const totalEnergetico = esCunningham ? getCunn : vet
+
+  /**
+   * Meta calórica prescrita: el «REQ a utilizar» de la Sección B, que es
+   * el valor que viaja como `metaCalorica` a la prescripción dietética.
+   *
+   * Se deriva aquí arriba, y no entre los demás derivados de la Sección
+   * B, porque la disponibilidad energética —que se pinta en la Sección
+   * A— se calcula contra ella.
+   */
+  const reqN = num(reqDieta)
+
+  /**
+   * DE = (meta calórica − GEE) / MLG.
+   *
+   * Contra la meta PRESCRITA, no contra el GET: ver
+   * `disponibilidadEnergetica`. El GET se autorrellena como REQ, así que
+   * mientras nadie toque el campo dan lo mismo; en cuanto se prescribe
+   * un superávit o un déficit, la DE lo refleja.
+   */
+  const de =
+    esCunningham && reqN !== null && mlgN !== null
+      ? disponibilidadEnergetica(reqN, geeTotal, mlgN)
+      : null
+  const lecturaDE = de !== null ? interpretarDE(de) : null
 
   // Prefills: peso a utilizar ← peso actual; PI a utilizar ← PI ADA
   // sugerido; REQ (Sección B) ← total energético. Solo mientras el campo
@@ -502,8 +523,8 @@ export function PanelCalculadora({
     setGeeFilas((prev) => prev.filter((f) => f.id !== id))
   }
 
-  /* ---- Derivados de la Sección B ---- */
-  const reqN = num(reqDieta)
+  /* ---- Derivados de la Sección B ----
+     `reqN` se deriva más arriba: la Sección A lo necesita para la DE. */
   const sumaPct = (num(choPct) ?? 0) + (num(protPct) ?? 0) + (num(grasaPct) ?? 0)
   const macros =
     reqN !== null
@@ -906,16 +927,26 @@ export function PanelCalculadora({
                     : undefined,
                 }}
               >
-                <p className="text-xs font-semibold text-ink">Disponibilidad Energética</p>
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <p className="text-xs font-semibold text-ink">Disponibilidad Energética</p>
+                  <p className="text-xs text-muted">(meta calórica − GEE) ÷ MLG</p>
+                </div>
                 {de === null || lecturaDE === null ? (
                   <p className="mt-1 text-xs" style={{ color: 'var(--status-alert)' }}>
-                    Se requiere la masa libre de grasa (MLG) para calcularla.
+                    {mlgN === null
+                      ? 'Se requiere la masa libre de grasa (MLG) para calcularla.'
+                      : 'Se requiere la meta calórica («REQ a utilizar», Sección B) para calcularla.'}
                   </p>
                 ) : (
                   <>
                     <p className="mt-1 text-2xl font-bold tabular-nums text-ink">
                       {de}{' '}
                       <span className="text-xs font-medium text-muted">kcal / kg MLG / día</span>
+                    </p>
+                    {/* La cuenta a la vista: sin esto, cambiar el REQ en la
+                        Sección B mueve este número sin que se vea por qué. */}
+                    <p className="text-xs text-muted tabular-nums">
+                      ({reqN} − {geeTotal}) ÷ {mlgN} kg
                     </p>
                     {/* El nivel va escrito, no solo en color: el color por sí
                         solo no lo lee quien no distingue tonos. */}

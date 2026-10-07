@@ -4042,6 +4042,8 @@ Con MLG 60 kg y una sola actividad de 70 kg · 45 min · 7 METS:
 | Disponibilidad energética | **33.4 kcal/kg MLG/día** |
 | Nivel | **Deficiencia energética leve / moderada** (ámbar) |
 
+> La DE ya **no** se calcula contra el GET sino contra la meta calórica («REQ a utilizar»): ver la R46 §1. El valor esperado de esta tabla no cambia porque el REQ se autorrellena con el GET; en cuanto se escriba otro REQ, sí cambia.
+
 Los cortes, para probarlos moviendo los minutos:
 
 | DE | Nivel | Color |
@@ -4474,11 +4476,15 @@ Hasta aquí, dar de alta a un profesional creaba una **ficha**, no una cuenta: a
 
 ## Antes de empezar
 
-No hay migración. Sí hay **configuración de Keycloak**, y sin ella nada de esto funciona.
+No hay migración. Sí hay **configuración de Keycloak**, y sin ella nada de esto funciona. Lo que toca hacer depende de si el realm se importa de cero o ya existe.
 
 ### 1 · El service account de la API
 
-El cliente que la API usa para hablar con el Admin API. Si falta, la plataforma sigue funcionando: las altas vuelven al flujo viejo (ficha en «invitación pendiente») y el panel de plataforma responde **503** explicando qué falta.
+El cliente que la API usa para hablar con el Admin API. Si falta, la plataforma sigue funcionando: las altas vuelven al flujo manual (ficha en «invitación pendiente») y el panel de plataforma responde **503** explicando qué falta. Es la regla de oro de no bloquear el acceso clínico, aplicada a esto.
+
+**Realm importado de cero: no hay que tocar nada.** El export (`infra/keycloak/realm-nutrismart.json`) ya trae el cliente `nutrismart-backend`, su service account y el rol `manage-users`, y `.env.example` trae las tres variables con el mismo secret de desarrollo.
+
+**Realm que ya existe** (el caso normal aquí, Keycloak se comparte con Vetline): hay que crearlo a mano.
 
 | Dónde | Qué |
 |---|---|
@@ -4490,17 +4496,19 @@ El cliente que la API usa para hablar con el Admin API. Si falta, la plataforma 
 > **`manage-users` basta, y no es casualidad.** Asignar un rol necesita su `{id, name}`, y lo evidente —`GET /roles/{nombre}`— exigiría además **`view-realm`**, que abre la lectura de toda la configuración del realm. La API lo busca en los endpoints de role-mappings *del usuario*, que `manage-users` ya cubre. Si alguien amplía esto, que no amplíe los permisos del service account sin motivo.
 
 ```
-KEYCLOAK_ADMIN_URL=http://keycloak:8080
+KEYCLOAK_ADMIN_URL=http://localhost:8080   # dev en el host; el compose lo pisa con keycloak:8080
 KEYCLOAK_REALM=nutrismart
 KEYCLOAK_SVC_CLIENT=nutrismart-backend
 KEYCLOAK_SVC_SECRET=<el secret de Credentials>
 ```
 
+> **`KEYCLOAK_ADMIN_URL` tiene la misma trampa que `KEYCLOAK_JWKS_URL`.** Es una ruta de red server-to-server, así que vale `localhost:8080` ejecutando la API en el host y `keycloak:8080` dentro de Docker. El valor por defecto del código es el **interno**, de modo que arrancar en el host sin esta línea falla al crear el primer usuario. (El `KEYCLOAK_ISSUER` no cambia nunca: lo emite el navegador.)
+
 ### 2 · El rol `super_admin` y su usuario
 
-El rol ya está en `infra/keycloak/realm-nutrismart.json`; en un realm ya importado hay que crearlo a mano (Realm roles → Create role → `super_admin`).
+El rol ya está en el export; en un realm ya importado hay que crearlo a mano (Realm roles → Create role → `super_admin`).
 
-El usuario operador se crea en Keycloak, y hay **una cosa que NO se le pone**:
+El usuario operador se crea siempre a mano —no hay nadie por encima que lo cree— y hay **una cosa que NO se le pone**:
 
 | Dónde | Qué |
 |---|---|
@@ -4511,12 +4519,13 @@ El usuario operador se crea en Keycloak, y hay **una cosa que NO se le pone**:
 
 > **El operador de plataforma no lleva `tenant_id`, y es deliberado.** No pertenece a ninguna clínica. Ponerle el UUID de una clínica cualquiera para «que el token pase» haría que ese UUID acabara usándose como filtro en alguna query, apuntando a una clínica que no es la suya. Las rutas de plataforma usan `requireSuperAdmin`, que no pide el claim.
 
+
 ## 1 · El panel solo se abre con el rol
 
 | Paso | Qué comprobar |
 |---|---|
-| Entrar como `luis@vida.cr` (nutricionista) → teclear `/superadmin` en la URL | Redirige a **Pacientes**. En la barra lateral **no** hay «Plataforma» |
-| Entrar como admin de clínica → `/superadmin` | Redirige a **Pacientes** |
+| Entrar como `luis@vida.cr` (nutricionista) → teclear `/superadmin/clinicas` | Redirige a **Pacientes**. En la barra lateral **no** hay «Plataforma» |
+| Entrar como admin de clínica → `/superadmin/clinicas` | Redirige a **Pacientes** |
 | `curl` a `/api/superadmin/clinicas` con el token de cualquiera de los dos | **403** `solo_super_admin` |
 
 > El redirect del navegador **no es la defensa**: es para no ofrecer un enlace que la API va a rechazar. Quien manda es el 403.
@@ -4525,31 +4534,32 @@ El usuario operador se crea en Keycloak, y hay **una cosa que NO se le pone**:
 
 | Paso | Qué comprobar |
 |---|---|
-| Entrar con el usuario `super_admin` | Se pinta el panel de plataforma **sin barra lateral de clínica** |
-| Cabecera | «NutriSmart · Plataforma» y el correo del operador |
+| Entrar con el usuario `super_admin` | Se pinta el panel **sin barra lateral de clínica**, bajo una cabecera «NutriSmart · Plataforma» |
+| Cabecera | El correo del operador y «Cerrar sesión» |
 | Consola del navegador | **Ningún 404** de `/api/profesional/yo` ni de `/api/me` |
-| Cualquier otra URL (`/pacientes`, `/agenda`) | Redirige a `/superadmin` |
+| Cualquier otra URL (`/pacientes`, `/agenda`) | Redirige a `/superadmin/clinicas` |
 
 > Los 404 son la comprobación interesante: un operador no tiene ficha en ninguna clínica, así que esas dos peticiones **no deben salir**. Si aparecen, es que la condición de la app mira solo la sesión y no el tenant.
+
+Quien es operador **y además** trabaja en una clínica sí ve el Shell normal, con «Plataforma» como una sección más de la barra lateral.
 
 ## 3 · Crear una clínica
 
 | Paso | Qué comprobar |
 |---|---|
-| Nombre comercial + país → **Crear clínica** | Aparece arriba de la lista, marcada **«Sin administrador»** en ámbar |
-| Debajo | Se abre solo el formulario del primer administrador, con el nombre de la clínica en el título |
-| Pie de la lista | «Hay una clínica sin administrador: existe, pero nadie puede entrar en ella.» |
-| Nombre vacío | El botón está deshabilitado |
+| Nombre comercial + país → **Crear clínica** | Aparece en la tabla, con su fecha de alta |
+| Nombre o país vacíos | El botón está deshabilitado |
+| Nombre de más de 200 caracteres (por `curl`) | **400** `validacion` |
 
 ## 4 · El primer administrador
 
 | Paso | Qué comprobar |
 |---|---|
-| Nombre + correo → **Crear administrador** | Recibo con borde **verde**: «… ya es administrador de su clínica» |
-| La fila de la clínica | Pasa a **«1 administrador»** y Equipo a **1** |
+| En su fila → **Crear admin** → nombre + correo → **Crear administrador** | Mensaje en verde: «Usuario administrador creado. Se envió un correo a …» |
 | Keycloak → Users → el correo → **Attributes** | `tenant_id` = el UUID de la clínica recién creada |
 | Keycloak → Users → el correo → **Role mapping** | **`admin_clinica`** |
 | Keycloak → Users → el correo → **Details** | Required action **Update Password** |
+| El mismo correo otra vez en la misma clínica | **409** `correo_repetido` |
 
 > **`tenant_id` en Attributes es la comprobación que más duele si falla.** El claim del token sale de ese atributo vía protocol mapper. Sin él, la persona establece su contraseña, Keycloak la autentica **sin un solo error**, y la aplicación le dice «tu sesión no es válida». Nada en el log de Keycloak apunta al problema, porque desde su punto de vista no hay ninguno.
 
@@ -4562,19 +4572,22 @@ El usuario operador se crea en Keycloak, y hay **una cosa que NO se le pone**:
 | Pacientes | Vacío, sin error |
 | Ajustes → Clínica | Sale el nombre y el país que puso el operador |
 
-> Si entra pero Equipo y Clínica aparecen apagadas, lo que falta es el **rol en Keycloak** (paso 4), no un permiso de la base.
+> Si entra pero Equipo y Clínica aparecen apagadas, lo que falta es el **rol en Keycloak**, no un permiso de la base.
 
 ## 5 · Cuando el rol no se puede asignar
 
-Se provoca quitándole `view-realm` al service account, o borrando el rol `admin_clinica` del realm.
+Se provoca borrando el rol `admin_clinica` del realm, o quitándole `manage-users` al service account.
 
 | Paso | Qué comprobar |
 |---|---|
-| Crear un administrador | El alta **no falla**: recibo con borde **ámbar** |
-| Texto del recibo | «Se creó su cuenta pero no se le pudo dar el rol `admin_clinica`… Asígnaselo en Keycloak → Users → … → Role mapping», con el motivo exacto debajo |
-| La clínica | Figura con 1 administrador en la base |
+| Crear un administrador desde el panel | **503** `rol_no_asignado`, con el motivo real en el mensaje |
+| Keycloak → Users | El usuario **no existe**: se borró |
+| Base de datos → `profesional` | **Ninguna** fila nueva |
+| Reintentar con el mismo correo después de arreglar el realm | Funciona, sin «ya existe un usuario con ese correo» |
 
-> **No falla a propósito.** Al llegar a ese punto el usuario ya existe en Keycloak y el profesional ya está en la base. Un 500 diría «no se pudo crear» sobre alguien que **sí** quedó creado, y el segundo intento chocaría con «correo repetido» — dejando al operador convencido de que hay dos usuarios cuando hay uno a medias.
+> **Aquí sí se deshace todo, y en el alta de equipo no.** La diferencia es el orden: el panel asigna el rol **antes** del insert, así que un fallo se puede revertir por completo. Un admin sin su rol entra y no puede administrar nada, de modo que dejarlo a medias no sirve de nada. En el alta de equipo (sección 6) el profesional ya está en la base cuando se asigna el rol, y ahí fallar sería peor: diría «no se pudo» sobre alguien que sí quedó creado.
+>
+> El borrado se **espera** antes de responder. Lanzado sin `await`, el reintento inmediato del operador chocaría con «ya existe un usuario con ese correo».
 
 ## 6 · Alta de equipo con cuentas automáticas
 
@@ -4582,12 +4595,22 @@ Como administrador de clínica, en **Ajustes → Equipo**.
 
 | Paso | Qué comprobar |
 |---|---|
-| Texto bajo «Dar de alta a alguien» | «Esto crea su ficha **y su cuenta de acceso**, y le envía un correo…» |
-| Alta de un **nutricionista** | Estado **Activo** (no «Sin cuenta todavía»). Recibo: «… ya tiene cuenta» |
-| Keycloak → ese usuario → Attributes | `tenant_id` = la clínica del administrador que dio el alta |
+| Texto bajo «Invitar a alguien al equipo» | «Se crea la cuenta en el sistema y se envía un correo…» |
+| Invitar a un **nutricionista** | Estado **Activo** (no «Sin cuenta todavía»). Recibo con borde verde: «… ya tiene cuenta» |
+| Keycloak → ese usuario → Attributes | `tenant_id` = la clínica del administrador que invitó |
 | Keycloak → ese usuario → Role mapping | **Sin roles de realm** — un nutricionista no necesita ninguno |
-| Alta de un **administrador** | Recibo verde, y en Keycloak **sí** aparece `admin_clinica` |
+| Invitar a un **administrador** | Recibo verde, y en Keycloak **sí** aparece `admin_clinica` |
 | Mismo correo otra vez | **409** «Ya hay alguien con ese correo en la clínica» |
+
+### Si el rol falla en el alta de equipo
+
+Mismo truco que en la sección 5, pero invitando desde Equipo.
+
+| Paso | Qué comprobar |
+|---|---|
+| Invitar a alguien como **administrador** | El alta **no falla**: recibo con borde **ámbar** |
+| Texto del recibo | «No se le pudo dar el rol de administrador en Keycloak: entrará como nutricionista. Asígnaselo a mano en Keycloak → Users → … → Role mapping», con el motivo debajo |
+| La tabla | La persona figura como Administrador y Activo |
 
 ### Sin el service account configurado
 
@@ -4595,11 +4618,11 @@ Quitar `KEYCLOAK_SVC_SECRET` del entorno y reiniciar la API.
 
 | Paso | Qué comprobar |
 |---|---|
-| Texto bajo «Dar de alta a alguien» | Vuelve a «Esto crea su ficha en la clínica, **no** su cuenta de acceso…» |
-| Alta | Estado **«Sin cuenta todavía»**. Recibo: «… está en la clínica, sin cuenta todavía» |
+| Texto bajo «Invitar a alguien al equipo» | Cambia a «Esto crea su ficha en la clínica, **no** su cuenta de acceso…» |
+| Invitar | Estado **«Sin cuenta todavía»**. Recibo: «… está en la clínica, sin cuenta todavía» |
 | Panel de plataforma → crear administrador | **503** `keycloak_admin_no_configurado` |
 
-> Las dos frases son opuestas y el administrador no puede adivinar cuál aplica. El texto lo decide `cuentasAutomaticas`, que viene de `/api/profesional/yo`, no una suposición escrita a mano.
+> Las dos frases son opuestas y el administrador no puede adivinar cuál aplica. El texto lo decide `cuentasAutomaticas`, que viene de `/api/profesional/yo`, no una frase fija. Prometer una cuenta que no se crea deja al administrador convencido de que su compañero ya puede entrar.
 
 ## 7 · Lo que el cambio de rol sigue sin hacer
 
@@ -4618,11 +4641,54 @@ Quitar `KEYCLOAK_SVC_SECRET` del entorno y reiniciar la API.
 | Crear dos clínicas con un administrador cada una | — |
 | Entrar como el admin de la clínica A → Equipo | Solo su equipo. El admin de B **no aparece** |
 | `GET /api/admin/profesionales` con el token de A | Ninguna fila de B |
-| Entrar como el admin de A → `/superadmin` | Redirige a Pacientes (no es operador de plataforma) |
+| Entrar como el admin de A → `/superadmin/clinicas` | Redirige a Pacientes (no es operador de plataforma) |
 
 ---
 
 ---
+
+
+# Rebanada 46 — Cinco defectos de uso
+
+Cinco fallos reportados probando la aplicación con datos reales. No comparten código, pero sí el mismo origen: cosas que solo se ven usando la pantalla, no leyéndola.
+
+## 1 · La Disponibilidad Energética se medía contra el GET
+
+**Dónde:** Nueva consulta → **Conclusiones** → **Abrir calculadora** → Sección A, bloque «Disponibilidad Energética» (solo con método **Cunningham**).
+
+La DE salía de `(GET − GEE) ÷ MLG`. Debe salir de `(meta calórica − GEE) ÷ MLG`, donde la meta calórica es el **«REQ a utilizar»** de la Sección B — el mismo número que viaja a «Meta calórica (kcal/día)» en la Prescripción dietética.
+
+**Por qué importaba.** El GET de Cunningham es `GER × 1.1 + GEE`, así que restarle el GEE lo deja en `GER × 1.1`: la cuenta se mordía la cola. La DE valía siempre `GER × 1.1 ÷ MLG` y **no se movía al prescribir** un superávit o un déficit, que es justo lo que el indicador de RED-S tiene que detectar. El GET se autorrellena como REQ, de modo que mientras nadie tocaba el campo los dos valores coincidían y el fallo pasaba desapercibido.
+
+**Caso de prueba** — MLG **75.09 kg**, GEE total **820.2 kcal**, meta calórica **3300 kcal**:
+
+| Lectura | Antes | Ahora |
+|---|---|---|
+| GER (`500 + 22 × 75.09`) | 2152 kcal | 2152 kcal |
+| GET (`GER × 1.1 + GEE`) | 3187 kcal | 3187 kcal |
+| **Disponibilidad energética** | **31.5** ❌ | **33.0** ✅ |
+| Nivel | Deficiencia leve / moderada | Deficiencia leve / moderada |
+
+`(3300 − 820.2) ÷ 75.09 = 33.02`. Para reproducir el GEE: una actividad de **75.09 kg · 60 min · 10.4 METS** da 820.2 kcal.
+
+| Paso | Qué comprobar |
+|---|---|
+| Cargar los datos del caso y mirar la DE | **33.0**, no 31.5 |
+| Debajo del número | La cuenta a la vista: `(3300 − 820.2) ÷ 75.09 kg` |
+| Subir el REQ a utilizar a 4000 | La DE sube a **42.3** en el momento |
+| Bajarlo a 2500 | La DE baja a **22.4** y el nivel pasa a **severa** (rojo) |
+| Borrar el REQ a utilizar | El bloque pide la meta calórica, sin número inventado |
+| Borrar la MLG | El bloque pide la MLG (mensaje distinto del anterior) |
+
+**Lo que hay que mirar con atención:** que la DE **reaccione** al cambiar el REQ. Un número que no se mueve al prescribir es el síntoma exacto del fallo que se corrigió.
+
+**Comprobación de la fórmula** (sustituye la fila de la R42, que probaba el comportamiento viejo):
+
+| Entrada | Salida |
+|---|---|
+| `disponibilidadEnergetica(3300, 820.2, 75.09)` | 33.0 |
+| `disponibilidadEnergetica(2388, 385.9, 60)` | 33.4 |
+| `disponibilidadEnergetica(…, 0)` | `null` |
 
 # Tropiezos de entorno
 
