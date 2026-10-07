@@ -15,6 +15,7 @@
  */
 import { useEffect, useState } from 'react'
 import { ApiError } from '../../api/client'
+import { useCambiosSinGuardar } from '../../contexts/CambiosSinGuardar'
 import {
   analizarFilaDietetica,
   getRegistroDietetico,
@@ -234,6 +235,22 @@ export function TablaDietetica({
     setOk(false)
   }
 
+  // Aviso al salir con cambios sin guardar (R46). `analizando` queda
+  // fuera: es estado de la petición, no algo que el profesional escriba.
+  const { marcarGuardado } = useCambiosSinGuardar({
+    nombre: t.titulo,
+    activo: !cargando && !readOnly,
+    valores: {
+      observaciones,
+      filas: filas.map((f) => ({
+        hora: f.hora,
+        alimentos: f.alimentos_consumidos,
+        kcal: f.kcalTexto,
+      })),
+    },
+    guardar: () => guardar(),
+  })
+
   async function guardar() {
     setGuardando(true)
     setError(null)
@@ -245,6 +262,9 @@ export function TablaDietetica({
       })
       hidratar(r)
       setOk(true)
+      // Tras `hidratar(r)`: la referencia es la del registro que devolvió
+      // el servidor.
+      marcarGuardado()
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudo guardar el registro dietético')
     } finally {

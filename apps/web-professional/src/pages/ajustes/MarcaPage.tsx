@@ -7,6 +7,7 @@
  * logo no debe tocar los colores.
  */
 import { useEffect, useRef, useState } from 'react'
+import { useCambiosSinGuardar } from '../../contexts/CambiosSinGuardar'
 import { apiDelete, apiPut, apiUpload, API_BASE, ApiError } from '../../api/client'
 import { Campo, claseControl } from '../../components/Campo'
 import { useBrand, urlLogo, type Brand } from '../../contexts/BrandContext'
@@ -102,6 +103,24 @@ export function MarcaPage() {
     lector.readAsDataURL(file)
   }
 
+  /**
+   * Aviso al salir con cambios sin guardar (R46).
+   *
+   * `logoPreview` queda fuera: es el data-URL del archivo elegido y
+   * serializarlo en cada render metería megas de base64 en la
+   * comparación. `logoFile` ya dice que hay un logo pendiente.
+   */
+  const { marcarGuardado } = useCambiosSinGuardar({
+    nombre: 'Identidad visual',
+    valores: { nombre, primario, acento, logo: logoFile?.name ?? null },
+    guardar: () => guardarDesdeGuardia(),
+  })
+
+  /** Lo mismo que el submit, sin el evento del formulario. */
+  async function guardarDesdeGuardia() {
+    await guardar({ preventDefault: () => {} } as React.FormEvent)
+  }
+
   async function guardar(e: React.FormEvent) {
     e.preventDefault()
     if (!nombreValido || !coloresValidos) return
@@ -124,6 +143,7 @@ export function MarcaPage() {
       // toda la app sin recargar.
       await refrescar()
       setOk(true)
+      marcarGuardado()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo guardar la identidad visual')
     } finally {

@@ -4820,6 +4820,68 @@ Si `uso_ia` no crece al pulsar el botón, la petición no llegó al servidor (mi
 
 **Lo que hay que mirar con atención:** que el mensaje distinga **«esto se arregla esperando»** de **«esto lo arregla quien administra el servidor»**. `sin_configurar` y `credencial_invalida` son del segundo tipo, y decirles «inténtalo más tarde» es mandar a esperar algo que no va a pasar.
 
+## 5 · Modal al salir de un formulario con cambios sin guardar
+
+**Dónde:** en cualquier formulario. El caso que lo motivó: Nueva consulta → **Clínico** → escribir → cambiar de pestaña, y lo escrito se iba sin un solo aviso.
+
+### El mecanismo
+
+Centralizado en `contexts/CambiosSinGuardar.tsx`. Cada formulario se registra con **dos líneas** y no lleva ninguna lógica de «sucio» propia:
+
+```tsx
+const { marcarGuardado } = useCambiosSinGuardar({
+  nombre: 'Clínico',
+  activo: !cargando && !bloqueada,
+  valores: { apf, app, sesiones, duracion, fuma },   // lo que hay en pantalla
+  guardar,                                          // su propio guardado
+})
+```
+
+y un `marcarGuardado()` en el camino de éxito de su `guardar`. El hook serializa `valores`, se queda con la primera serialización como referencia y marca cambios cuando la de ahora difiere.
+
+**Dos detalles que no son obvios:**
+
+1. **`marcarGuardado()` no toma la referencia en el momento de la llamada**, sino en un efecto posterior. Los formularios que al guardar recargan del servidor (`setForm(aFormulario(b))`) harían la toma con los valores de *antes* de guardar y quedarían marcados como sucios con lo que acaban de guardar. React agrupa el `setForm` con el del hook en un solo re-render y el efecto corre después, ya con los valores recargados.
+2. **El sesgo es hacia «sucio»**: un modal de más es una molestia, un modal de menos es una consulta perdida.
+
+**El bloqueo usa `useBlocker` de react-router**, que atrapa los `<Link>` y el botón Atrás **dejando el formulario montado** —si se desmontara, «Guardar» no tendría nada que guardar—. `useBlocker` exige un data router, así que `App.tsx` pasó de `<BrowserRouter>` a `createBrowserRouter([{ path: '*', element: <Raiz /> }])` + `RouterProvider`. **Ninguna ruta cambió:** las `<Routes>` de dentro siguen tal cual, como rutas descendientes bajo el splat.
+
+Lo que no es una ruta —cambiar de pestaña— pasa por `useSalidaSegura()`, en `TabsValoracion` y `TabsDietetico`.
+
+### Qué comprobar
+
+| Paso | Qué comprobar |
+|---|---|
+| Clínico → escribir en «Otras sustancias» → pestaña **Dietético** | Sale el modal: «Hay cambios sin guardar · El formulario «Clínico» tiene cambios…» |
+| **Guardar** | Guarda y **después** cambia de pestaña |
+| **Abandonar** | Cambia de pestaña y descarta |
+| **Seguir aquí**, o la tecla **Escape** | Se queda, sin guardar ni descartar |
+| Clic fuera del modal | **No** cierra: un clic al aire no decide si lo escrito se guarda o se tira |
+| Escribir y pulsar el **menú lateral** (Pacientes, Agenda…) | Mismo modal; el formulario sigue montado detrás |
+| Escribir y pulsar **Atrás** del navegador | Mismo modal, y «Guardar» funciona |
+| Escribir y **cerrar la pestaña** o recargar (F5) | Diálogo del navegador. Ahí no se puede ofrecer «Guardar»: es el único camino que no pasa por el modal |
+| Guardar con el botón del formulario y luego cambiar de pestaña | **No** sale el modal |
+| Escribir, deshacer a mano hasta dejarlo como estaba, cambiar de pestaña | **No** sale el modal: la comparación es por valor, no por «se tocó» |
+| Consulta finalizada (bloqueada) | No sale nunca: `activo` es false |
+| Dos formularios sucios a la vez (Clínico + Dietético) | El modal los nombra los dos y «Guardar» los guarda **en serie** |
+| Si uno falla al guardar | El modal se queda abierto con el error y **no** navega |
+| Escribir en una cita y pulsar Atrás | También avisa: los modales están registrados |
+
+**Los 22 formularios registrados** (la comprobación es un grep, no hay que abrirlos uno a uno):
+
+```
+cd apps/web-professional && grep -rl "useCambiosSinGuardar" src | sort
+```
+
+Valoración: Antropometría · Clínico · Hábitos · Observaciones clínicas · Dietético · Recordatorio 24h · Consumo Usual · Conclusiones · Plan alimentario. Ficha: Sociodemografía · Notas del profesional · Plan alimentario (editor) · Nota SOAP (×2) · Umbral de alerta. Modales: Cita · Paciente · Laboratorio · Control de seguimiento · Regla de notificación. Ajustes: Datos de la clínica · Identidad visual · Recurso.
+
+**`PanelBioquimica` queda fuera a propósito:** no tiene campos editables propios; lo que se escribe allí se escribe en el modal de laboratorio, que sí está registrado.
+
+**Dos decisiones que conviene conocer:**
+
+- **«Seguir aquí» no estaba en el encargo**, que pedía dos opciones. Se deja igualmente, en tercer lugar y sin relieve: sin ella, un clic por error en el menú obliga a guardar o a descartar, y descartar no tiene vuelta atrás. Quitarla es borrar un botón.
+- **`NotaProfesional` no serializa valores**: se autoguarda al segundo y ya sabía decir si le quedaba algo pendiente, así que se registra ese booleano. El modal solo sale dentro de la ventana del autoguardado o si el autoguardado falló.
+
 # Tropiezos de entorno
 
 Fallos reales encontrados durante el desarrollo. Casi todos tardaron más en diagnosticarse que en corregirse.

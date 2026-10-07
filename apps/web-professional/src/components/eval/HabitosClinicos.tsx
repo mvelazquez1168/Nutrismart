@@ -49,6 +49,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { getSociodemografico, guardarSociodemografico } from '../../api/sociodemografico'
+import { useCambiosSinGuardar } from '../../contexts/CambiosSinGuardar'
 import { Campo, claseControl } from '../Campo'
 import { InputNumero } from '../InputNumero'
 import type { DatosSocioEnvio, Sociodemografia } from '../../api/tipos'
@@ -153,6 +154,14 @@ export function HabitosClinicos({
     setGuardado(false)
   }
 
+  // Aviso al salir con cambios sin guardar (R46).
+  const { marcarGuardado } = useCambiosSinGuardar({
+    nombre: 'Hábitos',
+    activo: !cargando && !bloqueada && (bloque?.consentimientoOtorgado ?? false),
+    valores: form,
+    guardar: () => guardar(),
+  })
+
   async function guardar() {
     if (!bloque) return
     setGuardando(true)
@@ -162,6 +171,9 @@ export function HabitosClinicos({
       setBloque(b)
       setForm(aFormulario(b))
       setGuardado(true)
+      // Después de `setForm(aFormulario(b))`: la referencia tiene que ser
+      // la del bloque que devolvió el servidor, no la de antes de pedirlo.
+      marcarGuardado()
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudieron guardar los hábitos')
     } finally {

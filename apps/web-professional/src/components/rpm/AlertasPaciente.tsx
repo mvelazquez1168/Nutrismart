@@ -7,6 +7,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError, apiDelete, apiGet, apiPatch, apiPut } from '../../api/client'
+import { useCambiosSinGuardar } from '../../contexts/CambiosSinGuardar'
 
 export const METRICAS = [
   { clave: 'peso', etiqueta: 'Peso', unidad: 'kg', silencio: false },
@@ -77,6 +78,13 @@ export function AlertasPaciente({ pacienteId }: { pacienteId: string }) {
 
   const esDeSilencio = METRICAS.find((m) => m.clave === metrica)?.silencio ?? false
 
+  // Aviso al salir con cambios sin guardar (R46).
+  const { marcarGuardado } = useCambiosSinGuardar({
+    nombre: 'Umbral de alerta',
+    valores: { metrica, operador, umbral, ventana },
+    guardar: () => guardar(),
+  })
+
   async function guardar() {
     if (ocupado || umbral.trim() === '') return
     setOcupado(true)
@@ -90,6 +98,7 @@ export function AlertasPaciente({ pacienteId }: { pacienteId: string }) {
       })
       setUmbral('')
       await cargar()
+      marcarGuardado()
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudo guardar la regla')
     } finally {

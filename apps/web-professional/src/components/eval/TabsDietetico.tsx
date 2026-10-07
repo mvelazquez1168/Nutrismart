@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError } from '../../api/client'
 import { getDietetico, guardarDietetico, type ComidaR24 } from '../../api/clinico'
+import { useCambiosSinGuardar, useSalidaSegura } from '../../contexts/CambiosSinGuardar'
 import { TablaDietetica } from './TablaDietetica'
 import { FormFrecuenciaConsumo } from './FormFrecuenciaConsumo'
 import { ResumenDietetico } from './ResumenDietetico'
@@ -90,6 +91,23 @@ export function TabsDietetico({
     return () => ctrl.abort()
   }, [cargar])
 
+  /**
+   * Aviso al salir con cambios sin guardar (R46).
+   *
+   * Cubre lo que guarda ESTE contenedor: frecuencia, hidratación, macros
+   * y notas. Las dos tablas dietéticas se registran por su cuenta —se
+   * guardan solas— y el modal las nombra aparte.
+   */
+  const { marcarGuardado } = useCambiosSinGuardar({
+    nombre: 'Dietético',
+    activo: !cargando && !bloqueada,
+    valores: { frecuencia, hidratacion, macros, notas },
+    guardar: () => guardar(),
+  })
+
+  /** Cambiar de sub-pestaña no cambia la URL: lo bloquea el hook. */
+  const salidaSegura = useSalidaSegura()
+
   async function guardar() {
     setGuardando(true)
     setError(null)
@@ -109,6 +127,7 @@ export function TabsDietetico({
         notasDieteticas: notas || null,
       })
       setOk(true)
+      marcarGuardado()
       await onGuardado()
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudo guardar la evaluación dietética')
@@ -128,7 +147,7 @@ export function TabsDietetico({
           <button
             key={s.clave}
             type="button"
-            onClick={() => setSub(s.clave)}
+            onClick={() => salidaSegura(() => setSub(s.clave))}
             aria-current={sub === s.clave ? 'page' : undefined}
             className={`-mb-px whitespace-nowrap border-b-2 px-4 py-2 text-sm transition-colors ${
               sub === s.clave

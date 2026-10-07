@@ -12,6 +12,7 @@
 import { useState } from 'react'
 import { ApiError } from '../api/client'
 import { TIPOS_COMIDA, guardarComidas, type ComidaPlan, type TipoComida } from '../api/planes'
+import { useCambiosSinGuardar } from '../contexts/CambiosSinGuardar'
 
 interface Fila {
   patron: string
@@ -53,6 +54,13 @@ export function PlanEditor({
     return f.patron.trim() !== '' || f.ejemploMenu.trim() !== ''
   }).length
 
+  // Aviso al salir con cambios sin guardar (R46).
+  const { marcarGuardado } = useCambiosSinGuardar({
+    nombre: 'Plan alimentario',
+    valores: filas,
+    guardar: () => guardar(),
+  })
+
   async function guardar() {
     setGuardando(true)
     setError(null)
@@ -70,6 +78,7 @@ export function PlanEditor({
         })
       }
       await guardarComidas(planId, envio)
+      marcarGuardado()
       await onGuardado()
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudieron guardar las comidas')

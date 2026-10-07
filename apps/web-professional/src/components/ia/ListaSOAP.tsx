@@ -7,6 +7,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError } from '../../api/client'
+import { useCambiosSinGuardar } from '../../contexts/CambiosSinGuardar'
 import {
   editarSOAP,
   getNotaSOAP,
@@ -77,6 +78,14 @@ function TarjetaSOAP({
     return () => ctrl.abort()
   }, [abierta, nota, pacienteId, resumen.id])
 
+  // Aviso al salir con cambios sin guardar (R46).
+  const { marcarGuardado } = useCambiosSinGuardar({
+    nombre: 'Nota SOAP',
+    activo: editando,
+    valores: borrador,
+    guardar: () => guardar(),
+  })
+
   async function guardar() {
     if (!nota) return
     setOcupado(true)
@@ -85,6 +94,7 @@ function TarjetaSOAP({
       const actualizada = await editarSOAP(pacienteId, nota.id, borrador)
       setNota({ ...nota, ...actualizada })
       setEditando(false)
+      marcarGuardado()
       await onCambio()
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudo guardar')

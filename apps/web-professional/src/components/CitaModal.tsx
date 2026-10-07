@@ -8,6 +8,7 @@
  */
 import { useEffect, useState, type FormEvent } from 'react'
 import { Modal } from './Modal'
+import { useCambiosSinGuardar } from '../contexts/CambiosSinGuardar'
 import { Campo, claseControl } from './Campo'
 import { ApiError } from '../api/client'
 import { crearCita, actualizarCita } from '../api/agenda'
@@ -78,6 +79,21 @@ export function CitaModal({ abierto, cita, onCerrar, onGuardado }: Props) {
     return () => ctrl.abort()
   }, [abierto, esEdicion])
 
+  /**
+   * Aviso al salir con cambios sin guardar (R46).
+   *
+   * Solo con el modal ABIERTO. No afecta a su propio «Cancelar» —el
+   * guardia solo mira la navegacion por rutas y lo que pase por
+   * `useSalidaSegura`—, pero sí cubre el botón Atrás del navegador, que
+   * hasta ahora cerraba el modal y se llevaba lo escrito.
+   */
+  const { marcarGuardado } = useCambiosSinGuardar({
+    nombre: 'Cita',
+    activo: abierto,
+    valores: { pacienteId, inicio, duracion, tipo, notas },
+    guardar: () => enviar({ preventDefault: () => {} } as FormEvent),
+  })
+
   async function enviar(e: FormEvent) {
     e.preventDefault()
     if (guardando) return
@@ -97,6 +113,7 @@ export function CitaModal({ abierto, cita, onCerrar, onGuardado }: Props) {
       if (esEdicion) await actualizarCita(cita.id, datos)
       else await crearCita({ ...datos, pacienteId })
 
+      marcarGuardado()
       onGuardado()
     } catch (error) {
       if (error instanceof ApiError && error.esValidacion) {

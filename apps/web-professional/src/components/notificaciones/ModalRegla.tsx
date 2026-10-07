@@ -16,6 +16,7 @@ import {
 } from '../../api/notificaciones'
 import { Campo, claseControl } from '../Campo'
 import { Modal } from '../Modal'
+import { useCambiosSinGuardar } from '../../contexts/CambiosSinGuardar'
 
 interface Formulario {
   nombre: string
@@ -83,6 +84,21 @@ export function ModalRegla({
     return { fecha: form.fecha, mensaje: form.mensaje.trim() }
   }
 
+  /**
+   * Aviso al salir con cambios sin guardar (R46).
+   *
+   * Solo con el modal ABIERTO. No afecta a su propio «Cancelar» —el
+   * guardia solo mira la navegacion por rutas y lo que pase por
+   * `useSalidaSegura`—, pero sí cubre el botón Atrás del navegador, que
+   * hasta ahora cerraba el modal y se llevaba lo escrito.
+   */
+  const { marcarGuardado } = useCambiosSinGuardar({
+    nombre: 'Regla de notificación',
+    activo: abierto,
+    valores: { tipo, form },
+    guardar: () => guardar({ preventDefault: () => {} } as React.FormEvent),
+  })
+
   async function guardar(e: React.FormEvent) {
     e.preventDefault()
     if (form.nombre.trim() === '') return
@@ -95,6 +111,7 @@ export function ModalRegla({
         await crearRegla({ nombre: form.nombre.trim(), tipo, parametros: parametrosDe() })
       }
       await onGuardado()
+      marcarGuardado()
       onCerrar()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo guardar la regla')

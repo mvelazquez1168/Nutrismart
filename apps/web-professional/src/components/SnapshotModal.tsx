@@ -9,6 +9,7 @@
  */
 import { useEffect, useState, type FormEvent } from 'react'
 import { Modal } from './Modal'
+import { useCambiosSinGuardar } from '../contexts/CambiosSinGuardar'
 import { Campo, claseControl } from './Campo'
 import { ApiError } from '../api/client'
 import {
@@ -112,6 +113,20 @@ export function SnapshotModal({
     }
   }
 
+  /**
+   * Aviso al salir con cambios sin guardar (R46). Solo con el modal
+   * abierto, y cubre sobre todo el botón Atrás del navegador, que hasta
+   * ahora cerraba el modal y se llevaba lo escrito.
+   */
+  const { marcarGuardado } = useCambiosSinGuardar({
+    nombre: 'Control de seguimiento',
+    activo: abierto,
+    valores: { fecha, valores, notaClinica, nota },
+    // Desde el guardia se guarda el BORRADOR: cerrar el control es una
+    // decisión clínica y no la toma un modal de navegación.
+    guardar: () => enviar({ preventDefault: () => {} } as FormEvent, false),
+  })
+
   async function enviar(e: FormEvent, cerrarTambien: boolean) {
     e.preventDefault()
     if (guardando) return
@@ -127,6 +142,7 @@ export function SnapshotModal({
         : await crearSnapshot(pacienteId, datos)
 
       if (cerrarTambien) await cerrarSnapshot(guardado.id)
+      marcarGuardado()
       onGuardado()
     } catch (error) {
       if (error instanceof ApiError && error.esValidacion) {

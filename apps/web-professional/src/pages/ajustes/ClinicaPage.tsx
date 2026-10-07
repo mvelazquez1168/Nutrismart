@@ -7,6 +7,7 @@
  * enlaza en vez de repetirse.
  */
 import { useEffect, useState } from 'react'
+import { useCambiosSinGuardar } from '../../contexts/CambiosSinGuardar'
 import { Link } from 'react-router-dom'
 import { ApiError, apiGet, apiPatch } from '../../api/client'
 
@@ -66,6 +67,14 @@ export function ClinicaPage() {
     setAviso(null)
   }
 
+  // Aviso al salir con cambios sin guardar (R46).
+  const { marcarGuardado } = useCambiosSinGuardar({
+    nombre: 'Datos de la clínica',
+    activo: datos !== null,
+    valores: datos,
+    guardar: () => guardar(),
+  })
+
   async function guardar() {
     if (!datos || ocupado) return
     setOcupado(true)
@@ -80,6 +89,7 @@ export function ClinicaPage() {
         zonaHoraria: datos.zonaHoraria,
       })
       setAviso('Guardado')
+      marcarGuardado()
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudo guardar')
     } finally {

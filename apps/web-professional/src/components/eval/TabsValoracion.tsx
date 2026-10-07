@@ -6,6 +6,7 @@
  * el progreso se siga sin distinguir tonos.
  */
 import { SECCIONES, type Seccion } from '../../api/valoracion'
+import { useSalidaSegura } from '../../contexts/CambiosSinGuardar'
 
 export function TabsValoracion({
   activa,
@@ -16,6 +17,16 @@ export function TabsValoracion({
   completas: Record<string, boolean>
   onCambiar: (s: Seccion) => void
 }) {
+  /**
+   * Cambiar de sección no cambia la URL, así que `useBlocker` no lo ve:
+   * sin esto, salir del Clínico a medio escribir desmontaba el
+   * formulario y se perdía lo escrito sin un solo aviso (R46).
+   *
+   * Va aquí y no en cada pantalla: una sola envoltura cubre las cinco
+   * pestañas.
+   */
+  const salidaSegura = useSalidaSegura()
+
   return (
     // Scroll horizontal en pantallas estrechas: cinco pestañas no caben
     // en un móvil y partirlas en dos filas descoloca el subrayado.
@@ -28,7 +39,7 @@ export function TabsValoracion({
             <button
               key={s.clave}
               type="button"
-              onClick={() => onCambiar(s.clave)}
+              onClick={() => salidaSegura(() => onCambiar(s.clave))}
               aria-current={esActiva ? 'page' : undefined}
               aria-label={`${s.etiqueta}${completa ? ', completada' : ', pendiente'}`}
               className={`-mb-px flex items-center gap-2 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm transition-colors ${

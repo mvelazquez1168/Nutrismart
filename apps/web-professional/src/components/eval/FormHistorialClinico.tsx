@@ -17,6 +17,7 @@ import {
   guardarHistorial,
   type Historial,
 } from '../../api/clinico'
+import { useCambiosSinGuardar } from '../../contexts/CambiosSinGuardar'
 import { Campo, claseControl } from '../Campo'
 import { InputNumero } from '../InputNumero'
 import { FormFarmacologia } from './FormFarmacologia'
@@ -164,6 +165,32 @@ export function FormHistorialClinico({
     setOk(false)
   }
 
+  /**
+   * Aviso al salir con cambios sin guardar (R46).
+   *
+   * Los valores son los que se pintan; `notasPrevias`, `tipoActividadPrevio`
+   * y `likertRetirado` quedan fuera a propósito: viajan de vuelta tal como
+   * llegaron y no los toca nadie, así que no son un cambio del profesional.
+   */
+  const { marcarGuardado } = useCambiosSinGuardar({
+    nombre: 'Clínico',
+    activo: !cargando && !bloqueada,
+    valores: {
+      apf,
+      app,
+      sesiones,
+      duracion,
+      actividadDetalle,
+      fuma,
+      alcohol,
+      otrasSustancias,
+      sintomas,
+      giDetalle,
+      likert,
+    },
+    guardar: () => guardar(),
+  })
+
   async function guardar() {
     setGuardando(true)
     setError(null)
@@ -187,6 +214,9 @@ export function FormHistorialClinico({
         notasAdicionales: notasPrevias.current,
       })
       setOk(true)
+      // Este formulario no recarga del servidor al guardar, así que la
+      // referencia se puede tomar aquí mismo (R46).
+      marcarGuardado()
       await onGuardado()
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudo guardar el historial')

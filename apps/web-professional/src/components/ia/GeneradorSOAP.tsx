@@ -11,6 +11,7 @@
  */
 import { useState } from 'react'
 import { ApiError } from '../../api/client'
+import { useCambiosSinGuardar } from '../../contexts/CambiosSinGuardar'
 import {
   generarSOAP,
   guardarSOAP,
@@ -82,6 +83,13 @@ export function GeneradorSOAP({
 
   const hayContenido = SECCIONES.some((s) => (borrador[s.clave] ?? '').trim() !== '')
 
+  // Aviso al salir con cambios sin guardar (R46).
+  const { marcarGuardado } = useCambiosSinGuardar({
+    nombre: 'Nota SOAP',
+    valores: { motivo, observaciones, borrador },
+    guardar: () => guardar(),
+  })
+
   async function guardar() {
     setGuardando(true)
     setError(null)
@@ -90,6 +98,7 @@ export function GeneradorSOAP({
       // cada palabra, la nota nació de una sugerencia y el expediente
       // debe poder decirlo.
       const nota = await guardarSOAP(pacienteId, { ...borrador, generadaIa: conIa })
+      marcarGuardado()
       onGuardada(nota)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudo guardar la nota')

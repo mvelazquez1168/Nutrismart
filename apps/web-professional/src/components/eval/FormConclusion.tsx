@@ -17,6 +17,7 @@ import {
   type Acuerdo,
 } from '../../api/valoracion'
 import { getHistorial } from '../../api/clinico'
+import { useCambiosSinGuardar } from '../../contexts/CambiosSinGuardar'
 import { macrosEnGramos } from '../../lib/calculadora'
 import { Campo, claseControl } from '../Campo'
 import { PanelCalculadora, type DatosCalculadora } from './PanelCalculadora'
@@ -146,6 +147,29 @@ export function FormConclusion({
     setOk(false)
   }
 
+  // Aviso al salir con cambios sin guardar (R46).
+  const { marcarGuardado } = useCambiosSinGuardar({
+    nombre: 'Conclusiones',
+    activo: !cargando && !bloqueada,
+    valores: {
+      diagnostico,
+      secundario,
+      observaciones,
+      objetivos,
+      justificacion,
+      recomendaciones,
+      kcal,
+      pct,
+      restricciones,
+      suplementos,
+      pesoObjetivo,
+      fechaObjetivo,
+      acuerdos,
+      datosCalculadora,
+    },
+    guardar: () => guardar(),
+  })
+
   async function guardar() {
     setGuardando(true)
     setError(null)
@@ -171,6 +195,7 @@ export function FormConclusion({
         datosCalculadora,
       })
       setOk(true)
+      marcarGuardado()
       await onGuardado()
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudo guardar la conclusión')

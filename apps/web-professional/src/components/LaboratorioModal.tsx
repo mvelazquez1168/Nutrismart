@@ -13,6 +13,7 @@
  */
 import { useEffect, useState, type ChangeEvent, type DragEvent } from 'react'
 import { Modal } from './Modal'
+import { useCambiosSinGuardar } from '../contexts/CambiosSinGuardar'
 import { Campo, claseControl } from './Campo'
 import { ApiError } from '../api/client'
 import {
@@ -124,6 +125,18 @@ export function LaboratorioModal({
     if (f) void procesarArchivo(f)
   }
 
+  /**
+   * Aviso al salir con cambios sin guardar (R46). Solo con el modal
+   * abierto, y cubre sobre todo el botón Atrás del navegador, que hasta
+   * ahora cerraba el modal y se llevaba lo escrito.
+   */
+  const { marcarGuardado } = useCambiosSinGuardar({
+    nombre: 'Laboratorio',
+    activo: abierto,
+    valores: { paso, archivoId: archivo?.id ?? null, valores, noReconocidos, fecha, laboratorio, notas },
+    guardar: () => guardar(),
+  })
+
   async function guardar() {
     if (ocupado) return
     setOcupado(true)
@@ -143,6 +156,7 @@ export function LaboratorioModal({
         snapshotId: null,
         resultados,
       })
+      marcarGuardado()
       onGuardado()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo guardar el estudio')

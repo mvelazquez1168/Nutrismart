@@ -15,6 +15,7 @@
  * el navegador, cualquiera vería los datos en la respuesta.
  */
 import { useCallback, useEffect, useState } from 'react'
+import { useCambiosSinGuardar } from '../contexts/CambiosSinGuardar'
 import { getSociodemografico, guardarSociodemografico } from '../api/sociodemografico'
 import { ApiError } from '../api/client'
 import { Campo, claseControl } from '../components/Campo'
@@ -187,6 +188,24 @@ export function SociodemografiaBloque({ pacienteId }: { pacienteId: string }) {
     setForm((f) => ({ ...f, [nombre]: valor }))
   }
 
+  /**
+   * Aviso al salir con cambios sin guardar (R46).
+   *
+   * Solo con el bloque EN EDICIÓN: en modo lectura no hay nada que
+   * perder, y registrarlo siempre sacaría el modal por nada.
+   */
+  const { marcarGuardado } = useCambiosSinGuardar({
+    nombre: 'Sociodemografía',
+    activo: !cargando && editando,
+    valores: { form, consentimiento },
+    guardar: () => guardarDesdeGuardia(),
+  })
+
+  /** Lo mismo que el submit, sin el evento del formulario. */
+  async function guardarDesdeGuardia() {
+    await guardar({ preventDefault: () => {} } as React.FormEvent)
+  }
+
   async function guardar(e: React.FormEvent) {
     e.preventDefault()
     if (!consentimiento) return
@@ -199,6 +218,7 @@ export function SociodemografiaBloque({ pacienteId }: { pacienteId: string }) {
       setBloque(guardado)
       setForm(aFormulario(guardado))
       setEditando(false)
+      marcarGuardado()
     } catch (e) {
       if (e instanceof ApiError && e.esValidacion) {
         setErrorCampos(Object.fromEntries((e.errores ?? []).map((x) => [x.campo, x.mensaje])))

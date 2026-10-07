@@ -1,7 +1,15 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import {
+  createBrowserRouter,
+  RouterProvider,
+  Routes,
+  Route,
+  Navigate,
+  useLocation,
+} from 'react-router-dom'
 import { AuthProvider, useAuth } from './auth/AuthProvider'
 import { BrandProvider } from './contexts/BrandContext'
+import { CambiosSinGuardarProvider } from './contexts/CambiosSinGuardar'
 import { Shell } from './components/Shell'
 import { Pacientes } from './pages/Pacientes'
 import { PacienteFicha } from './pages/PacienteFicha'
@@ -230,12 +238,33 @@ function Contenido() {
   )
 }
 
-export default function App() {
+/**
+ * Todo lo de dentro, bajo una única ruta `*`.
+ *
+ * Las `<Routes>` de `Contenido` siguen tal cual: son rutas descendientes
+ * y un data router las admite. Lo que cambia es que ahora existe el
+ * contexto de data router, que es lo que `useBlocker` necesita para
+ * atrapar los `<Link>` y el botón Atrás antes de desmontar el formulario
+ * (R46, aviso de cambios sin guardar).
+ */
+function Raiz() {
   return (
-    <BrowserRouter>
-      <AuthProvider>
+    <AuthProvider>
+      <CambiosSinGuardarProvider>
         <Contenido />
-      </AuthProvider>
-    </BrowserRouter>
+      </CambiosSinGuardarProvider>
+    </AuthProvider>
   )
+}
+
+/**
+ * `createBrowserRouter` y no `<BrowserRouter>`: solo el primero crea el
+ * data router. Se construye una vez, a nivel de módulo; hacerlo dentro
+ * del componente crearía un router nuevo en cada render y perdería el
+ * historial.
+ */
+const router = createBrowserRouter([{ path: '*', element: <Raiz /> }])
+
+export default function App() {
+  return <RouterProvider router={router} />
 }

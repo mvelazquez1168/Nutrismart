@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiUpload } from '../api/client'
 import { Modal } from '../components/Modal'
+import { useCambiosSinGuardar } from '../contexts/CambiosSinGuardar'
 
 const CATEGORIAS = [
   { clave: 'nutricion', etiqueta: 'Nutrición' },
@@ -165,6 +166,23 @@ function ModalRecurso({
     return null
   }
 
+  // Aviso al salir con cambios sin guardar (R46).
+  const { marcarGuardado } = useCambiosSinGuardar({
+    nombre: 'Recurso',
+    activo: !cargando,
+    valores: {
+      titulo,
+      resumen,
+      contenido,
+      categoria,
+      tipo,
+      portada,
+      urlExterna,
+      archivo: archivo?.id ?? null,
+    },
+    guardar: () => guardar(),
+  })
+
   async function guardar() {
     if (ocupado || loQueFalta() !== null) return
     setOcupado(true)
@@ -182,6 +200,7 @@ function ModalRecurso({
     try {
       if (id) await apiPatch(`/api/recursos/${id}`, cuerpo)
       else await apiPost('/api/recursos', cuerpo)
+      marcarGuardado()
       onGuardado()
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudo guardar')

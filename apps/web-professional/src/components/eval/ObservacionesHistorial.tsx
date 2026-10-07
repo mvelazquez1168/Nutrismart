@@ -17,6 +17,7 @@
 import { useEffect, useState } from 'react'
 import { ApiError } from '../../api/client'
 import { getHistorial, guardarObservacionesHistorial } from '../../api/clinico'
+import { useCambiosSinGuardar } from '../../contexts/CambiosSinGuardar'
 import { claseControl } from '../Campo'
 
 export function ObservacionesHistorial({
@@ -47,6 +48,14 @@ export function ObservacionesHistorial({
     return () => ctrl.abort()
   }, [pacienteId])
 
+  // Aviso al salir con cambios sin guardar (R46).
+  const { marcarGuardado } = useCambiosSinGuardar({
+    nombre: 'Observaciones clínicas',
+    activo: !cargando && !bloqueada,
+    valores: { texto },
+    guardar: () => guardar(),
+  })
+
   async function guardar() {
     setGuardando(true)
     setError(null)
@@ -58,6 +67,7 @@ export function ObservacionesHistorial({
       )
       setTexto(h.observacionesClinicas ?? '')
       setOk(true)
+      marcarGuardado()
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudieron guardar las observaciones')
     } finally {

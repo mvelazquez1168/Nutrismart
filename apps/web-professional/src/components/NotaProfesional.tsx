@@ -30,6 +30,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '../api/client'
 import { guardarNotaProfesional } from '../api/pacientes'
+import { useCambiosSinGuardar } from '../contexts/CambiosSinGuardar'
 
 const LIMITE = 10_000
 const RETARDO_MS = 1000
@@ -59,6 +60,20 @@ export function NotaProfesional({
   useEffect(() => () => {
     if (temporizador.current) clearTimeout(temporizador.current)
   }, [])
+
+  /**
+   * Aviso al salir con cambios sin guardar (R46).
+   *
+   * Aquí no hace falta serializar nada: la nota se autoguarda al segundo
+   * y el componente ya sabe decir si queda algo pendiente. Se registra
+   * ese booleano, así que el modal solo sale dentro de la ventana del
+   * autoguardado o cuando el autoguardado falló.
+   */
+  useCambiosSinGuardar({
+    nombre: 'Notas del profesional',
+    valores: { pendiente: estado === 'pendiente' || estado === 'error' },
+    guardar: () => guardarYa(),
+  })
 
   async function persistir(valor: string) {
     if (valor === guardado.current) {

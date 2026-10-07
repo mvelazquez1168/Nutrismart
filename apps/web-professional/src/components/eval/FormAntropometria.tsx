@@ -23,6 +23,7 @@ import {
   type Formula,
   type Sexo,
 } from '../../lib/composicion'
+import { useCambiosSinGuardar } from '../../contexts/CambiosSinGuardar'
 import { Campo, claseControl } from '../Campo'
 import { GraficaComposicion } from './GraficaComposicion'
 import { AvisoPrecarga } from './BannerSeguimiento'
@@ -235,6 +236,14 @@ export function FormAntropometria({
     setOk(null)
   }
 
+  // Aviso al salir con cambios sin guardar (R46).
+  const { marcarGuardado } = useCambiosSinGuardar({
+    nombre: 'Antropometría',
+    activo: !cargando && !bloqueada,
+    valores: { campos, metodo, formula, pliegues },
+    guardar: () => guardar(),
+  })
+
   async function guardar() {
     setGuardando(true)
     setError(null)
@@ -268,6 +277,7 @@ export function FormAntropometria({
         `Guardado · ${guardada.pesoKg ?? '—'} kg${guardada.imc !== null ? `, IMC ${guardada.imc}` : ''}`,
       )
       setHistorial(await getMediciones(pacienteId, 20))
+      marcarGuardado()
       await onGuardado()
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'No se pudo guardar la medición')
