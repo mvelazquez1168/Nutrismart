@@ -95,13 +95,6 @@
         "attributes": {}
       },
       {
-        "name": "super_admin",
-        "description": "Operador de plataforma NutriSmart — accede al panel /superadmin",
-        "composite": false,
-        "clientRole": false,
-        "attributes": {}
-      },
-      {
         "id": "237546a0-ab3f-4880-bcb3-db38037eee98",
         "name": "offline_access",
         "description": "${role_offline-access}",
@@ -1036,7 +1029,7 @@
       "webOrigins": [],
       "protocol": "openid-connect",
       "attributes": {},
-      "fullScopeAllowed": false,
+      "fullScopeAllowed": true,
       "defaultClientScopes": [
         "web-origins",
         "acr",

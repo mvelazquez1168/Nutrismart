@@ -25,11 +25,14 @@ services:
     container_name: nutrismart-api
     env_file: ../.env
     environment:
-      # Solo estas dos cambian dentro de Docker: usan hostnames internos.
+      # Solo estas tres cambian dentro de Docker: usan hostnames internos.
       # KEYCLOAK_ISSUER y KEYCLOAK_AUDIENCE NO se tocan aquí — el 'iss' del
       # token siempre es localhost porque lo emite el navegador.
       DATABASE_URL: postgres://nutrismart:changeme@db:5432/nutrismart
       KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/nutrismart/protocol/openid-connect/certs
+      # Tercera que cambia por el mismo motivo: es una llamada
+      # server-to-server al Admin API, no algo que emita el navegador.
+      KEYCLOAK_ADMIN_URL: http://keycloak:8080
       # Lado interno del mapeo 4001:4000. En el .env vale 4001 (dev en el
       # host); aquí debe ser 4000 o el puerto publicado apuntaría a nada.
       API_PORT: "4000"
