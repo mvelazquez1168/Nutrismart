@@ -18,6 +18,7 @@
  * mismo criterio que rige el resto de salidas de IA del proyecto.
  */
 import { useEffect, useState } from 'react'
+import { ApiError } from '../../api/client'
 import {
   getRegistroDietetico,
   type FilaDietetica,
@@ -63,6 +64,20 @@ export function TotalesRecordatorio({
   onCopiar?: (s: Suma) => void
 }) {
   const [sumas, setSumas] = useState<Record<string, Suma | null>>({})
+  /**
+   * Fuentes que NO se pudieron leer, por tipo — R46.
+   *
+   * Antes el `catch` devolvía `null` con el comentario «sin registro
+   * todavía: no es un fallo», y eso tapaba los fallos de verdad: un 403,
+   * un 500 o un corte de red pintaban «Sin analizar. Usa Analizar IA en
+   * cada tiempo de comida», que es el mensaje de una consulta en blanco.
+   * De ahí el «el resumen de macros queda vacío»: no estaba vacío,
+   * estaba roto y lo decía como si estuviera vacío.
+   *
+   * Sin registro, el servidor responde 200 con las seis filas vacías, así
+   * que ese caso no pasa por aquí.
+   */
+  const [fallos, setFallos] = useState<Record<string, string>>({})
   const [cargando, setCargando] = useState(true)
 
   useEffect(() => {
@@ -71,13 +86,26 @@ export function TotalesRecordatorio({
     Promise.all(
       FUENTES.map((f) =>
         getRegistroDietetico(pacienteId, consultaId, f.tipo, ctrl.signal)
-          .then((r) => [f.tipo, sumar(r.filas)] as const)
-          // Sin registro todavía: no es un fallo, es que no se ha llenado.
-          .catch(() => [f.tipo, null] as const),
+          .then((r) => [f.tipo, sumar(r.filas), null] as const)
+          .catch((e: unknown) => {
+            if (e instanceof DOMException && e.name === 'AbortError') {
+              return [f.tipo, null, null] as const
+            }
+            const mensaje = e instanceof ApiError ? e.message : 'No se pudo leer'
+            return [f.tipo, null, mensaje] as const
+          }),
       ),
     )
-      .then((pares) => {
-        if (!ctrl.signal.aborted) setSumas(Object.fromEntries(pares))
+      .then((filas) => {
+        if (ctrl.signal.aborted) return
+        setSumas(Object.fromEntries(filas.map(([tipo, suma]) => [tipo, suma])))
+        setFallos(
+          Object.fromEntries(
+            filas
+              .filter((t): t is readonly [TipoRegistro, null, string] => t[2] !== null)
+              .map(([tipo, , mensaje]) => [tipo, mensaje]),
+          ),
+        )
       })
       .finally(() => {
         if (!ctrl.signal.aborted) setCargando(false)
@@ -99,6 +127,7 @@ export function TotalesRecordatorio({
 
       {FUENTES.map((f) => {
         const s = sumas[f.tipo] ?? null
+        const fallo = fallos[f.tipo]
         return (
           <div
             key={f.tipo}
@@ -106,7 +135,13 @@ export function TotalesRecordatorio({
           >
             <div className="min-w-0">
               <p className="text-sm font-medium text-ink">{f.etiqueta}</p>
-              {s === null ? (
+              {/* «No se pudo leer» y «no se ha analizado» son cosas
+                  distintas y ahora se dicen distinto (R46). */}
+              {fallo !== undefined ? (
+                <p role="alert" className="text-xs" style={{ color: 'var(--status-critical)' }}>
+                  No se pudo leer esta fuente: {fallo}
+                </p>
+              ) : s === null ? (
                 <p className="text-xs text-muted">
                   Sin analizar. Usa «Analizar IA» en cada tiempo de comida, o escribe las kcal a
                   mano.

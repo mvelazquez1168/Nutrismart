@@ -210,6 +210,20 @@ async function start(): Promise<void> {
       'recordatorios de cita: cada 15 minutos',
     )
 
+    // Si la IA no esta configurada, TODOS sus botones responden 503 y hasta
+    // ahora no habia donde verlo: `config.iaHabilitada` se calculaba y no se
+    // usaba en ningun sitio. Un "Analizar IA" que no hace nada se diagnostica
+    // en un minuto con esta linea y en media hora sin ella (R46).
+    if (config.iaHabilitada) {
+      app.log.info({ modelo: config.anthropicModelo }, 'IA: configurada')
+    } else {
+      app.log.warn(
+        'IA: SIN CONFIGURAR (falta ANTHROPIC_API_KEY). El analisis dietetico, la ' +
+          'interpretacion de laboratorios y la nota SOAP responderan 503. El acceso ' +
+          'clinico no se ve afectado.',
+      )
+    }
+
     // Alertas: una vez al dia, a las 7 de la manana en Costa Rica. El
     // contenedor corre en UTC, asi que son las 13:00 UTC.
     //

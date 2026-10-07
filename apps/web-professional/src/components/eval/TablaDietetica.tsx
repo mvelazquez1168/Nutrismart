@@ -161,6 +161,18 @@ export function TablaDietetica({
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState(false)
 
+  /**
+   * El fallo del análisis, en la FILA que se analizó — R46.
+   *
+   * El mensaje de `error` se pinta al pie del componente, debajo de las
+   * observaciones. Pulsando «Analizar IA» en el Desayuno —arriba de una
+   * tabla de seis filas— ese aviso cae fuera de la pantalla: el botón
+   * dejaba de decir «Analizando…», no aparecía ningún macro y no se veía
+   * nada más. De ahí el «no dispara ninguna llamada»: sí la dispara, y
+   * falla donde nadie mira.
+   */
+  const [errorIa, setErrorIa] = useState<{ tiempo: string; mensaje: string } | null>(null)
+
   // Los totales del servidor no se guardan en estado: se recalculan aquí
   // a partir de las filas (`totalesLocales`). Si dependieran del guardado,
   // corregir un kcal dejaría el pie de la tabla contradiciendo a la
@@ -177,8 +189,25 @@ export function TablaDietetica({
       .then((r) => {
         if (!ctrl.signal.aborted) hidratar(r)
       })
-      .catch(() => {
-        /* Sin registro aún: quedan las seis filas en blanco. */
+      /**
+       * El fallo de carga SÍ se enseña (R46).
+       *
+       * Este `catch` decía «sin registro aún: quedan las seis filas en
+       * blanco», y era un diagnóstico equivocado: cuando no hay registro
+       * el servidor responde 200 con las seis filas vacías. Aquí solo
+       * llegan fallos de verdad —403, consulta no encontrada, 500, red—,
+       * y tragárselos dejaba una tabla en blanco indistinguible de una
+       * consulta nueva. Sobre esa tabla, «Analizar IA» no podía más que
+       * fallar.
+       */
+      .catch((e) => {
+        if (ctrl.signal.aborted) return
+        if (e instanceof DOMException && e.name === 'AbortError') return
+        setError(
+          e instanceof ApiError
+            ? `No se pudo cargar ${t.titulo}: ${e.message}`
+            : `No se pudo cargar ${t.titulo}`,
+        )
       })
       .finally(() => {
         if (!ctrl.signal.aborted) setCargando(false)
@@ -227,6 +256,7 @@ export function TablaDietetica({
     const fila = filas[i]
     if (!fila || !fila.alimentos_consumidos || fila.alimentos_consumidos.trim() === '') return
     setError(null)
+    setErrorIa(null)
     setFilas((prev) => prev.map((f, j) => (i === j ? { ...f, analizando: true } : f)))
     try {
       // El servidor analiza el texto GUARDADO: se guarda primero para que
@@ -239,7 +269,12 @@ export function TablaDietetica({
       hidratar(r)
     } catch (e) {
       setFilas((prev) => prev.map((f, j) => (i === j ? { ...f, analizando: false } : f)))
-      setError(e instanceof ApiError ? e.message : 'No se pudo analizar el tiempo de comida')
+      // El mensaje de la API ya nombra el motivo y dice si esperar sirve
+      // de algo (ver MENSAJE_FALLO_IA en routes/registroDietetico.ts).
+      const mensaje =
+        e instanceof ApiError ? e.message : 'No se pudo analizar el tiempo de comida'
+      setErrorIa({ tiempo: fila.tiempo_comida, mensaje })
+      setError(mensaje)
     }
   }
 
@@ -343,6 +378,21 @@ export function TablaDietetica({
                         </button>
                       )}
                     </div>
+
+                    {/* El fallo, junto al botón que lo provocó. Al pie de la
+                        página no se ve: la tabla tiene seis filas (R46). */}
+                    {errorIa?.tiempo === f.tiempo_comida && (
+                      <p
+                        role="alert"
+                        className="mt-1 rounded-md border p-2 text-xs"
+                        style={{
+                          borderColor: 'var(--status-alert)',
+                          backgroundColor: 'color-mix(in srgb, var(--status-alert) 8%, transparent)',
+                        }}
+                      >
+                        {errorIa.mensaje}
+                      </p>
+                    )}
                   </td>
                 </tr>
               )

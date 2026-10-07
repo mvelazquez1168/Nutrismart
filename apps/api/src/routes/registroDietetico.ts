@@ -129,6 +129,47 @@ function respuesta(r: FilaRow | null) {
   }
 }
 
+/**
+ * Mensaje por tipo de fallo de la IA — R46.
+ *
+ * El profesional tiene que poder distinguir «esto se arregla esperando» de
+ * «esto lo tiene que arreglar quien administra el servidor». Un único
+ * «no está disponible ahora mismo» para los cuatro casos manda a esperar a
+ * quien nunca va a ver funcionar el botón porque falta la clave.
+ *
+ * Todos cierran recordando que el kcal se puede escribir a mano: la regla
+ * de oro del proyecto es que la falta de IA no bloquee el trabajo clínico.
+ */
+const MENSAJE_FALLO_IA: Record<string, string> = {
+  sin_configurar:
+    'El análisis con IA no está configurado en este servidor (falta ANTHROPIC_API_KEY). No es un fallo pasajero: avisa a quien administra la instalación. Puedes escribir las kcal a mano mientras tanto.',
+  credencial_invalida:
+    'La clave de la IA no es válida o fue revocada. Avisa a quien administra la instalación; esperando no se arregla. Puedes escribir las kcal a mano mientras tanto.',
+  limite_de_uso:
+    'Se agotó el límite de uso de la IA. Vuelve a intentarlo en unos minutos, o escribe las kcal a mano.',
+  tiempo_agotado:
+    'La IA tardó demasiado en responder. Vuelve a intentarlo, o escribe las kcal a mano.',
+  sin_conexion:
+    'El servidor no pudo contactar con el servicio de IA. Revisa su salida a internet, o escribe las kcal a mano.',
+  sin_contenido:
+    'La IA no devolvió un análisis para este texto. Prueba a detallar más los alimentos, o escribe las kcal a mano.',
+}
+
+const FALLO_IA_GENERICO =
+  'El servicio de análisis nutricional no está disponible ahora mismo. Puedes escribir las kcal a mano.'
+
+/**
+ * 504 solo para el tiempo agotado; 503 para el resto.
+ *
+ * `credencial_invalida` y `sin_configurar` no son 5xx del todo honestos
+ * —el servidor está bien, le falta configuración— pero sí son «el cliente
+ * no puede hacer nada»: 503 con el motivo en el cuerpo es lo que el
+ * frontend necesita para explicarlo.
+ */
+function estadoDeFalloIa(tipo: string): number {
+  return tipo === 'tiempo_agotado' ? 504 : 503
+}
+
 function sinProfesional() {
   return { error: 'profesional_no_encontrado', message: 'Tu usuario no tiene un profesional asociado en esta clínica' }
 }
@@ -343,13 +384,20 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
         parsed = parsearJson(salida)
       } catch (e) {
         if (e instanceof IaNoDisponibleError) {
-          const codigo =
-            e.tipo === 'tiempo_agotado' ? 504 : e.tipo === 'limite_de_uso' ? 503 : e.tipo === 'sin_configurar' ? 503 : 503
-          return reply.code(codigo).send({ error: e.tipo, message: 'El servicio de análisis nutricional no está disponible ahora mismo' })
+          // El motivo viaja en el cuerpo y el mensaje lo nombra. Antes los
+          // cuatro fallos colapsaban en «no está disponible ahora mismo», y
+          // eso hacía indistinguible una clave que falta —que no se arregla
+          // esperando— de una saturación que sí (R46).
+          request.log?.error?.({ tipo: e.tipo }, '[analisis-dietetico] IA no disponible')
+          return reply.code(estadoDeFalloIa(e.tipo)).send({
+            error: e.tipo,
+            tipo: e.tipo,
+            message: MENSAJE_FALLO_IA[e.tipo] ?? FALLO_IA_GENERICO,
+          })
         }
         // JSON no parseable u otra cosa.
         request.log?.error?.({ err: e }, '[analisis-dietetico] respuesta no interpretable')
-        return reply.code(502).send({ error: 'respuesta_invalida', message: 'No se pudo interpretar la respuesta del modelo de análisis nutricional' })
+        return reply.code(502).send({ error: 'respuesta_invalida', tipo: 'respuesta_invalida', message: 'No se pudo interpretar la respuesta del modelo de análisis nutricional. Vuelve a intentarlo; si persiste, escribe las kcal a mano.' })
       }
 
       if (parsed.kcal > 5000) {

@@ -4339,6 +4339,8 @@ Escribir en una no debe cambiar la otra. Vale la pena comprobarlo.
 
 **Por qué parecía no funcionar:** la semilla solo trae filas de `recordatorio_24h`. Un Consumo Usual en blanco no enseña macros porque no hay nada analizado, no porque el cálculo falte.
 
+> **Esta explicación era incompleta, y la tabla de arriba se dio por buena sin ejercitarla.** El botón se volvió a reportar como roto. La cadena hasta la IA está entera —se comprobó con una llamada real—, pero **cuando falla no se veía**: el aviso se pintaba al pie de una tabla de seis filas y el resumen de macros convertía cualquier error de red en «Sin analizar». Ver la **R46 §4**, que lo corrige.
+
 ## 6 · Calculadora — solo ADA en el selector
 
 | Paso | Qué comprobar |
@@ -4764,6 +4766,59 @@ console.log(m.normalizar('', SES));                                      // (vac
 ```
 
 **Pendiente a propósito:** el resto de la aplicación sigue con `type="number"`. `InputNumero` está listo para adoptarse campo a campo (antropometría, laboratorios, calculadora, app del paciente), pero cambiarlos todos en la misma rebanada que corrige cinco defectos mezclaría el arreglo con una migración.
+
+## 4 · «Analizar IA» parecía no llamar a la IA
+
+**Dónde:** Nueva consulta → **Dietético** → **Consumo Usual** (y **Recordatorio 24h**) → escribir alimentos → botón **Analizar IA**. El resumen, en **Resumen y macros**.
+
+### Lo que se encontró al trazarlo
+
+La R44 §5 dio esto por bueno sin ejercitarlo («ya funcionaba; esto es una verificación, no un cambio») y lo explicó como falta de datos de semilla. Trazado de verdad, la cadena **sí está entera** —y lo está hoy—:
+
+| Eslabón | Comprobado | Resultado |
+|---|---|---|
+| Handler del botón | `TablaDietetica.analizar()` | Guarda y después analiza; no es un handler vacío |
+| Endpoint | `POST …/registro-dietetico/:tipo/analizar-ia` | Registrado en `server.ts` |
+| Clave | `docker exec nutrismart-api env` | `ANTHROPIC_API_KEY` presente |
+| Modelo | `ANTHROPIC_MODELO` vacío → `claude-haiku-4-5` | Alias vigente; sirve `claude-haiku-4-5-20251001` |
+| Llamada real | SDK + `construirPrompt` + `parsearJson` dentro del contenedor | **370 kcal · 30 CHO · 16 prot · 16 grasas**, JSON extraído de su cerca markdown |
+| Histórico | `select * from uso_ia` | 4 `analisis_dietetico` con `exito = true` |
+| Base de datos | upsert de `consumo_usual` en una transacción | Acepta; el enum trae los dos tipos y el `unique (consulta_id, tipo)` está |
+
+**Entonces el fallo no era que no llamara: era que cuando falla no se ve.** Tres sitios lo tapaban, y los tres producen exactamente los dos síntomas reportados:
+
+| Dónde | Qué hacía | Síntoma que producía |
+|---|---|---|
+| `TablaDietetica`, pie del componente | El aviso de error se pinta **debajo de las observaciones**, al final de una tabla de seis filas | Pulsar «Analizar IA» en el Desayuno: el botón deja de girar, no aparece ningún macro y el motivo cae fuera de la pantalla → **«no dispara ninguna llamada»** |
+| `TotalesRecordatorio`, `.catch(() => null)` | Un 403, un 500 o un corte de red se convertían en `null`, igual que «no hay nada analizado» | **«el resumen de macros queda vacío»** — no estaba vacío, estaba roto, y lo decía como si estuviera vacío |
+| `TablaDietetica`, `.catch(() => {})` de la carga | Comentado como «sin registro aún», pero sin registro el servidor responde **200 con las seis filas vacías**: por ahí solo pasan fallos de verdad | Tabla en blanco indistinguible de una consulta nueva; sobre ella, analizar solo podía fallar |
+
+Y un cuarto, en la API: los seis fallos distintos de IA colapsaban en un único *«no está disponible ahora mismo»*, que manda a esperar a quien nunca va a ver el botón funcionar porque falta la clave. `config.iaHabilitada` se calculaba y **no se usaba en ningún sitio**, así que tampoco había dónde verlo al arrancar.
+
+### Qué comprobar
+
+| Paso | Qué comprobar |
+|---|---|
+| Consumo Usual → Desayuno → «2 tazas de café con leche, 2 tostadas con mantequilla» → **Analizar IA** | Vuelve con **kcal · CHO · Prot · Grasas** (≈370 / 30 / 16 / 16 con Haiku) |
+| El pie de la tabla | Suma el día |
+| **Resumen y macros** | La fila «Consumo Usual» trae los totales, y **Copiar a los macros declarados** los vuelca |
+| Volver a Recordatorio 24h | Su contenido no cambió: son dos registros, `unique (consulta_id, tipo)` |
+| Arrancar la API **sin** `ANTHROPIC_API_KEY` | En el log: `IA: SIN CONFIGURAR (falta ANTHROPIC_API_KEY)` y que el acceso clínico no se ve afectado |
+| Con ella puesta | `IA: configurada` con el modelo |
+| Pulsar «Analizar IA» sin clave | El aviso sale **en la propia fila**, en ámbar, y dice que falta `ANTHROPIC_API_KEY`, que **no es pasajero** y que se puede escribir el kcal a mano |
+| Cortar la red de la API y recargar Resumen y macros | «No se pudo leer esta fuente: …» en rojo, **no** «Sin analizar» |
+
+**Comprobar la cadena sin navegador** (gasta unos cientos de tokens de Haiku):
+
+```
+docker exec nutrismart-api sh -c 'echo ${ANTHROPIC_API_KEY:+clave presente}'
+docker exec nutrismart-db psql -U nutrismart -d nutrismart -c \
+  "select funcion, modelo, exito, error_tipo, created_at from uso_ia order by created_at desc limit 5;"
+```
+
+Si `uso_ia` no crece al pulsar el botón, la petición no llegó al servidor (mira la consola del navegador). Si crece con `exito = false`, el `error_tipo` nombra la causa y es el mismo que ahora viaja al frontend.
+
+**Lo que hay que mirar con atención:** que el mensaje distinga **«esto se arregla esperando»** de **«esto lo arregla quien administra el servidor»**. `sin_configurar` y `credencial_invalida` son del segundo tipo, y decirles «inténtalo más tarde» es mandar a esperar algo que no va a pasar.
 
 # Tropiezos de entorno
 
