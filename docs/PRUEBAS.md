@@ -4690,6 +4690,34 @@ La DE salía de `(GET − GEE) ÷ MLG`. Debe salir de `(meta calórica − GEE) 
 | `disponibilidadEnergetica(2388, 385.9, 60)` | 33.4 |
 | `disponibilidadEnergetica(…, 0)` | `null` |
 
+## 2 · El foco se perdía al escribir en antecedentes familiares
+
+**Dónde:** Nueva consulta → **Clínico** → bloque **Antecedentes familiares** → marcar una condición → campo **«¿Quién?»**.
+
+Cada carácter escrito sacaba el foco del campo. Había que volver a hacer clic para escribir el siguiente, así que «Madre» se teclaba en cinco clics.
+
+| Paso | Qué comprobar |
+|---|---|
+| Marcar «Diabetes mellitus tipo 2» | Aparece el campo «¿Quién?» a la derecha |
+| Hacer clic en él y escribir **Madre y abuela** de corrido | Se escribe **entero, sin soltar el foco** |
+| Mirar el cursor a mitad de palabra | Sigue donde estaba; no salta al final ni al `<body>` |
+| Marcar tres condiciones y escribir en las tres | Cada campo conserva su texto y su foco |
+| Guardar historial y recargar (F5) | Los parentescos siguen ahí |
+
+**La causa.** El componente `Bloque` —la caja con título que envuelve cada sección— estaba declarado **dentro** del cuerpo de `FormHistorialClinico`. Eso le daba una identidad de función nueva en cada render, y para React un tipo de componente distinto no es «el mismo componente con otras props»: es otro componente. Desmontaba el subárbol completo y montaba uno nuevo. Con el `<input>` del DOM recreado, el foco se iba al `<body>`.
+
+Escribir una letra llamaba a `setApf` → render → `Bloque` nuevo → remonte → foco perdido. El fallo solo se notaba en ese campo porque es el único de texto libre dentro de un bloque; las casillas y los botones de las demás secciones también se remontaban, sin síntoma visible.
+
+**Arreglo:** `Bloque` sube a ámbito de módulo. El mismo patrón estaba en `PlanEditor` (`const Acciones = () => …`, dos botones remontados en cada tecla de la tabla), y pasa a ser un elemento JSX en vez de un componente.
+
+**La invariante, comprobable sin navegador** — ningún componente declarado dentro de un render:
+
+```
+cd apps/web-professional && grep -rnE "^  const [A-Z][A-Za-z0-9]* = \(" src/
+```
+
+Sin coincidencias. Si alguna aparece, el candidato está remontando su subárbol en cada render: o sube a ámbito de módulo (si lleva props) o se convierte en elemento (si no).
+
 # Tropiezos de entorno
 
 Fallos reales encontrados durante el desarrollo. Casi todos tardaron más en diagnosticarse que en corregirse.

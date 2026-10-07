@@ -5,7 +5,7 @@
  * precarga lo que ya hay: nadie debería reescribir los antecedentes
  * familiares en cada visita.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { ApiError } from '../../api/client'
 import {
   CONDICIONES,
@@ -22,6 +22,29 @@ import { FormFarmacologia } from './FormFarmacologia'
 import { AvisoPrecarga } from './BannerSeguimiento'
 
 type Antecedente = { condicion: string; parientes?: string }
+
+/**
+ * Sección con título. **Tiene que vivir aquí, fuera del componente.**
+ *
+ * Estuvo declarado dentro del cuerpo de `FormHistorialClinico`, y eso le
+ * daba una identidad de función nueva en cada render. Para React un tipo
+ * de componente distinto no es el mismo componente con otras props: es
+ * otro componente, así que desmontaba el subárbol entero y montaba uno
+ * nuevo. Con el DOM recreado, el `<input>` que tenía el foco dejaba de
+ * existir y el foco se iba al `<body>`.
+ *
+ * El síntoma era el campo «¿Quién?» de los antecedentes familiares:
+ * escribir una letra llamaba a `setApf`, el render remontaba el bloque y
+ * había que volver a hacer clic para la letra siguiente.
+ */
+function Bloque({ titulo, children }: { titulo: string; children: ReactNode }) {
+  return (
+    <section className="space-y-3 rounded-lg border border-border bg-surface p-5">
+      <h3 className="font-semibold text-ink">{titulo}</h3>
+      {children}
+    </section>
+  )
+}
 
 export function FormHistorialClinico({
   pacienteId,
@@ -172,13 +195,6 @@ export function FormHistorialClinico({
   }
 
   if (cargando) return <div className="h-96 animate-pulse rounded-lg bg-surface-2" />
-
-  const Bloque = ({ titulo, children }: { titulo: string; children: React.ReactNode }) => (
-    <section className="space-y-3 rounded-lg border border-border bg-surface p-5">
-      <h3 className="font-semibold text-ink">{titulo}</h3>
-      {children}
-    </section>
-  )
 
   return (
     <div className="space-y-6">

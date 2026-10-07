@@ -78,7 +78,16 @@ export function PlanEditor({
     }
   }
 
-  const Acciones = () => (
+  /**
+   * La barra de acciones, arriba y abajo de la tabla.
+   *
+   * Es un ELEMENTO, no un componente declarado en el render: declararlo
+   * como función aquí dentro le daba un tipo nuevo en cada render y React
+   * remontaba los dos botones en cada pulsación de tecla de la tabla. Es
+   * el mismo fallo que se corrigió en el Clínico, donde sí costaba el
+   * foco del campo que se estaba escribiendo.
+   */
+  const acciones = (
     <div className="flex items-center justify-between gap-3">
       <p className="text-xs text-muted">
         {llenas === 0
@@ -117,7 +126,7 @@ export function PlanEditor({
         </p>
       )}
 
-      <Acciones />
+      {acciones}
 
       <div className="overflow-x-auto rounded-lg border border-border bg-surface">
         <table className="min-w-full border-collapse text-sm">
@@ -185,7 +194,7 @@ export function PlanEditor({
 
       {/* Repetidas abajo: la tabla es alta y obligar a subir para guardar
           es una fricción gratuita. */}
-      <Acciones />
+      {acciones}
     </div>
   )
 }
