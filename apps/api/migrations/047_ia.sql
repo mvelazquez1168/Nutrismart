@@ -1,4 +1,27 @@
--- migration: 015_ia
+-- migration: 047_ia
+--
+-- ── Por que este archivo es idempotente ─────────────────────────────
+--
+-- Este archivo ERA `015_ia.sql` y se renombro a 047. El problema es que las
+-- bases que ya existian lo tienen registrado en `schema_migrations` como
+-- `015_ia.sql`, asi que el corredor ve el 047 como pendiente, lo intenta, y
+-- muere con:
+--
+--     relation "interpretacion_ia" already exists
+--
+-- Y como el corredor para en el primer fallo, eso **bloquea toda migracion
+-- posterior**: la 048 no se podia aplicar hasta arreglar esto. El sintoma no
+-- aparece al renombrar, aparece la proxima vez que alguien agrega una
+-- migracion — que es cuando ya nadie recuerda el renombrado.
+--
+-- Con `if not exists`, una base que ya lo tiene aplicado lo salta sin ruido y
+-- queda registrado; una base nueva crea las tres tablas igual, porque el 015
+-- ya no existe en la carpeta y este archivo es su unico hogar.
+--
+-- Se arregla asi y no insertando la fila a mano en `schema_migrations` porque
+-- el arreglo tiene que viajar con el codigo: una base que alguien levante
+-- manana tiene el mismo problema, y una fila escrita a mano en una sola base
+-- no se la lleva nadie.
 --
 -- IA clinica: interpretacion de laboratorios (IA-01) y notas SOAP (IA-02).
 --
@@ -7,7 +30,7 @@
 -- medidor de consumo de la clinica tiene que cuadrar con la factura y un
 -- borrador descartado tambien se cobro.
 
-create table interpretacion_ia (
+create table if not exists interpretacion_ia (
   id               uuid        primary key default gen_random_uuid(),
   clinica_id       uuid        not null references clinica(id),
   -- La tabla real se llama lab_estudio, no lab_exam.
@@ -32,10 +55,10 @@ create table interpretacion_ia (
   )
 );
 
-create index idx_interp_estudio   on interpretacion_ia (estudio_id, created_at desc);
-create index idx_interp_paciente  on interpretacion_ia (clinica_id, paciente_id, created_at desc);
+create index if not exists idx_interp_estudio   on interpretacion_ia (estudio_id, created_at desc);
+create index if not exists idx_interp_paciente  on interpretacion_ia (clinica_id, paciente_id, created_at desc);
 
-create table nota_soap (
+create table if not exists nota_soap (
   id               uuid        primary key default gen_random_uuid(),
   clinica_id       uuid        not null references clinica(id),
   paciente_id      uuid        not null references paciente(id),
@@ -63,8 +86,10 @@ create table nota_soap (
   )
 );
 
-create index idx_soap_paciente on nota_soap (clinica_id, paciente_id, created_at desc);
+create index if not exists idx_soap_paciente on nota_soap (clinica_id, paciente_id, created_at desc);
 
+-- `create trigger` no admite `if not exists`: se tira primero.
+drop trigger if exists trg_soap_updated on nota_soap;
 create trigger trg_soap_updated
   before update on nota_soap
   for each row execute function set_updated_at();
@@ -72,7 +97,7 @@ create trigger trg_soap_updated
 -- Medidor de consumo (regla de CLAUDE.md: registrar cada llamada de IA
 -- con modelo, tokens y costo). El borrador SOAP no se persiste, asi que
 -- sin esta tabla su gasto seria invisible.
-create table uso_ia (
+create table if not exists uso_ia (
   id              uuid        primary key default gen_random_uuid(),
   clinica_id      uuid        not null references clinica(id),
   profesional_id  uuid        references profesional(id),
@@ -87,4 +112,4 @@ create table uso_ia (
   created_at      timestamptz not null default now()
 );
 
-create index idx_uso_ia_clinica on uso_ia (clinica_id, created_at desc);
+create index if not exists idx_uso_ia_clinica on uso_ia (clinica_id, created_at desc);

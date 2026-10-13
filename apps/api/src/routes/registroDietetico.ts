@@ -17,6 +17,12 @@ import { requireAuth } from '../auth.js'
 import { esUuid } from '../pacientes/validacion.js'
 import { resolverAlcance } from '../pacientes/acceso.js'
 import { llamarClaude, IaNoDisponibleError } from '../ia/cliente.js'
+import {
+  leerGrupos,
+  resolverAlimento,
+  sumarMacros,
+  type AlimentoResuelto,
+} from '../dietetico/intercambios.js'
 
 /** Los seis tiempos fijos, en orden, con su etiqueta para el prompt. */
 const TIEMPOS = [
@@ -51,6 +57,17 @@ interface Fila {
    * null = vale el de la IA. La cuenta efectiva es `kcal_manual ?? ai_kcal`.
    */
   kcal_manual: number | null
+  /**
+   * Los alimentos que el texto nombraba y que NO estan en la lista de
+   * intercambios — R48.
+   *
+   * Se persiste y no solo se devuelve en la respuesta del analisis: al volver a
+   * abrir la consulta manana, el aviso tiene que seguir ahi. Un aviso que se
+   * pierde al recargar es un aviso que solo ve quien estaba mirando.
+   *
+   * null = nunca se analizo. Lista vacia = se analizo y se encontro todo.
+   */
+  ai_no_encontrado: string[] | null
 }
 
 const HORA_RE = /^\d{2}:\d{2}$/
@@ -69,6 +86,7 @@ function filaVacia(clave: string): Fila {
     ai_grasas_g: null,
     ai_calculado_en: null,
     kcal_manual: null,
+    ai_no_encontrado: null,
   }
 }
 
@@ -326,6 +344,11 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
           ai_prot_g: conservaIa ? previa!.ai_prot_g : null,
           ai_grasas_g: conservaIa ? previa!.ai_grasas_g : null,
           ai_calculado_en: conservaIa ? previa!.ai_calculado_en : null,
+          // Mismo criterio que el resto de los `ai_*`: el aviso de «no
+          // encontrado» es sobre un texto concreto, y si el texto cambio deja
+          // de valer. Conservarlo mostraria un aviso sobre un alimento que ya
+          // no esta escrito.
+          ai_no_encontrado: conservaIa ? (previa!.ai_no_encontrado ?? null) : null,
           // La corrección manual es sobre un texto concreto: si el texto
           // cambia deja de valer, aunque no hubiera análisis de IA que
           // invalidar. Lo que no cambió conserva lo que mande el cliente,
@@ -341,6 +364,57 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
       await guardar(ctx.consultaId, ctx.tenantId, ctx.tipo, observaciones, filas)
       const reg = await leerRegistro(ctx.consultaId, ctx.tenantId, ctx.tipo)
       return reply.send(respuesta(reg))
+    },
+  )
+
+  /* ---- POST /calcular ---- */
+  /**
+   * **Un alimento con su cantidad, calculado desde la base. Sin modelo.**
+   *
+   * Es el camino que el requerimiento describe: *«cuando el profesional
+   * registra un alimento y una cantidad»*. Un alimento y una cantidad no
+   * necesitan IA — necesitan la tabla. Asi que esta ruta no llama a Claude, no
+   * consume saldo y no puede fallar por el proveedor.
+   *
+   * Devuelve `no_encontrado: true` cuando el alimento no esta en la lista de
+   * intercambios, con los cuatro valores en cero y sin pretender que son un
+   * calculo: es la bandera que la pantalla convierte en el aviso al
+   * profesional.
+   */
+  app.post<{ Params: { id: string; consultaId: string; tipo: string } }>(
+    `${BASE}/calcular`,
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const ctx = await contexto(request, request.params.id, request.params.consultaId, request.params.tipo, reply)
+      if (!ctx) return
+
+      const body = (request.body ?? {}) as Record<string, unknown>
+      const alimento = typeof body['alimento'] === 'string' ? body['alimento'].trim() : ''
+      if (alimento === '') {
+        return reply.code(400).send({ error: 'sin_alimento', message: 'Indica el alimento' })
+      }
+      const cantidad =
+        typeof body['cantidad'] === 'string' && body['cantidad'].trim() !== ''
+          ? body['cantidad'].trim()
+          : null
+
+      const r = await resolverAlimento(ctx.tenantId, alimento, cantidad)
+
+      return reply.send({
+        alimento: r.pedido,
+        cantidad: r.cantidadPedida,
+        no_encontrado: !r.encontrado,
+        equivalencia: r.equivalencia?.alimento ?? null,
+        porcion_referencia: r.equivalencia?.cantidadDescripcion ?? null,
+        grupo: r.equivalencia?.subtipo ?? null,
+        porciones: r.equivalencia?.porciones ?? [],
+        factor: r.factor,
+        factor_supuesto: r.factorSupuesto,
+        cho_g: r.macros.cho_g,
+        chon_g: r.macros.chon_g,
+        grasa_g: r.macros.grasa_g,
+        kcal: r.macros.kcal,
+      })
     },
   )
 
@@ -374,14 +448,14 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
       const etiqueta = TIEMPOS.find((t) => t.clave === tc)?.etiqueta ?? tc
       const prompt = construirPrompt(etiqueta, texto)
 
-      let parsed: { kcal: number; cho_g: number; prot_g: number; grasas_g: number }
+      let partidos: { alimento: string; cantidad: string | null }[]
       try {
         const salida = await analizarConReintento(prompt, {
           clinicaId: ctx.tenantId,
           profesionalId: ctx.profesionalId,
           funcion: 'analisis_dietetico',
         })
-        parsed = parsearJson(salida)
+        partidos = parsearAlimentos(salida)
       } catch (e) {
         if (e instanceof IaNoDisponibleError) {
           // El motivo viaja en el cuerpo y el mensaje lo nombra. Antes los
@@ -400,26 +474,74 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
         return reply.code(502).send({ error: 'respuesta_invalida', tipo: 'respuesta_invalida', message: 'No se pudo interpretar la respuesta del modelo de análisis nutricional. Vuelve a intentarlo; si persiste, escribe las kcal a mano.' })
       }
 
-      if (parsed.kcal > 5000) {
-        console.warn('[analisis-dietetico] kcal irrealmente alto (%d) para "%s"; se persiste igual', parsed.kcal, texto)
+      /*
+       * **Aca el modelo ya termino su trabajo.** De aca en adelante no hay
+       * estimacion: cada alimento se busca en `equivalencia_intercambio`, sus
+       * porciones se multiplican por los valores de `grupo_intercambio` y se
+       * suma. El numero sale de la base.
+       */
+      const grupos = await leerGrupos(ctx.tenantId)
+      const resueltos: AlimentoResuelto[] = []
+      for (const p of partidos) {
+        resueltos.push(await resolverAlimento(ctx.tenantId, p.alimento, p.cantidad, grupos))
+      }
+
+      const encontrados = resueltos.filter((r) => r.encontrado)
+      const noEncontrados = resueltos.filter((r) => !r.encontrado).map((r) => r.pedido)
+      const total = sumarMacros(encontrados.map((r) => r.macros))
+
+      /*
+       * **Si no se encontro NINGUNO, no se escribe un cero.**
+       *
+       * Un total de cero con el texto escrito se lee como «estos alimentos no
+       * aportan nada», que es falso. Se devuelve 200 con la bandera y sin
+       * tocar la fila: el profesional ve el aviso y escribe los valores.
+       */
+      if (encontrados.length === 0) {
+        return reply.send({
+          ...respuesta(reg),
+          no_encontrado: true,
+          alimentos_no_encontrados: noEncontrados,
+          alimentos_reconocidos: [],
+        })
       }
 
       const filas = reg.filas.map((f) =>
         f.tiempo_comida === tc
           ? {
               ...f,
-              ai_kcal: Math.round(parsed.kcal * 10) / 10,
-              ai_cho_g: Math.round(parsed.cho_g * 10) / 10,
-              ai_prot_g: Math.round(parsed.prot_g * 10) / 10,
-              ai_grasas_g: Math.round(parsed.grasas_g * 10) / 10,
+              ai_kcal: total.kcal,
+              ai_cho_g: total.cho_g,
+              ai_prot_g: total.chon_g,
+              ai_grasas_g: total.grasa_g,
               ai_calculado_en: new Date().toISOString(),
+              ai_no_encontrado: noEncontrados,
             }
           : f,
       )
 
       await guardar(ctx.consultaId, ctx.tenantId, ctx.tipo, reg.observaciones, filas)
       const actualizado = await leerRegistro(ctx.consultaId, ctx.tenantId, ctx.tipo)
-      return reply.send(respuesta(actualizado))
+
+      /*
+       * La bandera viaja aunque se haya podido calcular parte: «se reconocieron
+       * tres de cuatro» tiene que verse. Un total que omite un alimento en
+       * silencio es el defecto que esto vino a cerrar.
+       */
+      return reply.send({
+        ...respuesta(actualizado),
+        no_encontrado: noEncontrados.length > 0,
+        alimentos_no_encontrados: noEncontrados,
+        alimentos_reconocidos: encontrados.map((r) => ({
+          alimento: r.pedido,
+          cantidad: r.cantidadPedida,
+          equivalencia: r.equivalencia?.alimento ?? null,
+          porcion_referencia: r.equivalencia?.cantidadDescripcion ?? null,
+          factor: r.factor,
+          factor_supuesto: r.factorSupuesto,
+          ...r.macros,
+        })),
+      })
     },
   )
 }
@@ -428,39 +550,49 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
 /* IA — método ADA                                                     */
 /* ------------------------------------------------------------------ */
 
-const SISTEMA_ADA = `Eres un asistente de nutrición clínica. Tu tarea es analizar el texto libre de alimentos consumidos en un tiempo de comida y estimar su composición nutricional usando las tablas de intercambio del Sistema ADA.
+/**
+ * **El prompt ya no lleva la tabla de intercambios, y el modelo ya no calcula.**
+ *
+ * Antes esta constante tenia los once grupos ADA escritos a mano y le pedia al
+ * modelo que identificara, clasificara, multiplicara y sumara. Los valores
+ * viven ahora en `grupo_intercambio` y `equivalencia_intercambio` (migracion
+ * 048), y la aritmetica la hace `dietetico/intercambios.ts`.
+ *
+ * Al modelo le queda **una sola tarea**: leer el texto libre y partirlo en
+ * alimentos con su cantidad. Ni siquiera asignar el grupo — el grupo sale de la
+ * tabla al encontrar el alimento, asi que es el del documento y no la opinion
+ * del modelo.
+ *
+ * Es la diferencia entre poder comprobar de donde salio un numero y no poder.
+ */
+const SISTEMA_PARTIR = `Eres un asistente de nutricion clinica. Tu unica tarea es LEER un texto libre de alimentos consumidos y partirlo en alimentos individuales con su cantidad.
 
-Valores nutricionales por intercambio ADA:
-| Grupo | CHO (g) | Prot (g) | Grasas (g) | kcal |
-|---|---|---|---|---|
-| Leche descremada | 12 | 8 | 1 | 100 |
-| Leche semidescremada | 12 | 8 | 5 | 120 |
-| Leche entera | 12 | 8 | 8 | 160 |
-| Vegetales | 5 | 2 | 0 | 25 |
-| Frutas | 15 | 0 | 0 | 60 |
-| Azúcares | 5 | 0 | 0 | 20 |
-| Cereales | 15 | 3 | 1 | 80 |
-| Carnes magras | 0 | 7 | 2 | 45 |
-| Carnes semimagras | 0 | 7 | 5 | 75 |
-| Carnes alta grasa | 0 | 7 | 8 | 100 |
-| Grasas | 0 | 0 | 5 | 45 |
+NO calcules calorias ni macronutrientes. NO asignes grupos de intercambio. Solo separa y transcribe.
 
-Instrucciones:
-1. Identifica cada alimento mencionado y asígnalo al grupo de intercambio ADA más apropiado.
-2. Estima la cantidad de intercambios según las porciones mencionadas (o porciones estándar si no se especifican cantidades).
-3. Multiplica intercambios × valores del grupo para obtener kcal, CHO, Prot y Grasas de cada alimento.
-4. Suma todos los alimentos para dar el total del tiempo de comida.
-5. Responde ÚNICAMENTE con JSON válido, sin texto adicional, sin markdown.
+Reglas:
+1. Un elemento por alimento mencionado. "Gallo pinto con huevo" son DOS: "gallo pinto" y "huevo".
+2. Copia la cantidad tal como aparece ("1/2 taza", "2 rebanadas", "90 g"). Si el texto no dice cantidad, usa null.
+3. Usa el nombre mas simple y generico del alimento, en singular y sin adornos: "arroz blanco", no "un rico arroz blanco de la abuela".
+4. No agregues alimentos que el texto no menciona.
+5. Responde UNICAMENTE con JSON valido, sin texto adicional, sin markdown.
 
-Formato de respuesta JSON:
-{ "kcal": 0.0, "cho_g": 0.0, "prot_g": 0.0, "grasas_g": 0.0 }`
+Formato:
+{ "alimentos": [ { "alimento": "arroz blanco", "cantidad": "1/2 taza" } ] }`
 
 export function construirPrompt(etiqueta: string, texto: string): string {
-  return `${SISTEMA_ADA}\n\nTiempo de comida: ${etiqueta}\nAlimentos consumidos: ${texto}\n\nAnaliza estos alimentos y devuelve el JSON con la composición nutricional.`
+  return `${SISTEMA_PARTIR}\n\nTiempo de comida: ${etiqueta}\nTexto a partir: ${texto}\n\nDevuelve el JSON con los alimentos y sus cantidades.`
 }
 
-/** Extrae el JSON de la respuesta (tolera cercas de markdown) y valida. */
-export function parsearJson(texto: string): { kcal: number; cho_g: number; prot_g: number; grasas_g: number } {
+/**
+ * Extrae el JSON de la respuesta (tolera cercas de markdown) y valida.
+ *
+ * **Lo que se descarta se descarta, no se convierte en cero.** La version
+ * anterior devolvia cuatro numeros y mapeaba cualquier valor no numerico a `0`;
+ * un alimento que el modelo no supo leer aparecia como un alimento sin
+ * calorias. Ahora lo que no se entiende no entra en la lista, y lo que entra
+ * pero no esta en el documento sale marcado como no encontrado.
+ */
+export function parsearAlimentos(texto: string): { alimento: string; cantidad: string | null }[] {
   let limpio = texto.trim()
   const cerca = limpio.match(/```(?:json)?\s*([\s\S]*?)```/i)
   if (cerca?.[1]) limpio = cerca[1].trim()
@@ -469,12 +601,22 @@ export function parsearJson(texto: string): { kcal: number; cho_g: number; prot_
     const fin = limpio.lastIndexOf('}')
     if (inicio !== -1 && fin !== -1) limpio = limpio.slice(inicio, fin + 1)
   }
+
   const obj = JSON.parse(limpio) as Record<string, unknown>
-  const n = (v: unknown) => {
-    const x = Number(v)
-    return Number.isFinite(x) && x >= 0 ? x : 0
+  const crudos = Array.isArray(obj['alimentos']) ? (obj['alimentos'] as unknown[]) : []
+
+  const salida: { alimento: string; cantidad: string | null }[] = []
+  for (const cruda of crudos) {
+    const o = (cruda ?? {}) as Record<string, unknown>
+    const nombre = typeof o['alimento'] === 'string' ? o['alimento'].trim() : ''
+    if (nombre === '') continue
+    const cantidad =
+      typeof o['cantidad'] === 'string' && o['cantidad'].trim() !== ''
+        ? o['cantidad'].trim()
+        : null
+    salida.push({ alimento: nombre, cantidad })
   }
-  return { kcal: n(obj['kcal']), cho_g: n(obj['cho_g']), prot_g: n(obj['prot_g']), grasas_g: n(obj['grasas_g']) }
+  return salida
 }
 
 /** Un reintento tras 2 s si el modelo devuelve límite de uso (429). */
