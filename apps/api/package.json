@@ -11,6 +11,7 @@
     "migrate": "tsx src/migrate.ts",
     "verificar:intercambios": "tsx src/dietetico/verificar.ts",
     "verificar:resumen": "tsx src/plan/verificar-resumen.ts",
+    "verificar:habitos": "tsx src/dietetico/verificar-habitos.ts",
     "seed": "tsx src/seed.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

@@ -293,7 +293,7 @@ export async function registerDieteticoRoutes(app: FastifyInstance): Promise<voi
           `insert into evaluacion_dietetica (
              clinica_id, paciente_id, consulta_id, profesional_id,
              recordatorio_24h, frecuencia_consumo, hidratacion_litros,
-             kcal_estimadas, proteina_g, cho_g, grasa_g, fibra_g, notas_dieteticas
+             kcal_estimadas, proteina_g, cho_g, grasa_g, fibra_g, notas_dieteticas,
              tiempos_por_dia, tiempos_realizados, lugar_comidas, quien_prepara,
              apetito, grasas_cocinar, tipos_coccion, agrega_sal, consume_azucar,
              usa_edulcorante, dietas_realizadas, consume_agua, cantidad_agua,
