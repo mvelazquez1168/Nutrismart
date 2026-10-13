@@ -4944,40 +4944,78 @@ Añadir un paquete con el servidor levantado exige reiniciarlo: Vite pre-empaque
 
 ---
 
-# Keycloak: el realm de desarrollo se puede perder entero
+# Keycloak: la persistencia del realm
 
-## Por qué se pierde
+## El incidente, que es el motivo de todo lo de abajo
 
-El contenedor `nutrismart-keycloak` corre **sin volumen y sin `KC_DB`**: usa la base H2 embebida, que vive en la capa de escritura del propio contenedor.
+El contenedor de Keycloak de desarrollo corría **fuera del compose, sin volumen y sin `KC_DB`**: usaba la base H2 embebida, que vive en la capa de escritura del propio contenedor.
+
+Un `docker rm` se llevó el realm entero: clientes, roles, mappers y **los cinco usuarios con sus contraseñas**. Y Keycloak **no exporta hashes de contraseña** —`partial-export` trae realm, clientes, roles y mappers, nunca credenciales—, así que un realm perdido no se restaura desde un backup del repo: se vuelve a montar.
+
+> **El síntoma no apuntaba a Keycloak. Apuntaba al menú.** Clínica, Equipo y Marca aparecían apagadas para los tres profesionales a la vez, porque `/api/profesional/yo` devolvía **404**: el `sub` del token es el id del usuario en Keycloak, al recrear el realm los usuarios reciben ids nuevos, y la base seguía guardando los viejos en `keycloak_user_id`. Un dato perdido en Keycloak se ve como una pantalla mal configurada.
+
+## Cómo está ahora
+
+Keycloak es un servicio **del compose** en los dos entornos, y persiste en Postgres:
+
+| | Desarrollo | Producción |
+|---|---|---|
+| Archivo | `infra/docker-compose.dev.yml` | `infra/docker-compose.prod.yml` |
+| Arranque | `start-dev` | `start` + `KC_HOSTNAME` |
+| `KC_DB` | `postgres` | `postgres` |
+| Base | `keycloak` en la instancia de NutriSmart | igual |
+| La crea | `infra/init-db.sh` | el mismo `init-db.sh` |
+| Volumen | `nutrismart_pgdata` | `nutrismart_db_data` |
+
+**Bases separadas, no esquemas.** Una migración de NutriSmart no puede tocar las tablas de Keycloak, y un `drop` de la base de Keycloak no se lleva el expediente clínico.
+
+> **No hay `KC_DB_URL`**, y es a propósito: el compose usa la forma descompuesta `KC_DB_URL_HOST` / `KC_DB_URL_PORT` / `KC_DB_URL_DATABASE`. Es equivalente a la cadena JDBC y no obliga a citar una URL entera dentro de una variable de entorno. `KC_DB=postgres` está fijo en el compose porque no es una decisión de despliegue.
+
+Las variables van en `.env.example` (dev) y `infra/.env.prod.example` (prod): `KC_DB_DATABASE`, `KC_DB_USERNAME`, `KC_DB_PASSWORD`. Las leen **dos** servicios —`db` para crear la base, `keycloak` para conectarse—, así que se definen una sola vez.
+
+### Dos cosas que el compose arregló de paso
+
+**1. El alias de red ya no es un paso manual.** Al llamarse el servicio `keycloak`, Docker le da ese nombre en el DNS de la red y el `KEYCLOAK_JWKS_URL=http://keycloak:8080/...` de la API resuelve solo. Con el contenedor de antes, llamado `nutrismart-keycloak` y sin alias, la API rechazaba **todos** los tokens:
 
 ```
-docker inspect nutrismart-keycloak --format '{{range .Mounts}}{{.Destination}}{{end}}'   # vacío
+{"motivo":"getaddrinfo ENOTFOUND keycloak","msg":"auth: peticion rechazada"}
 ```
 
-Quitar o recrear ese contenedor —`docker rm`, un `compose up --force-recreate` que lo alcance, un `docker system prune`— se lleva el realm, los clientes, los roles y **todos los usuarios con sus contraseñas**. Keycloak no exporta hashes, así que las contraseñas no se recuperan de ningún sitio: se reponen.
+Ese 401 engaña: el token es correcto —`iss`, `aud: nutrismart-api` y `sub` en orden—, lo que falla es que la API no puede bajar el JWKS para comprobar la firma. **Un 401 cuyo motivo real es el DNS.**
 
-> **Es deuda de infraestructura conocida, no un accidente.** Lo correcto es darle un volumen o apuntarlo a Postgres y meterlo en el compose. Mientras no esté, el realm es desechable y la reposición tiene que ser un comando, no una tarde de clics.
+**2. Ya no hay que reiniciar la API tras tocar Keycloak.** Las claves de firma del realm viven en Postgres, así que recrear el contenedor no las cambia y el JWKS que la API tiene en caché sigue siendo válido. Antes cada recreación invalidaba las firmas y había que reiniciar la API detrás.
 
-## Cómo saber que pasó
+**3. Se fue la red externa `shared`.** Existía para puentear hasta el Keycloak de Vetline (`KEYCLOAK_NETWORK`, por defecto `postgres_default`). Declarar una red `external: true` que puede no existir hacía fallar `docker compose up` **completo** en una máquina limpia.
 
-El síntoma no apunta a Keycloak. Apunta al menú:
+## Comprobación: el realm sobrevive a recrear el contenedor
 
-| Qué se ve | Qué está pasando |
+Es la prueba que da sentido al cambio, y se hace en treinta segundos:
+
+```bash
+docker rm -f nutrismart-keycloak
+docker compose -f infra/docker-compose.dev.yml up -d keycloak
+```
+
+| Qué comprobar | Esperado |
 |---|---|
-| Clínica, Equipo y Marca grises o llevando a Pacientes | `/api/profesional/yo` devuelve **404** |
-| `/api/profesional/yo` → 404 para los tres profesionales a la vez | ningún `keycloak_user_id` de la base casa con el `sub` del token |
+| Tablas en la base `keycloak` | 88 (`psql -U keycloak -d keycloak`) |
+| Usuarios del realm tras recrear | los 5, con sus mismos ids |
+| Clientes `nutrismart-*` tras recrear | `nutrismart-api`, `-backend`, `-patient`, `-web` |
+| `/api/profesional/yo` con el token de `ana@vida.cr` | 200, `esAdmin: true` — **sin reiniciar la API** |
 
-El `sub` es el id del usuario en Keycloak. Al recrear el realm, los usuarios nuevos reciben ids nuevos y la base sigue guardando los viejos. La consulta de `/api/profesional/yo` filtra por `keycloak_user_id = $sub`, no encuentra fila, y responde 404.
+Si tras recrear el realm aparece vacío, Keycloak arrancó sobre H2: revisa que `KC_DB` llegue al contenedor (`docker inspect nutrismart-keycloak | grep KC_DB`).
 
-## Reponerlo
+## Sembrar los usuarios de desarrollo
 
 ```
 python infra/keycloak/restaurar-realm-dev.py
 ```
 
-Borra el realm vacío, importa `infra/keycloak/realm-nutrismart.json` (realm, clientes, roles, mappers) y **siembra los usuarios con los UUID que la base ya espera**:
+> **Es un util de desarrollo, no un paso del arranque.** Con la persistencia en Postgres el realm ya no se pierde al recrear el contenedor, así que esto se corre cuando se quiere un realm limpio o se monta la pila en una máquina nueva — no en cada despliegue. **Borra y reimporta el realm**, así que se lleva por delante cualquier usuario creado a mano desde la última vez.
 
-| Usuario | Rol | `tenant_id` | id fijado |
+Importa `infra/keycloak/realm-nutrismart.json` (realm, clientes, roles, mappers) y siembra:
+
+| Usuario | Rol | `tenant_id` | id |
 |---|---|---|---|
 | `ana@vida.cr` | `admin_clinica` | Vida `1111…` | `364f4a9b-8f08-4599-a848-68ade4fa48e0` |
 | `luis@vida.cr` | `nutricionista` | Vida `1111…` | `7c81373c-436e-4180-944e-19f74f0b10da` |
@@ -4985,60 +5023,39 @@ Borra el realm vacío, importa `infra/keycloak/realm-nutrismart.json` (realm, cl
 | `maria.fernandez@ejemplo.cr` | `paciente` | Vida `1111…` | `abee20e8-d79b-433b-8b87-8ac97c983830` |
 | `operador@nutrismart.cr` | `super_admin` | **ninguno** | lo asigna Keycloak |
 
-Contraseña de todos: `nutrismart-dev`. Admin de la consola de Keycloak: `admin` / `admin`.
+Contraseña de todos: `nutrismart-dev`. Consola de Keycloak: `admin` / `admin` (`KC_BOOTSTRAP_ADMIN_*`).
 
-> **Los ids van escritos a mano en el script, y es la razón de que exista.** El import COMPLETO de un realm respeta el `id` de cada usuario; crear el usuario por el Admin API después, no. Si el id cambia hay que ir a actualizar `profesional.keycloak_user_id` y `paciente.keycloak_user_id` a mano, que es el paso que se olvida.
+> **Los ids van escritos a mano, y es la razón de que el script exista.** El import COMPLETO de un realm respeta el `id` de cada usuario; crear el usuario por el Admin API después, no. Con los dos ids fijados, `profesional.keycloak_user_id` y `paciente.keycloak_user_id` siguen casando y no hay que ir a actualizarlos — que es el paso que se olvida y deja el 404 de `/api/profesional/yo`.
 
-> **El operador de plataforma no lleva `tenant_id`**, y es deliberado: no pertenece a ninguna clínica. Ver la nota de la Rebanada de superadmin.
+> **El operador de plataforma no lleva `tenant_id`.** No pertenece a ninguna clínica. Ponerle el UUID de una cualquiera «para que el token pase» haría que ese UUID acabara usándose como filtro apuntando a una clínica que no es la suya.
 
-Al usuario cuyo id lo asigna Keycloak hay que enlazarlo después:
+A los dos usuarios cuyo id lo asigna Keycloak hay que enlazarlos después, si la base ya tiene su ficha:
 
 ```sql
 update profesional set keycloak_user_id = '<el id nuevo>'
  where correo = 'carlos@control.cr';
 ```
 
-## Dos cosas que hay que hacer DESPUÉS, o parece que no funcionó
+## Si el volumen de Postgres ya existía
 
-### 1 · El alias de red `keycloak`
+`init-db.sh` corre **una sola vez**, cuando el volumen de datos está vacío. En una pila que ya arrancó antes de este cambio, la base de Keycloak no existe y hay que crearla a mano una vez:
 
-La API llama a `http://keycloak:8080` (`KEYCLOAK_JWKS_URL` y `KEYCLOAK_ADMIN_URL` del compose). El contenedor se llama `nutrismart-keycloak`, así que ese nombre **no resuelve** sin un alias, y la API rechaza todo con 401:
-
-```
-{"motivo":"getaddrinfo ENOTFOUND keycloak","msg":"auth: peticion rechazada"}
-```
-
-El 401 engaña: el token es correcto —`iss`, `aud: nutrismart-api` y `sub` están bien—, lo que falla es que la API no puede bajar el JWKS para comprobar la firma. Se arregla sin recrear el contenedor, que es importante porque recrearlo borraría el realm otra vez:
-
-```
-docker network disconnect infra_nutrismart nutrismart-keycloak
-docker network connect --alias keycloak infra_nutrismart nutrismart-keycloak
+```sql
+create user keycloak with password 'keycloak-dev';
+create database keycloak owner keycloak;
+grant all privileges on database keycloak to keycloak;
 ```
 
-**El alias no sobrevive a recrear el contenedor de Keycloak.** Si vuelve el `ENOTFOUND`, es esto.
+La contraseña tiene que ser la misma que `KC_DB_PASSWORD`. Si no coinciden, Keycloak no arranca y el log lo dice claro (`password authentication failed for user "keycloak"`).
 
-### 2 · Reiniciar la API
-
-El realm nuevo firma con claves nuevas y la API tiene el JWKS en caché:
-
-```
-docker restart nutrismart-api
-```
-
-## Comprobación
-
-```
-python infra/keycloak/restaurar-realm-dev.py   # imprime los ids, los roles y un login de prueba
-```
-
-Y luego, con el token de cada uno:
+## Verificación de permisos, que es donde se nota
 
 | Usuario | `/api/profesional/yo` | `/api/admin/clinica` | Menú |
 |---|---|---|---|
 | `ana@vida.cr` | 200, `esAdmin: true` | 200 | Dashboard, Clínica, Equipo y Marca **visibles** |
 | `luis@vida.cr` | 200, `esAdmin: false` | 403 `solo_administradores` | los cuatro **no aparecen** |
 
-Si `ana@vida.cr` da `esAdmin: false`, el `sub` y el `keycloak_user_id` no casan: el script no corrió o corrió antes de la última recreación del realm.
+Si `ana@vida.cr` da `esAdmin: false`, el `sub` del token y el `keycloak_user_id` de la base no casan: el script no corrió, o corrió y el id de Carlos no se enlazó.
 
 ---
 

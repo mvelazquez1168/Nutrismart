@@ -6,6 +6,12 @@ services:
       POSTGRES_USER: nutrismart
       POSTGRES_PASSWORD: changeme
       POSTGRES_DB: nutrismart
+      # Las lee init-db.sh para crear la base y el usuario de Keycloak.
+      # Son las MISMAS que recibe el servicio keycloak: definidas en un
+      # solo sitio, no copiadas a mano en un .sql.
+      KC_DB_DATABASE: ${KC_DB_DATABASE:-keycloak}
+      KC_DB_USERNAME: ${KC_DB_USERNAME:-keycloak}
+      KC_DB_PASSWORD: ${KC_DB_PASSWORD:-keycloak-dev}
     ports:
       # 5434 en el host: el 5432 y el 5433 los ocupan los servicios nativos
       # de Windows (postgresql-x64-13 y postgresql-x64-18) y el Postgres de
@@ -14,6 +20,65 @@ services:
       - "5434:5432"
     volumes:
       - nutrismart_pgdata:/var/lib/postgresql/data
+      # El MISMO script que producción. Crea la base de Keycloak al
+      # PRIMER arranque, cuando el volumen está vacío; en un volumen que
+      # ya existe no corre, y la base hay que crearla a mano una vez
+      # (ver docs/PRUEBAS.md).
+      - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
+    networks: [nutrismart]
+
+  # --- Keycloak ---
+  #
+  # **Está en el compose, y es el arreglo de un incidente.** Antes era un
+  # contenedor creado a mano, fuera de este archivo, sin volumen y sin
+  # `KC_DB`: guardaba el realm en la base H2 embebida, que vive en la capa
+  # de escritura del propio contenedor. Un `docker rm` se llevó el realm
+  # entero —clientes, roles, mappers y todos los usuarios con sus
+  # contraseñas— y Keycloak no exporta hashes, así que las contraseñas no
+  # se recuperan de ningún sitio: se reponen.
+  #
+  # Ahora persiste en Postgres, en la base `keycloak` de la MISMA
+  # instancia que la de NutriSmart. **Bases separadas, no esquemas**: así
+  # una migración de NutriSmart no puede tocar las tablas de Keycloak, y
+  # un `drop` de la de Keycloak no se lleva el expediente clínico.
+  #
+  # Con esto el realm sobrevive a recrear el contenedor, y
+  # `restaurar-realm-dev.py` pasa a ser lo que debería haber sido siempre:
+  # un util para sembrar usuarios de desarrollo, no un paso obligatorio
+  # cada vez que se levanta la pila.
+  #
+  # **El nombre del servicio importa.** Al llamarse `keycloak`, Docker le
+  # da ese nombre en el DNS de la red y `http://keycloak:8080` —que es lo
+  # que la API tiene en `KEYCLOAK_JWKS_URL`— resuelve solo. El contenedor
+  # de antes se llamaba `nutrismart-keycloak` y no respondía a `keycloak`:
+  # la API rechazaba TODOS los tokens con un 401 cuyo motivo real era
+  # `getaddrinfo ENOTFOUND keycloak`, un fallo de DNS con pinta de fallo
+  # de autenticación. Eso deja de poder pasar.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3
+    container_name: nutrismart-keycloak
+    # `start-dev`, no `start`: sin HTTPS obligatorio ni hostname estricto.
+    # Producción usa `start` con `KC_HOSTNAME` (docker-compose.prod.yml).
+    command: start-dev
+    environment:
+      KC_DB: postgres
+      # Forma descompuesta en vez de un `KC_DB_URL` con el JDBC entero:
+      # es la misma que usa producción, y no hay cadena que citar mal.
+      KC_DB_URL_HOST: db
+      KC_DB_URL_PORT: 5432
+      KC_DB_URL_DATABASE: ${KC_DB_DATABASE:-keycloak}
+      KC_DB_USERNAME: ${KC_DB_USERNAME:-keycloak}
+      KC_DB_PASSWORD: ${KC_DB_PASSWORD:-keycloak-dev}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:-admin}
+      KC_HEALTH_ENABLED: "true"
+      JAVA_OPTS_APPEND: "-Xms256m -Xmx512m"
+    depends_on: [db]
+    ports:
+      # Por aquí llega el NAVEGADOR, y el claim `iss` del token es esta
+      # dirección: cambiar el puerto obliga a cambiar `KEYCLOAK_ISSUER`
+      # del .env y las VITE_KEYCLOAK_URL de los dos frontends.
+      - "8080:8080"
     networks: [nutrismart]
 
   api:
@@ -46,10 +111,18 @@ services:
       # Sin este volumen, los informes de laboratorio desaparecerían al
       # recrear el contenedor. Son documentos clínicos.
       - nutrismart_archivos:/datos/archivos
-    depends_on: [db]
+    # Keycloak no lleva `condition: service_healthy`: la API no necesita
+    # que esté listo para arrancar. El JWKS se pide a demanda y se
+    # reintenta, así que un Keycloak que tarda 30 segundos en levantar
+    # solo hace que los primeros logins fallen, no que la API no arranque.
+    depends_on: [db, keycloak]
     ports:
       - "4001:4000"   # 4000 lo ocupa vetplatform-backend-1
-    networks: [nutrismart, shared]
+    # Una sola red. La `shared` externa existía para alcanzar el Keycloak
+    # que vivía fuera del compose; ahora Keycloak es un servicio de aquí,
+    # así que la dependencia de una red externa que puede no existir en la
+    # máquina —y que hacía fallar `docker compose up` entero— se va.
+    networks: [nutrismart]
 
   web-professional:
     build:
@@ -90,11 +163,13 @@ services:
       - "5175:80"   # nginx sirve en el 80 dentro del contenedor
     networks: [nutrismart]
 
+# Una sola red, propia de la pila. La `shared` externa
+# (`${KEYCLOAK_NETWORK}`, por defecto `postgres_default`) se quitó al
+# traer Keycloak al compose: era el puente a un Keycloak de fuera, y
+# declarar una red `external: true` que puede no existir hace fallar
+# `docker compose up` completo en una máquina limpia.
 networks:
   nutrismart:
-  shared:
-    external: true
-    name: ${KEYCLOAK_NETWORK:-postgres_default}
 
 volumes:
   nutrismart_pgdata:
