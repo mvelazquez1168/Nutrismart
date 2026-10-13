@@ -8,7 +8,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 import { useBrand, urlLogo } from '../contexts/BrandContext'
 import { API_BASE } from '../api/client'
-import { ROL_ADMIN_CLINICA, ROL_SUPER_ADMIN } from '../api/tipos'
+import { ROL_SUPER_ADMIN } from '../api/tipos'
 import { NotificacionesCampana } from './notificaciones/NotificacionesCampana'
 
 interface ItemNav {
@@ -26,6 +26,21 @@ interface ItemNav {
  *
  * esSuperAdmin añade una sección de plataforma al final: solo visible
  * para el super-admin de NutriSmart, nunca para los profesionales.
+ *
+ * ── Quién decide si eres administrador ──────────────────────────────
+ *
+ * `esAdmin` llega por PROP, desde quien monta las rutas. No se calcula
+ * aquí, y el motivo es un defecto que estuvo en la aplicación:
+ *
+ * este archivo lo sacaba del rol en el token (`perfil.roles`), mientras
+ * el router lo sacaba de `/api/profesional/yo`, donde `esAdmin` es el rol
+ * en el token **y** el rol en la ficha de profesional. En cuanto las dos
+ * respuestas diferían —y difieren siempre que el perfil no se puede
+ * cargar—, el menú pintaba Clínica, Equipo y Marca como enlaces vivos y
+ * el router los devolvía a Pacientes. Visto desde la pantalla: tres
+ * ítems del menú que muestran la lista de pacientes.
+ *
+ * Una sola fuente, y la del router, que es la que manda.
  */
 function navDe(esAdmin: boolean, esSuperAdmin: boolean): ItemNav[] {
   const items: ItemNav[] = [
@@ -41,7 +56,14 @@ function navDe(esAdmin: boolean, esSuperAdmin: boolean): ItemNav[] {
     { clave: 'monitoreo', etiqueta: 'Monitoreo', ruta: '/monitoreo' },
     { clave: 'mensajeria', etiqueta: 'Mensajería', ruta: '/mensajeria' },
     { clave: 'recursos', etiqueta: 'Biblioteca', ruta: '/recursos' },
-    { clave: 'laboratorios', etiqueta: 'Laboratorios' },
+    // «Laboratorios» se quito del menu: era un item apagado, sin ruta ni
+    // pantalla, y la gestion de laboratorios del paciente ya vive dentro
+    // de la valoracion (pestana «Laboratorios» de la consulta) y de la
+    // ficha. Un item de primer nivel apagado prometia una seccion que no
+    // existe y nunca se penso como tal.
+    //
+    // Solo se quito de AQUI: las rutas, las pantallas y los endpoints de
+    // laboratorios siguen intactos.
     { clave: 'estrategias', etiqueta: 'Estrategias' },
     // Las reglas son de la clínica, no del administrador: cualquier
     // profesional necesita ver por qué llegan los avisos que recibe.
@@ -89,18 +111,23 @@ function inicialesDe(nombre: string): string {
 export function Shell({
   seccionActiva,
   nombreClinica,
+  esAdmin,
   esSuperAdmin = false,
   children,
 }: {
   seccionActiva: string
   nombreClinica: string | null
+  /**
+   * Si quien mira administra la clínica. La MISMA respuesta que usa el
+   * router para dejar entrar; ver la nota sobre `navDe`.
+   */
+  esAdmin: boolean
   esSuperAdmin?: boolean
   children: ReactNode
 }) {
   const { perfil, logout } = useAuth()
   const { brand } = useBrand()
 
-  const esAdmin = perfil?.roles.includes(ROL_ADMIN_CLINICA) ?? false
   const _superAdmin = esSuperAdmin || (perfil?.roles.includes(ROL_SUPER_ADMIN) ?? false)
   const logo = urlLogo(brand, API_BASE)
 

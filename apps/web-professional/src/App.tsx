@@ -28,6 +28,7 @@ import { ValoracionPaciente } from './pages/ValoracionPaciente'
 import { ClinicasPage } from './pages/superadmin/ClinicasPage'
 import { getMe } from './api/pacientes'
 import { ROL_ADMIN_CLINICA, ROL_SUPER_ADMIN } from './api/tipos'
+import { SinPermisoAdmin } from './components/SinPermisoAdmin'
 import type { Me } from './api/tipos'
 
 function Centrado({ children }: { children: ReactNode }) {
@@ -180,7 +181,18 @@ function Contenido() {
 
   return (
     <BrandProvider clinicaId={perfil?.tenantId}>
-      <Shell seccionActiva={seccionDe(location.pathname)} nombreClinica={me?.clinica.nombre ?? null} esSuperAdmin={esSuperAdmin}>
+      {/*
+        `esAdmin` se le pasa al Shell: el menú y las rutas tienen que
+        responder lo mismo. Cuando el Shell lo calculaba por su cuenta
+        —del token—, Clínica, Equipo y Marca aparecían como enlaces vivos
+        y rebotaban a Pacientes.
+      */}
+      <Shell
+        seccionActiva={seccionDe(location.pathname)}
+        nombreClinica={me?.clinica.nombre ?? null}
+        esAdmin={esAdmin}
+        esSuperAdmin={esSuperAdmin}
+      >
         {/*
           El fallo de /api/me no bloquea la pantalla: solo deja el nombre de
           la clinica sin mostrar. La lista de pacientes tiene su propio
@@ -206,23 +218,52 @@ function Contenido() {
           <Route path="/recursos" element={<Recursos />} />
           <Route path="/monitoreo" element={<Monitoreo />} />
           <Route path="/notificaciones/reglas" element={<ReglasNotificacion />} />
-          {/* Un nutricionista que teclee la URL a mano vuelve a
-              Pacientes. No es la defensa: la API responde 403 igual. */}
+          {/*
+            Sin permiso NO se rebota a Pacientes: se explica qué falta.
+            El rebote silencioso es lo que hacía que estos tres ítems del
+            menú «mostraran la lista de pacientes», sin forma de
+            distinguirlo de una ruta mal configurada.
+            No es la defensa: la API responde 403 igual.
+          */}
           <Route
             path="/ajustes/marca"
-            element={esAdmin ? <MarcaPage /> : <Navigate to="/pacientes" replace />}
+            element={
+              esAdmin ? (
+                <MarcaPage />
+              ) : (
+                <SinPermisoAdmin seccion="Marca" yo={yo} cargado={cargadoYo} />
+              )
+            }
           />
           <Route
             path="/ajustes/clinica"
-            element={esAdmin ? <ClinicaPage /> : <Navigate to="/pacientes" replace />}
+            element={
+              esAdmin ? (
+                <ClinicaPage />
+              ) : (
+                <SinPermisoAdmin seccion="Clínica" yo={yo} cargado={cargadoYo} />
+              )
+            }
           />
           <Route
             path="/ajustes/equipo"
-            element={esAdmin ? <EquipoPage /> : <Navigate to="/pacientes" replace />}
+            element={
+              esAdmin ? (
+                <EquipoPage />
+              ) : (
+                <SinPermisoAdmin seccion="Equipo" yo={yo} cargado={cargadoYo} />
+              )
+            }
           />
           <Route
             path="/admin/dashboard"
-            element={esAdmin ? <DashboardPage /> : <Navigate to="/pacientes" replace />}
+            element={
+              esAdmin ? (
+                <DashboardPage />
+              ) : (
+                <SinPermisoAdmin seccion="Dashboard" yo={yo} cargado={cargadoYo} />
+              )
+            }
           />
           {/* Panel de plataforma: solo accesible con el rol super_admin. */}
           <Route
