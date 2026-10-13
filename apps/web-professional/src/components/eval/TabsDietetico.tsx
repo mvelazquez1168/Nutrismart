@@ -11,6 +11,11 @@ import { getDietetico, guardarDietetico, type ComidaR24 } from '../../api/clinic
 import { useCambiosSinGuardar, useSalidaSegura } from '../../contexts/CambiosSinGuardar'
 import { TablaDietetica } from './TablaDietetica'
 import { FormFrecuenciaConsumo } from './FormFrecuenciaConsumo'
+import {
+  FormEvaluacionDietetica,
+  HABITOS_VACIOS,
+  type Habitos,
+} from './FormEvaluacionDietetica'
 import { ResumenDietetico } from './ResumenDietetico'
 import { TotalesRecordatorio } from './TotalesRecordatorio'
 import { AvisoPrecarga } from './BannerSeguimiento'
@@ -23,6 +28,18 @@ import { AvisoPrecarga } from './BannerSeguimiento'
 // unifica es cómo se escriben, para que coincidan con el resto de la
 // aplicación y con el PDF.
 const SUB = [
+  /*
+   * «Evaluación Dietética» va PRIMERA, antes de Frecuencia de consumo
+   * (R50). Son los hábitos: cuántos tiempos hace, dónde come, cómo
+   * cocina. Se pregunta antes de medir con qué frecuencia come cada
+   * grupo, y por eso abre la carpeta.
+   *
+   * Comparte nombre con el contenedor —esta carpeta se llama
+   * «Evaluación dietética» desde la EVAL-04— porque así lo pide el
+   * requerimiento. Queda señalado: si algún día confunde, lo que hay que
+   * renombrar es una de las dos, no reordenar las pestañas.
+   */
+  { clave: 'evaluacion', etiqueta: 'Evaluación Dietética' },
   { clave: 'frecuencia', etiqueta: 'Frecuencia de consumo' },
   { clave: 'r24', etiqueta: 'Recordatorio 24h' },
   { clave: 'consumo_usual', etiqueta: 'Consumo Usual' },
@@ -46,12 +63,13 @@ export function TabsDietetico({
   fechaAnterior?: string | null
   onGuardado: () => void | Promise<void>
 }) {
-  const [sub, setSub] = useState<Sub>('frecuencia')
+  const [sub, setSub] = useState<Sub>('evaluacion')
   const [comidas, setComidas] = useState<ComidaR24[]>([])
   const [frecuencia, setFrecuencia] = useState<Record<string, string>>({})
   const [hidratacion, setHidratacion] = useState('')
   const [macros, setMacros] = useState(MACROS_VACIOS)
   const [notas, setNotas] = useState('')
+  const [habitos, setHabitos] = useState<Habitos>(HABITOS_VACIOS)
 
   const [cargando, setCargando] = useState(true)
   const [guardando, setGuardando] = useState(false)
@@ -75,6 +93,28 @@ export function TabsDietetico({
             fibra: d.fibraG?.toString() ?? '',
           })
           setNotas(d.notasDieteticas ?? '')
+          /*
+           * Los tres si/no se conservan como `null` cuando llegan en
+           * null: es «no se preguntó». Pasarlos por `?? false` pondría
+           * un «No» que nadie dijo.
+           */
+          setHabitos({
+            tiemposPorDia: d.tiemposPorDia ?? null,
+            tiemposRealizados: d.tiemposRealizados ?? [],
+            lugarComidas: d.lugarComidas ?? null,
+            quienPrepara: d.quienPrepara ?? '',
+            apetito: d.apetito ?? null,
+            grasasCocinar: d.grasasCocinar ?? '',
+            tiposCoccion: d.tiposCoccion ?? [],
+            agregaSal: d.agregaSal ?? null,
+            consumeAzucar: d.consumeAzucar ?? null,
+            usaEdulcorante: d.usaEdulcorante ?? null,
+            dietasRealizadas: d.dietasRealizadas ?? '',
+            consumeAgua: d.consumeAgua ?? null,
+            cantidadAgua: d.cantidadAgua ?? '',
+            alimentosNoConsume: d.alimentosNoConsume ?? '',
+            alimentosPreferidos: d.alimentosPreferidos ?? '',
+          })
         })
         // 404 = todavía no hay evaluación. Es el estado inicial, no un fallo.
         .catch(() => {})
@@ -94,14 +134,15 @@ export function TabsDietetico({
   /**
    * Aviso al salir con cambios sin guardar (R46).
    *
-   * Cubre lo que guarda ESTE contenedor: frecuencia, hidratación, macros
-   * y notas. Las dos tablas dietéticas se registran por su cuenta —se
-   * guardan solas— y el modal las nombra aparte.
+   * Cubre lo que guarda ESTE contenedor: hábitos alimentarios,
+   * frecuencia, hidratación, macros y notas. Las dos tablas dietéticas se
+   * registran por su cuenta —se guardan solas— y el modal las nombra
+   * aparte.
    */
   const { marcarGuardado } = useCambiosSinGuardar({
     nombre: 'Dietético',
     activo: !cargando && !bloqueada,
-    valores: { frecuencia, hidratacion, macros, notas },
+    valores: { habitos, frecuencia, hidratacion, macros, notas },
     guardar: () => guardar(),
   })
 
@@ -125,6 +166,28 @@ export function TabsDietetico({
         grasaG: num(macros.grasa),
         fibraG: num(macros.fibra),
         notasDieteticas: notas || null,
+
+        /*
+         * Los hábitos van en la MISMA petición que el resto (R50), como
+         * todo lo que guarda este contenedor. El texto vacío se manda
+         * como null: una cadena vacía guardada se lee después como «se
+         * respondió y está en blanco».
+         */
+        tiemposPorDia: habitos.tiemposPorDia,
+        tiemposRealizados: habitos.tiemposRealizados,
+        lugarComidas: habitos.lugarComidas,
+        quienPrepara: habitos.quienPrepara.trim() || null,
+        apetito: habitos.apetito,
+        grasasCocinar: habitos.grasasCocinar.trim() || null,
+        tiposCoccion: habitos.tiposCoccion,
+        agregaSal: habitos.agregaSal,
+        consumeAzucar: habitos.consumeAzucar,
+        usaEdulcorante: habitos.usaEdulcorante,
+        dietasRealizadas: habitos.dietasRealizadas.trim() || null,
+        consumeAgua: habitos.consumeAgua,
+        cantidadAgua: habitos.cantidadAgua.trim() || null,
+        alimentosNoConsume: habitos.alimentosNoConsume.trim() || null,
+        alimentosPreferidos: habitos.alimentosPreferidos.trim() || null,
       })
       setOk(true)
       marcarGuardado()
@@ -168,6 +231,9 @@ export function TabsDietetico({
       )}
       {sub === 'consumo_usual' && (
         <TablaDietetica pacienteId={pacienteId} consultaId={consultaId} tipo="consumo_usual" readOnly={bloqueada} />
+      )}
+      {sub === 'evaluacion' && (
+        <FormEvaluacionDietetica datos={habitos} onCambio={setHabitos} bloqueada={bloqueada} />
       )}
       {sub === 'frecuencia' && (
         <FormFrecuenciaConsumo

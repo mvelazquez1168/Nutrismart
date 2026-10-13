@@ -175,6 +175,31 @@ export interface Dietetico {
   grasaG: number | null
   fibraG: number | null
   notasDieteticas: string | null
+
+  /*
+   * Habitos alimentarios — R50, la subcarpeta «Evaluacion Dietetica».
+   *
+   * Los tres si/no son `boolean | null` y el null es significativo: «no
+   * se pregunto» no es «no». Las dos listas llegan siempre, vacias si no
+   * se marco nada.
+   */
+  tiemposPorDia: string | null
+  tiemposRealizados: string[]
+  lugarComidas: string | null
+  quienPrepara: string | null
+  apetito: string | null
+  grasasCocinar: string | null
+  tiposCoccion: string[]
+  agregaSal: boolean | null
+  consumeAzucar: boolean | null
+  usaEdulcorante: boolean | null
+  dietasRealizadas: string | null
+  consumeAgua: boolean | null
+  cantidadAgua: string | null
+  /** Se refleja en la carpeta Prescripcion, debajo de las alergias. */
+  alimentosNoConsume: string | null
+  /** Se refleja en la carpeta Prescripcion, debajo de las alergias. */
+  alimentosPreferidos: string | null
 }
 
 /* ---- Historial ---- */

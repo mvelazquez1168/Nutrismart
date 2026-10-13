@@ -23,6 +23,7 @@ import { Campo, claseControl } from '../Campo'
 import { PanelCalculadora, type DatosCalculadora } from './PanelCalculadora'
 import { PlanAlimentarioResumen } from './PlanAlimentarioResumen'
 import { PlanAlimentarioCard } from './PlanAlimentarioCard'
+import { PreferenciasAlimentarias } from './PreferenciasAlimentarias'
 
 const ACUERDOS_INICIALES: Acuerdo[] = [
   { texto: 'Registrar la ingesta diaria', cumplido: false },
@@ -315,6 +316,17 @@ export function FormConclusion({
               </ul>
             </div>
           )}
+
+          {/*
+            Preferencias alimentarias (R50): los dos campos de la
+            Evaluacion Dietetica, en solo lectura, inmediatamente debajo
+            de las alergias.
+            A diferencia del bloque de arriba, este SI aparece cuando esta
+            vacio, con «Sin registros». El motivo esta escrito en el
+            componente: un «Sin registrar» en alergias se leeria como «no
+            tiene», y aqui se lee como «no se pregunto», que es un dato.
+          */}
+          <PreferenciasAlimentarias pacienteId={pacienteId} />
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
             <Campo id="kcal" etiqueta="Meta calórica (kcal/día)">
