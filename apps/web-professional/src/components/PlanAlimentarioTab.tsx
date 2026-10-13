@@ -29,6 +29,7 @@ import { Campo, claseControl } from './Campo'
 import { ChipEstadoPlan, PlanCard } from './PlanCard'
 import { PlanGrilla } from './PlanGrilla'
 import { PlanEditor } from './PlanEditor'
+import { ResumenClinicoModal } from './ResumenClinicoModal'
 
 /** 'AAAA-MM-DD' → '17 de agosto de 2026'. Sin pasar por Date. */
 function fechaLarga(iso: string | null): string | null {
@@ -60,6 +61,11 @@ export function PlanAlimentarioTab({
   const [creando, setCreando] = useState(false)
   const [nombre, setNombre] = useState('')
   const [objetivo, setObjetivo] = useState('')
+
+  // El plan cuyo resumen clinico esta abierto (R49). Se guarda el plan
+  // entero y no solo el id: el modal muestra su nombre en el encabezado,
+  // y buscarlo de nuevo en la lista para eso seria dar una vuelta.
+  const [resumenDe, setResumenDe] = useState<Plan | null>(null)
 
   const cargarLista = useCallback(
     async (signal?: AbortSignal) => {
@@ -230,6 +236,7 @@ export function PlanAlimentarioTab({
               plan={p}
               seleccionado={plan?.id === p.id}
               onClick={() => void abrir(p.id)}
+              onResumen={() => setResumenDe(p)}
             />
           ))
         )}
@@ -345,6 +352,19 @@ export function PlanAlimentarioTab({
           </>
         )}
       </div>
+
+      {resumenDe && (
+        <ResumenClinicoModal
+          planId={resumenDe.id}
+          planNombre={resumenDe.nombre}
+          abierto
+          onCerrar={() => setResumenDe(null)}
+          // Tras generarlo a pedido, la lista tiene que reflejar que ya
+          // existe: si no, el boton seguiria diciendo «Generar» para un
+          // resumen que ya esta guardado.
+          onGenerado={() => void cargarLista()}
+        />
+      )}
     </div>
   )
 }

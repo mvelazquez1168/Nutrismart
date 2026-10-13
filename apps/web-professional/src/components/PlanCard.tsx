@@ -52,10 +52,13 @@ export function PlanCard({
   plan,
   seleccionado,
   onClick,
+  onResumen,
 }: {
   plan: Plan
   seleccionado: boolean
   onClick: () => void
+  /** Abre el resumen clinico de este plan (R49). */
+  onResumen?: () => void
 }) {
   // Fecha de prescripción: la de inicio si el plan la declara; si no
   // —un borrador que aún no rige—, el día en que se creó. La lista es un
@@ -63,26 +66,56 @@ export function PlanCard({
   const desde = fechaCorta(plan.fechaInicio)
   const creado = fechaCorta(plan.createdAt.slice(0, 10))
 
+  /*
+   * La tarjeta es un DIV con dos botones dentro, no un boton con otro
+   * boton anidado: eso es HTML invalido, y el navegador lo desarma por su
+   * cuenta de un modo que deja el clic del interior sin funcionar.
+   *
+   * El boton del resumen (R49) va en su propia franja, separado por una
+   * linea: el area de seleccion del plan sigue siendo toda la tarjeta de
+   * arriba, y abrir el resumen no selecciona el plan ni al reves.
+   */
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-current={seleccionado ? 'true' : undefined}
-      className={`w-full rounded-md border p-3 text-left transition-colors ${
-        seleccionado
-          ? 'border-primary bg-primary-tint'
-          : 'border-border bg-surface hover:bg-surface-2'
+    <div
+      className={`rounded-md border transition-colors ${
+        seleccionado ? 'border-primary bg-primary-tint' : 'border-border bg-surface'
       }`}
     >
-      <div className="flex items-start justify-between gap-2">
-        <span className="min-w-0 text-sm font-medium text-ink">{plan.nombre}</span>
-        <span className="shrink-0">
-          <ChipEstadoPlan estado={plan.estado} />
-        </span>
-      </div>
-      <p className="mt-1 text-xs text-muted">
-        {desde ? `Desde ${desde}` : creado ? `Creado el ${creado}` : 'Sin fecha'}
-      </p>
-    </button>
+      <button
+        type="button"
+        onClick={onClick}
+        aria-current={seleccionado ? 'true' : undefined}
+        className={`w-full rounded-t-md p-3 text-left ${
+          seleccionado ? '' : 'hover:bg-surface-2'
+        }`}
+      >
+        <div className="flex items-start justify-between gap-2">
+          <span className="min-w-0 text-sm font-medium text-ink">{plan.nombre}</span>
+          <span className="shrink-0">
+            <ChipEstadoPlan estado={plan.estado} />
+          </span>
+        </div>
+        <p className="mt-1 text-xs text-muted">
+          {desde ? `Desde ${desde}` : creado ? `Creado el ${creado}` : 'Sin fecha'}
+        </p>
+      </button>
+
+      {onResumen && (
+        <div className="border-t border-border/60 px-3 py-1.5">
+          <button
+            type="button"
+            onClick={onResumen}
+            className="text-xs font-medium text-primary hover:underline"
+          >
+            {/*
+              El texto dice cual de los dos es. Los planes de antes de la
+              R49 no tienen resumen, y ofrecer «Ver resumen» para abrir un
+              modal vacio seria prometer algo que no hay.
+            */}
+            {plan.tieneResumen ? 'Ver resumen clinico' : 'Generar resumen clinico'}
+          </button>
+        </div>
+      )}
+    </div>
   )
 }

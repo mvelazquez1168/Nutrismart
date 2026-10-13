@@ -23,6 +23,11 @@ import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
 import { esUuid, type ErrorCampo } from '../pacientes/validacion.js'
 import { resolverAlcance, type Alcance } from '../pacientes/acceso.js'
+import {
+  generarResumen,
+  leerUltimoResumen,
+  planesConResumen,
+} from '../plan/resumenClinico.js'
 
 const TIPOS_COMIDA = [
   'desayuno',
@@ -364,7 +369,25 @@ export async function registerPlanesRoutes(app: FastifyInstance): Promise<void> 
                    pa.created_at desc`,
         [tenantId, id],
       )
-      return reply.send(rows.map(aPlan))
+
+      /*
+       * Cada entrada del historico lleva su boton de resumen (R49), y el
+       * boton tiene que decir la verdad: «Ver resumen» cuando existe y
+       * «Generar resumen» cuando no.
+       *
+       * Los planes anteriores a la R49 no tienen ninguno, y tampoco el
+       * plan que se guardo mientras la IA estaba caida. Mostrar el mismo
+       * boton para los dos casos llevaria al profesional a un modal vacio
+       * sin explicacion — el defecto del estado ausente disfrazado de
+       * estado normal.
+       */
+      const conResumen = await planesConResumen(
+        rows.map((r) => r['id'] as string),
+        tenantId,
+      )
+      return reply.send(
+        rows.map((r) => ({ ...aPlan(r), tieneResumen: conResumen.has(r['id'] as string) })),
+      )
     },
   )
 
@@ -556,7 +579,92 @@ export async function registerPlanesRoutes(app: FastifyInstance): Promise<void> 
         cliente.release()
       }
 
-      return reply.send({ planId: plan.id, comidas: v.comidas.length })
+      /*
+       * **Aqui se genera el resumen clinico (R49).**
+       *
+       * Este es el punto donde «el profesional guarda la prescripcion»:
+       * tanto el bloque «Plan alimentario» de la valoracion como el
+       * editor del historico terminan en esta ruta.
+       *
+       * `generarResumen` no lanza nunca: el plan ya esta guardado y
+       * comiteado unas lineas arriba, y la respuesta tiene que ser 200
+       * aunque el modelo no este disponible. Lo unico que cambia es la
+       * bandera `resumen`, que la pantalla usa para avisar.
+       */
+      const resumen = await generarResumen(plan.id, tenantId, alcance.profesionalId)
+
+      return reply.send({
+        planId: plan.id,
+        comidas: v.comidas.length,
+        resumen: resumen.estado,
+      })
+    },
+  )
+
+  /* ---------------------------------------------------------------- */
+  /* GET /api/planes/:planId/resumen — R49                             */
+  /* ---------------------------------------------------------------- */
+  /**
+   * El resumen guardado del plan. **No se regenera al leerlo.**
+   *
+   * Devuelve 200 con `existe: false` cuando el plan no tiene resumen, no
+   * un 404: aqui un 404 significa «este plan no existe o no es tuyo», y
+   * confundir las dos cosas haria que la pantalla dijera «no se encontro
+   * el plan» sobre un plan que esta abierto delante del profesional.
+   */
+  app.get<{ Params: { planId: string } }>(
+    '/api/planes/:planId/resumen',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { tenantId } = request.auth
+      const alcance = await alcanceDe(request)
+      if (!alcance) return reply.code(403).send(sinProfesional())
+
+      const plan = await cargarPlan(request.params.planId, tenantId, alcance.restringirA)
+      if (!plan) return reply.code(404).send(noEncontradoPlan())
+
+      const resumen = await leerUltimoResumen(plan.id, tenantId)
+      if (!resumen) return reply.send({ existe: false })
+      return reply.send({ existe: true, resumen })
+    },
+  )
+
+  /* ---------------------------------------------------------------- */
+  /* POST /api/planes/:planId/resumen — R49                            */
+  /* ---------------------------------------------------------------- */
+  /**
+   * Genera el resumen ahora, a pedido.
+   *
+   * Existe por dos razones concretas, las dos del mundo real y no del
+   * requerimiento: los planes que ya estaban en el historico antes de
+   * esta funcionalidad, y los que se guardaron cuando la IA no respondia.
+   * Sin esta ruta, esos planes no tendrian resumen nunca.
+   *
+   * Un plan archivado SI puede generarlo: el resumen no modifica el plan,
+   * lo describe. Es justamente el caso en que mas sirve — un plan viejo
+   * del que ya nadie recuerda el razonamiento.
+   */
+  app.post<{ Params: { planId: string } }>(
+    '/api/planes/:planId/resumen',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { tenantId } = request.auth
+      const alcance = await alcanceDe(request)
+      if (!alcance) return reply.code(403).send(sinProfesional())
+
+      const plan = await cargarPlan(request.params.planId, tenantId, alcance.restringirA)
+      if (!plan) return reply.code(404).send(noEncontradoPlan())
+
+      const r = await generarResumen(plan.id, tenantId, alcance.profesionalId)
+      if (r.estado === 'fallo') {
+        return reply.code(502).send({
+          error: 'resumen_no_generado',
+          message: 'No se pudo generar el resumen clinico. Intentalo de nuevo en un momento.',
+        })
+      }
+
+      const resumen = await leerUltimoResumen(plan.id, tenantId)
+      return reply.send({ existe: resumen !== null, estado: r.estado, resumen })
     },
   )
 

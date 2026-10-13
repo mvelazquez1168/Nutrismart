@@ -26,6 +26,7 @@ import {
   getPlan,
   getPlanes,
   guardarComidas,
+  type EstadoResumen,
   type TipoComida,
 } from '../../api/planes'
 
@@ -49,6 +50,14 @@ export function PlanAlimentarioResumen({ pacienteId }: { pacienteId: string }) {
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState(false)
+  /**
+   * Como salio el resumen clinico del guardado (R49).
+   *
+   * El plan se guardo en todos los casos; esto habla SOLO del resumen.
+   * Se muestra porque un resumen que no se redacto y no se dice deja al
+   * profesional creyendo que el historico tiene algo que no tiene.
+   */
+  const [resumen, setResumen] = useState<EstadoResumen | null>(null)
 
   const cargar = useCallback(
     (signal?: AbortSignal) => {
@@ -89,6 +98,7 @@ export function PlanAlimentarioResumen({ pacienteId }: { pacienteId: string }) {
   function actualizar(clave: string, campo: keyof Fila, valor: string) {
     setFilas((prev) => ({ ...prev, [clave]: { ...(prev[clave] ?? VACIA), [campo]: valor } }))
     setOk(false)
+    setResumen(null)
   }
 
   function comidasEnvio() {
@@ -129,7 +139,8 @@ export function PlanAlimentarioResumen({ pacienteId }: { pacienteId: string }) {
         id = nuevo.id
         setPlanId(id)
       }
-      await guardarComidas(id, comidasEnvio())
+      const r = await guardarComidas(id, comidasEnvio())
+      setResumen(r.resumen ?? null)
       setOk(true)
       marcarGuardado()
     } catch (e) {
@@ -244,9 +255,21 @@ export function PlanAlimentarioResumen({ pacienteId }: { pacienteId: string }) {
         </p>
       )}
       {ok && (
-        <p className="rounded-md border border-border bg-primary-tint p-3 text-sm text-primary">
-          Plan alimentario guardado en el plan activo del paciente.
-        </p>
+        <div className="space-y-2">
+          <p className="rounded-md border border-border bg-primary-tint p-3 text-sm text-primary">
+            Plan alimentario guardado en el plan activo del paciente.
+            {resumen === 'generado' &&
+              ' Se genero el resumen clinico: puedes verlo en el historico de planes.'}
+          </p>
+
+          {(resumen === 'sin_ia' || resumen === 'fallo') && (
+            <p className="rounded-md border border-[color:var(--status-alert)] bg-surface-2 p-3 text-sm text-ink">
+              {resumen === 'sin_ia'
+                ? 'El resumen clinico quedo guardado con los datos de la consulta, pero la IA no estaba disponible para redactarlo. Puedes generar la redaccion desde el historico de planes.'
+                : 'No se pudo generar el resumen clinico de este plan. El plan si quedo guardado; puedes generar el resumen desde el historico de planes.'}
+            </p>
+          )}
+        </div>
       )}
 
       <div className="flex justify-end">

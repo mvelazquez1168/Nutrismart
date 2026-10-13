@@ -30,6 +30,15 @@ export interface Plan {
   notas: string | null
   createdAt: string
   updatedAt: string
+  /**
+   * Si este plan ya tiene resumen clinico guardado (R49).
+   *
+   * Opcional porque solo lo manda el listado, no el detalle. Un plan de
+   * antes de la R49 llega en `false`, y el boton del historico dice
+   * «Generar resumen» en vez de «Ver resumen»: el estado ausente se
+   * nombra, no se disfraza de normal.
+   */
+  tieneResumen?: boolean
 }
 
 export interface ComidaPlan {
@@ -71,11 +80,83 @@ export function crearPlan(pacienteId: string, datos: DatosPlanEnvio): Promise<Pl
   return apiPost<Plan>(`/api/pacientes/${pacienteId}/planes`, datos)
 }
 
+/**
+ * Estado del resumen clinico tras guardar (R49).
+ *
+ * `generado` con la redaccion de la IA; `sin_ia` cuando el modelo no
+ * respondio y el resumen quedo armado solo con los datos de la consulta;
+ * `fallo` cuando no se pudo guardar ninguno. **El plan se guardo en los
+ * tres casos** — esta bandera no habla del plan.
+ */
+export type EstadoResumen = 'generado' | 'sin_ia' | 'sin_plan' | 'fallo'
+
 export function guardarComidas(
   planId: string,
   comidas: ComidaEnvio[],
-): Promise<{ planId: string; comidas: number }> {
-  return apiPut<{ planId: string; comidas: number }>(`/api/planes/${planId}/comidas`, comidas)
+): Promise<{ planId: string; comidas: number; resumen?: EstadoResumen }> {
+  return apiPut<{ planId: string; comidas: number; resumen?: EstadoResumen }>(
+    `/api/planes/${planId}/comidas`,
+    comidas,
+  )
+}
+
+/* ---- El resumen clinico del plan — R49 ---------------------------- */
+
+export interface MacrosResumen {
+  kcal: number | null
+  choG: number | null
+  protG: number | null
+  grasaG: number | null
+  choPct: number | null
+  protPct: number | null
+  grasaPct: number | null
+  fuente: 'conclusion' | 'calculadora' | 'ausente'
+}
+
+export interface ResumenClinico {
+  id: string
+  planId: string
+  generadoEn: string
+  /** 'ia' = redactado por el modelo; 'datos' = armado sin el modelo. */
+  origen: 'ia' | 'datos'
+  modelo: string | null
+  bloques: {
+    objetivos: string | null
+    observacionesClinicas: string | null
+    justificacion: string | null
+    planAlimentario: string | null
+    distribucionMacros: string | null
+    recomendaciones: string | null
+    tareas: string | null
+  }
+  macros: MacrosResumen | null
+}
+
+/**
+ * El resumen guardado, si existe.
+ *
+ * `existe: false` llega con 200, no con 404: el plan existe, lo que no
+ * existe es su resumen. Son dos ausencias distintas y la pantalla dice
+ * cosas distintas en cada caso.
+ */
+export function getResumenPlan(
+  planId: string,
+  signal?: AbortSignal,
+): Promise<{ existe: boolean; resumen?: ResumenClinico }> {
+  return apiGet<{ existe: boolean; resumen?: ResumenClinico }>(
+    `/api/planes/${planId}/resumen`,
+    signal,
+  )
+}
+
+/** Genera el resumen a pedido: planes viejos, o reintento tras un fallo. */
+export function generarResumenPlan(
+  planId: string,
+): Promise<{ existe: boolean; estado: EstadoResumen; resumen: ResumenClinico | null }> {
+  return apiPost<{ existe: boolean; estado: EstadoResumen; resumen: ResumenClinico | null }>(
+    `/api/planes/${planId}/resumen`,
+    {},
+  )
 }
 
 export function activarPlan(planId: string): Promise<Plan> {

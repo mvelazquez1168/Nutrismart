@@ -49,7 +49,7 @@ export interface ResultadoIA {
 interface Contexto {
   clinicaId: string
   profesionalId: string | null
-  funcion: 'interpretacion_labs' | 'nota_soap' | 'analisis_dietetico'
+  funcion: 'interpretacion_labs' | 'nota_soap' | 'analisis_dietetico' | 'resumen_clinico_plan'
 }
 
 /**

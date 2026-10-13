@@ -10,6 +10,7 @@
     "start": "node dist/server.js",
     "migrate": "tsx src/migrate.ts",
     "verificar:intercambios": "tsx src/dietetico/verificar.ts",
+    "verificar:resumen": "tsx src/plan/verificar-resumen.ts",
     "seed": "tsx src/seed.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
