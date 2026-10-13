@@ -146,20 +146,37 @@ function Contenido() {
   // `login-required` redirigía a Keycloak antes de pintar nada.
   if (estado !== 'autenticado') return <Login />
 
-  // Ser administrador exige las DOS cosas, igual que en la API: el rol
-  // en el token de Keycloak (que es quien concede el acceso) y el rol en
-  // la base (que puede quitarlo pero nunca darlo). Ver la nota de
-  // `routes/equipo.ts`.
-  //
-  // Mientras llega `/api/profesional/yo` se usa solo el token: en el caso
-  // normal coinciden, y esperar dejaría el menú vacío en cada carga. Al
-  // llegar, si discrepan, la vista se corrige sola.
-  //
-  // Esto solo decide QUÉ se pinta. Quien manda es el 403 del servidor,
-  // que no depende de nada que el navegador pueda alterar.
+  /*
+   * ── Quién es administrador, y por qué no es una sola condición ──────
+   *
+   * Ser administrador exige las DOS cosas, igual que en la API: el rol en
+   * el token de Keycloak (que es quien CONCEDE el acceso) y el rol en la
+   * ficha de profesional (que puede QUITARLO, nunca darlo). Ver la nota de
+   * `routes/equipo.ts`.
+   *
+   * **Lo que no es un «no»: que el perfil no se haya podido leer.** Antes
+   * esto decía `cargado ? (yo?.esAdmin ?? false) : enToken`, y ese
+   * `?? false` convertía «no hubo respuesta» en «no eres administrador».
+   * `/api/profesional/yo` devuelve 404 cuando ningún `profesional` casa
+   * con el `sub` del token, que es exactamente lo que pasa cuando el
+   * `keycloak_user_id` de la base y el usuario de Keycloak se separan —el
+   * caso real que apagó Clínica, Equipo y Marca para los tres
+   * profesionales de la base a la vez.
+   *
+   * Así que la base quita el rol solo cuando la base CONTESTA. Si no
+   * contesta, manda el token, que es quien concede.
+   *
+   * El operador de plataforma cuenta como administrador de la clínica en
+   * la que tiene ficha: las cuatro secciones son suyas por definición.
+   *
+   * Esto solo decide QUÉ se pinta. Quien manda es el 403 del servidor, que
+   * no depende de nada que el navegador pueda alterar, y las rutas de
+   * administración explican qué falta con `SinPermisoAdmin` en vez de
+   * rebotar a Pacientes.
+   */
   const enToken = perfil?.roles.includes(ROL_ADMIN_CLINICA) ?? false
-  const esAdmin = cargadoYo ? (yo?.esAdmin ?? false) : enToken
   const esSuperAdmin = perfil?.roles.includes(ROL_SUPER_ADMIN) ?? false
+  const esAdmin = esSuperAdmin || (yo !== null ? yo.esAdmin : enToken)
 
   /**
    * El operador de plataforma SIN clínica no pasa por el Shell ni por
@@ -265,6 +282,18 @@ function Contenido() {
               )
             }
           />
+          {/*
+            Atajos de primer nivel para las tres secciones de
+            administración. El destino canónico sigue siendo `/ajustes/*`
+            —es lo que pinta el menú, lo que reconoce `seccionDe` y lo que
+            hay en los enlaces ya repartidos por la aplicación—, pero
+            `/clinica`, `/equipo` y `/marca` son las URL que uno teclea, y
+            caer en Pacientes al teclearlas era indistinguible de una ruta
+            mal configurada.
+          */}
+          <Route path="/clinica" element={<Navigate to="/ajustes/clinica" replace />} />
+          <Route path="/equipo" element={<Navigate to="/ajustes/equipo" replace />} />
+          <Route path="/marca" element={<Navigate to="/ajustes/marca" replace />} />
           {/* Panel de plataforma: solo accesible con el rol super_admin. */}
           <Route
             path="/superadmin/clinicas"

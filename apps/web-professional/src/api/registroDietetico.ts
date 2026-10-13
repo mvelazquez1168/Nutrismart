@@ -13,13 +13,24 @@ export interface FilaDietetica {
   ai_grasas_g: number | null
   ai_calculado_en: string | null
   /**
-   * kcal corregido a mano por el profesional — R41.
+   * Los cuatro valores corregidos a mano por el profesional — R41, R50.
    *
-   * null = vale el de la IA. El efectivo es `kcal_manual ?? ai_kcal`;
-   * `ai_kcal` nunca se pisa, así que vaciar el campo deshace la
+   * null = vale el calculado. El efectivo es `X_manual ?? ai_X`; los
+   * `ai_*` nunca se pisan, así que vaciar la casilla deshace la
    * corrección.
    */
   kcal_manual: number | null
+  cho_g_manual: number | null
+  prot_g_manual: number | null
+  grasas_g_manual: number | null
+  /**
+   * Los alimentos del texto que NO están en la lista de intercambios — R48.
+   *
+   * null = nunca se analizó. Lista vacía = se analizó y se encontró todo.
+   * Con contenido, la fila lleva el aviso: esos valores no salen de la
+   * lista y hay que escribirlos a mano.
+   */
+  ai_no_encontrado: string[] | null
 }
 
 export interface RegistroDietetico {
@@ -36,8 +47,11 @@ export interface FilaEnvio {
   tiempo_comida: string
   hora: string | null
   alimentos_consumidos: string | null
-  /** La corrección de kcal sí viaja: es del profesional, no de la IA. */
+  /** Las cuatro correcciones sí viajan: son del profesional, no de la IA. */
   kcal_manual: number | null
+  cho_g_manual: number | null
+  prot_g_manual: number | null
+  grasas_g_manual: number | null
 }
 
 function base(pacienteId: string, consultaId: string, tipo: TipoRegistro): string {

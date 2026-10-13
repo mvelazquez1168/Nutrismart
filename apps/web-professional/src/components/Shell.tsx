@@ -14,41 +14,49 @@ import { NotificacionesCampana } from './notificaciones/NotificacionesCampana'
 interface ItemNav {
   clave: string
   etiqueta: string
-  /** Ruta destino; solo las secciones construidas la tienen. */
-  ruta?: string
+  /**
+   * Ruta destino. **Obligatoria**: en este menú no hay ítems apagados.
+   *
+   * O la sección existe y el ítem navega, o el ítem no se pinta. Un ítem
+   * sin destino es indistinguible de uno roto —el usuario hace clic, no
+   * pasa nada, y no tiene forma de saber si es que no existe o es que
+   * falla—, y los tres de administración estuvieron así.
+   */
+  ruta: string
 }
 
 /**
- * Dashboard y Configuración solo llevan a algún sitio si quien mira es
- * administrador de la clínica. Para un nutricionista siguen apagadas,
- * como las secciones que aún no existen: mostrarle un enlace que la
- * API va a rechazar con 403 sería prometer algo que no puede hacer.
+ * El menú de la barra lateral.
  *
- * esSuperAdmin añade una sección de plataforma al final: solo visible
- * para el super-admin de NutriSmart, nunca para los profesionales.
+ * ── Nada apagado ────────────────────────────────────────────────────
+ *
+ * Las secciones de administración (Dashboard, Clínica, Equipo, Marca) se
+ * AÑADEN cuando quien mira es administrador, y se omiten cuando no. Antes
+ * se añadían siempre y se les quitaba la `ruta`, lo que las dejaba como
+ * cuatro ítems grises que no llevaban a ningún sitio: un nutricionista no
+ * sabía si le faltaba permiso o si la pantalla no existía, y un admin cuyo
+ * perfil no se pudo cargar las veía igual de muertas.
  *
  * ── Quién decide si eres administrador ──────────────────────────────
  *
  * `esAdmin` llega por PROP, desde quien monta las rutas. No se calcula
- * aquí, y el motivo es un defecto que estuvo en la aplicación:
- *
- * este archivo lo sacaba del rol en el token (`perfil.roles`), mientras
- * el router lo sacaba de `/api/profesional/yo`, donde `esAdmin` es el rol
- * en el token **y** el rol en la ficha de profesional. En cuanto las dos
- * respuestas diferían —y difieren siempre que el perfil no se puede
- * cargar—, el menú pintaba Clínica, Equipo y Marca como enlaces vivos y
- * el router los devolvía a Pacientes. Visto desde la pantalla: tres
- * ítems del menú que muestran la lista de pacientes.
+ * aquí, y el motivo es un defecto que estuvo en la aplicación: este
+ * archivo lo sacaba del rol en el token mientras el router lo sacaba de
+ * `/api/profesional/yo`. En cuanto las dos respuestas diferían, el menú y
+ * las rutas se contradecían.
  *
  * Una sola fuente, y la del router, que es la que manda.
  */
 function navDe(esAdmin: boolean, esSuperAdmin: boolean): ItemNav[] {
-  const items: ItemNav[] = [
-    {
-      clave: 'dashboard',
-      etiqueta: 'Dashboard',
-      ...(esAdmin ? { ruta: '/admin/dashboard' } : {}),
-    },
+  const items: ItemNav[] = []
+
+  // El Dashboard de clínica es una vista agregada de toda la clínica: es
+  // del administrador, y por eso abre el menú solo para él.
+  if (esAdmin) {
+    items.push({ clave: 'dashboard', etiqueta: 'Dashboard', ruta: '/admin/dashboard' })
+  }
+
+  items.push(
     { clave: 'pacientes', etiqueta: 'Pacientes', ruta: '/pacientes' },
     { clave: 'agenda', etiqueta: 'Agenda', ruta: '/agenda' },
     // El seguimiento continuo es de cualquier profesional: cada uno ve
@@ -56,37 +64,29 @@ function navDe(esAdmin: boolean, esSuperAdmin: boolean): ItemNav[] {
     { clave: 'monitoreo', etiqueta: 'Monitoreo', ruta: '/monitoreo' },
     { clave: 'mensajeria', etiqueta: 'Mensajería', ruta: '/mensajeria' },
     { clave: 'recursos', etiqueta: 'Biblioteca', ruta: '/recursos' },
-    // «Laboratorios» se quito del menu: era un item apagado, sin ruta ni
-    // pantalla, y la gestion de laboratorios del paciente ya vive dentro
-    // de la valoracion (pestana «Laboratorios» de la consulta) y de la
-    // ficha. Un item de primer nivel apagado prometia una seccion que no
-    // existe y nunca se penso como tal.
+    // «Laboratorios» y «Estrategias» se quitaron del menu: eran items
+    // apagados, sin ruta ni pantalla. La gestion de laboratorios del
+    // paciente ya vive dentro de la valoracion (pestana «Laboratorios» de
+    // la consulta) y de la ficha.
     //
-    // Solo se quito de AQUI: las rutas, las pantallas y los endpoints de
-    // laboratorios siguen intactos.
-    { clave: 'estrategias', etiqueta: 'Estrategias' },
+    // Solo se quitaron de AQUI: las rutas, las pantallas y los endpoints
+    // de laboratorios siguen intactos.
+    //
     // Las reglas son de la clínica, no del administrador: cualquier
     // profesional necesita ver por qué llegan los avisos que recibe.
     { clave: 'reglas', etiqueta: 'Reglas automáticas', ruta: '/notificaciones/reglas' },
-    // Tres entradas de administración, no una: los datos de la clínica,
-    // el equipo y la identidad visual son cosas distintas y se buscan
-    // por separado.
-    {
-      clave: 'clinica',
-      etiqueta: 'Clínica',
-      ...(esAdmin ? { ruta: '/ajustes/clinica' } : {}),
-    },
-    {
-      clave: 'equipo',
-      etiqueta: 'Equipo',
-      ...(esAdmin ? { ruta: '/ajustes/equipo' } : {}),
-    },
-    {
-      clave: 'configuracion',
-      etiqueta: 'Marca',
-      ...(esAdmin ? { ruta: '/ajustes/marca' } : {}),
-    },
-  ]
+  )
+
+  // Tres entradas de administración, no una: los datos de la clínica, el
+  // equipo y la identidad visual son cosas distintas y se buscan por
+  // separado.
+  if (esAdmin) {
+    items.push(
+      { clave: 'clinica', etiqueta: 'Clínica', ruta: '/ajustes/clinica' },
+      { clave: 'equipo', etiqueta: 'Equipo', ruta: '/ajustes/equipo' },
+      { clave: 'configuracion', etiqueta: 'Marca', ruta: '/ajustes/marca' },
+    )
+  }
 
   // El panel de plataforma solo aparece para el super_admin: ningún
   // profesional de clínica, ni siquiera el administrador, lo ve.
@@ -181,33 +181,16 @@ export function Shell({
                 )
               }
 
-              if (item.ruta) {
-                return (
-                  <li key={item.clave}>
-                    <Link
-                      to={item.ruta}
-                      className="flex items-center gap-2 rounded-md px-3 py-2 pl-4 text-sm text-white/80 transition-colors hover:bg-white/10 hover:text-white"
-                    >
-                      {item.etiqueta}
-                    </Link>
-                  </li>
-                )
-              }
-
+              // Sin rama de «apagado»: todo item que llega aqui tiene
+              // ruta. Ver la nota de `ItemNav.ruta`.
               return (
                 <li key={item.clave}>
-                  {/*
-                    Las secciones que aun no existen se muestran apagadas y
-                    sin enlace, en vez de llevar a una pantalla vacia. Es
-                    mas honesto que fingir navegacion.
-                  */}
-                  <span
-                    aria-disabled="true"
-                    title="Disponible en una rebanada posterior"
-                    className="flex cursor-not-allowed items-center gap-2 rounded-md px-3 py-2 pl-4 text-sm text-white/50"
+                  <Link
+                    to={item.ruta}
+                    className="flex items-center gap-2 rounded-md px-3 py-2 pl-4 text-sm text-white/80 transition-colors hover:bg-white/10 hover:text-white"
                   >
                     {item.etiqueta}
-                  </span>
+                  </Link>
                 </li>
               )
             })}

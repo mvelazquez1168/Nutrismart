@@ -48,15 +48,26 @@ interface Fila {
   ai_grasas_g: number | null
   ai_calculado_en: string | null
   /**
-   * kcal corregido a mano por el profesional — R41.
+   * Los cuatro valores corregidos a mano por el profesional — R41, R50.
    *
-   * Vive APARTE de `ai_kcal` en vez de pisarlo: así se puede volver
-   * atrás. Vaciar el campo devuelve el número de la IA, que sigue
+   * Viven APARTE de los `ai_*` en vez de pisarlos: así se puede volver
+   * atrás. Vaciar una casilla devuelve el número calculado, que sigue
    * intacto, y se ve cuánto se corrigió respecto a lo estimado.
    *
-   * null = vale el de la IA. La cuenta efectiva es `kcal_manual ?? ai_kcal`.
+   * null = vale el calculado. La cuenta efectiva la hace `efectivos`.
+   *
+   * **Los tres macros se corrigen desde R50, y antes no.** El motivo que
+   * había para dejarlos fijos —«corregirlos uno a uno sin recalcular el
+   * conjunto daría un reparto que no cuadra»— se cae cuando el alimento
+   * no está en la lista de intercambios: ahí no hay ningún reparto que
+   * respetar, hay cuatro casillas vacías y un profesional que sabe lo que
+   * comió el paciente. Que las kcal se pudieran escribir y los gramos no
+   * dejaba la fila a medias.
    */
   kcal_manual: number | null
+  cho_g_manual: number | null
+  prot_g_manual: number | null
+  grasas_g_manual: number | null
   /**
    * Los alimentos que el texto nombraba y que NO estan en la lista de
    * intercambios — R48.
@@ -75,6 +86,24 @@ const HORA_RE = /^\d{2}:\d{2}$/
 /** Tope de sensatez para el kcal escrito a mano. Un tiempo de comida, no un día. */
 const KCAL_MAX = 20_000
 
+/** Tope para los gramos de un macro en un tiempo de comida. */
+const GRAMOS_MAX = 2_000
+
+/**
+ * Un valor corregido a mano, saneado.
+ *
+ * Fuera de rango se descarta **en silencio** y la casilla vuelve al valor
+ * calculado: rechazar el guardado entero por un dígito de más perdería el
+ * texto que el profesional acaba de escribir, que es lo irreemplazable de
+ * esta pantalla.
+ */
+function manualDe(bruto: unknown, tope: number): number | null {
+  if (bruto === null || bruto === undefined || bruto === '') return null
+  const n = Number(bruto)
+  if (!Number.isFinite(n) || n < 0 || n > tope) return null
+  return Math.round(n * 10) / 10
+}
+
 function filaVacia(clave: string): Fila {
   return {
     tiempo_comida: clave,
@@ -86,28 +115,46 @@ function filaVacia(clave: string): Fila {
     ai_grasas_g: null,
     ai_calculado_en: null,
     kcal_manual: null,
+    cho_g_manual: null,
+    prot_g_manual: null,
+    grasas_g_manual: null,
     ai_no_encontrado: null,
+  }
+}
+
+/**
+ * Los cuatro valores que VALEN para una fila.
+ *
+ * La corrección del profesional manda sobre lo calculado, y lo calculado
+ * no se pisa nunca: vaciar la casilla devuelve el número de la lista de
+ * intercambios.
+ */
+function efectivos(f: Fila) {
+  return {
+    kcal: f.kcal_manual ?? f.ai_kcal,
+    cho_g: f.cho_g_manual ?? f.ai_cho_g,
+    prot_g: f.prot_g_manual ?? f.ai_prot_g,
+    grasas_g: f.grasas_g_manual ?? f.ai_grasas_g,
   }
 }
 
 /**
  * Totales del día.
  *
- * Las kcal cuentan la corrección del profesional cuando la hay: el total
- * tiene que ser el mismo número que se ve sumado en la columna, o la
- * tabla y su pie dicen cosas distintas. Los macros son los de la IA —no
- * hay corrección manual para ellos— y por eso una fila con solo kcal a
- * mano suma calorías y no suma gramos.
+ * **Los cuatro se suman por separado, y cada uno cuenta su corrección.**
+ * Antes la fila entera se descartaba si no tenía kcal, de modo que unos
+ * gramos escritos a mano sin kcal no sumaban en ningún sitio. Ahora cada
+ * columna suma lo suyo: el pie de la tabla tiene que dar el mismo número
+ * que da sumar la columna a mano, o la tabla y su pie se contradicen.
  */
 function totales(filas: Fila[]) {
   const t = { total_kcal: 0, total_cho_g: 0, total_prot_g: 0, total_grasas_g: 0 }
   for (const f of filas) {
-    const kcal = f.kcal_manual ?? f.ai_kcal
-    if (kcal === null) continue
-    t.total_kcal += kcal
-    t.total_cho_g += f.ai_cho_g ?? 0
-    t.total_prot_g += f.ai_prot_g ?? 0
-    t.total_grasas_g += f.ai_grasas_g ?? 0
+    const e = efectivos(f)
+    t.total_kcal += e.kcal ?? 0
+    t.total_cho_g += e.cho_g ?? 0
+    t.total_prot_g += e.prot_g ?? 0
+    t.total_grasas_g += e.grasas_g ?? 0
   }
   const r = (n: number) => Math.round(n * 100) / 100
   return {
@@ -292,10 +339,15 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
           ? (body['observaciones'] as string).trim()
           : null
 
-      const entrantes = new Map<
-        string,
-        { hora: string | null; alimentos: string | null; kcalManual: number | null }
-      >()
+      interface Entrante {
+        hora: string | null
+        alimentos: string | null
+        kcalManual: number | null
+        choManual: number | null
+        protManual: number | null
+        grasasManual: number | null
+      }
+      const entrantes = new Map<string, Entrante>()
       if (Array.isArray(body['filas'])) {
         for (const cruda of body['filas'] as unknown[]) {
           const o = (cruda ?? {}) as Record<string, unknown>
@@ -307,20 +359,14 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
             typeof o['alimentos_consumidos'] === 'string' && o['alimentos_consumidos'].trim() !== ''
               ? (o['alimentos_consumidos'] as string).trim()
               : null
-          // Fuera de rango se descarta en silencio y la fila vuelve al
-          // valor de la IA: rechazar el guardado entero por un dígito de
-          // más perdería el texto que se acaba de escribir.
-          const kcalBruto = Number(o['kcal_manual'])
-          const kcalManual =
-            o['kcal_manual'] === null ||
-            o['kcal_manual'] === undefined ||
-            o['kcal_manual'] === '' ||
-            !Number.isFinite(kcalBruto) ||
-            kcalBruto < 0 ||
-            kcalBruto > KCAL_MAX
-              ? null
-              : Math.round(kcalBruto * 10) / 10
-          entrantes.set(tc, { hora, alimentos, kcalManual })
+          entrantes.set(tc, {
+            hora,
+            alimentos,
+            kcalManual: manualDe(o['kcal_manual'], KCAL_MAX),
+            choManual: manualDe(o['cho_g_manual'], GRAMOS_MAX),
+            protManual: manualDe(o['prot_g_manual'], GRAMOS_MAX),
+            grasasManual: manualDe(o['grasas_g_manual'], GRAMOS_MAX),
+          })
         }
       }
 
@@ -349,15 +395,35 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
           // de valer. Conservarlo mostraria un aviso sobre un alimento que ya
           // no esta escrito.
           ai_no_encontrado: conservaIa ? (previa!.ai_no_encontrado ?? null) : null,
-          // La corrección manual es sobre un texto concreto: si el texto
-          // cambia deja de valer, aunque no hubiera análisis de IA que
-          // invalidar. Lo que no cambió conserva lo que mande el cliente,
-          // o lo de antes si esta fila no venía en el cuerpo.
-          kcal_manual: textoCambio
-            ? null
-            : entra
-              ? entra.kcalManual
-              : (previa?.kcal_manual ?? null),
+          /*
+           * **Lo que manda el cliente vale, incluso si el texto cambió.**
+           *
+           * Antes esto era `textoCambio ? null : …`, y anulaba también las
+           * correcciones que venían EN LA MISMA peticion que el texto
+           * nuevo. Es el caso normal: el profesional escribe el alimento,
+           * escribe sus cuatro valores porque no está en la lista de
+           * intercambios, pulsa Guardar — y los cuatro se perdían. Las
+           * correcciones del cuerpo son sobre el texto del cuerpo; llegan
+           * juntas y describen lo mismo.
+           *
+           * `textoCambio` sigue anulando lo que venía de ANTES cuando esta
+           * fila no viaja en el cuerpo: eso sí es una corrección sobre un
+           * texto que ya no está escrito. Y cuando la fila sí viaja, quien
+           * borra las casillas al cambiar el texto es la pantalla, donde
+           * se ve: ver `editar` en TablaDietetica.tsx.
+           */
+          kcal_manual: entra ? entra.kcalManual : textoCambio ? null : (previa?.kcal_manual ?? null),
+          cho_g_manual: entra ? entra.choManual : textoCambio ? null : (previa?.cho_g_manual ?? null),
+          prot_g_manual: entra
+            ? entra.protManual
+            : textoCambio
+              ? null
+              : (previa?.prot_g_manual ?? null),
+          grasas_g_manual: entra
+            ? entra.grasasManual
+            : textoCambio
+              ? null
+              : (previa?.grasas_g_manual ?? null),
         }
       })
 
@@ -494,12 +560,26 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
        * **Si no se encontro NINGUNO, no se escribe un cero.**
        *
        * Un total de cero con el texto escrito se lee como «estos alimentos no
-       * aportan nada», que es falso. Se devuelve 200 con la bandera y sin
-       * tocar la fila: el profesional ve el aviso y escribe los valores.
+       * aportan nada», que es falso. Los cuatro valores se quedan en null y el
+       * profesional los escribe a mano.
+       *
+       * Lo que SI se guarda es el aviso. Antes la bandera solo viajaba en esta
+       * respuesta: el profesional veia el ⚠, recargaba la consulta y el aviso
+       * habia desaparecido, dejando cuatro casillas vacias sin explicacion. Se
+       * persiste `ai_no_encontrado` con `ai_calculado_en` —y los macros en
+       * null—, que es la combinacion que dice «esto ya se analizo y no dio
+       * numeros». El boton sigue ofreciendo «Analizar IA» porque `ai_kcal`
+       * sigue en null, y la cache no se envenena por lo mismo.
        */
       if (encontrados.length === 0) {
+        const soloAviso = reg.filas.map((f) =>
+          f.tiempo_comida === tc
+            ? { ...f, ai_calculado_en: new Date().toISOString(), ai_no_encontrado: noEncontrados }
+            : f,
+        )
+        await guardar(ctx.consultaId, ctx.tenantId, ctx.tipo, reg.observaciones, soloAviso)
         return reply.send({
-          ...respuesta(reg),
+          ...respuesta(await leerRegistro(ctx.consultaId, ctx.tenantId, ctx.tipo)),
           no_encontrado: true,
           alimentos_no_encontrados: noEncontrados,
           alimentos_reconocidos: [],

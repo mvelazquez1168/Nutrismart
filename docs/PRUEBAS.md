@@ -4941,3 +4941,158 @@ El runner envuelve cada migración en una transacción; `psql -f` **no**. Ejecut
 
 ### Vite y las dependencias nuevas
 Añadir un paquete con el servidor levantado exige reiniciarlo: Vite pre-empaqueta dependencias al arrancar. Avisa con *"Re-optimizing dependencies because lockfile has changed"*.
+
+---
+
+# Keycloak: el realm de desarrollo se puede perder entero
+
+## Por qué se pierde
+
+El contenedor `nutrismart-keycloak` corre **sin volumen y sin `KC_DB`**: usa la base H2 embebida, que vive en la capa de escritura del propio contenedor.
+
+```
+docker inspect nutrismart-keycloak --format '{{range .Mounts}}{{.Destination}}{{end}}'   # vacío
+```
+
+Quitar o recrear ese contenedor —`docker rm`, un `compose up --force-recreate` que lo alcance, un `docker system prune`— se lleva el realm, los clientes, los roles y **todos los usuarios con sus contraseñas**. Keycloak no exporta hashes, así que las contraseñas no se recuperan de ningún sitio: se reponen.
+
+> **Es deuda de infraestructura conocida, no un accidente.** Lo correcto es darle un volumen o apuntarlo a Postgres y meterlo en el compose. Mientras no esté, el realm es desechable y la reposición tiene que ser un comando, no una tarde de clics.
+
+## Cómo saber que pasó
+
+El síntoma no apunta a Keycloak. Apunta al menú:
+
+| Qué se ve | Qué está pasando |
+|---|---|
+| Clínica, Equipo y Marca grises o llevando a Pacientes | `/api/profesional/yo` devuelve **404** |
+| `/api/profesional/yo` → 404 para los tres profesionales a la vez | ningún `keycloak_user_id` de la base casa con el `sub` del token |
+
+El `sub` es el id del usuario en Keycloak. Al recrear el realm, los usuarios nuevos reciben ids nuevos y la base sigue guardando los viejos. La consulta de `/api/profesional/yo` filtra por `keycloak_user_id = $sub`, no encuentra fila, y responde 404.
+
+## Reponerlo
+
+```
+python infra/keycloak/restaurar-realm-dev.py
+```
+
+Borra el realm vacío, importa `infra/keycloak/realm-nutrismart.json` (realm, clientes, roles, mappers) y **siembra los usuarios con los UUID que la base ya espera**:
+
+| Usuario | Rol | `tenant_id` | id fijado |
+|---|---|---|---|
+| `ana@vida.cr` | `admin_clinica` | Vida `1111…` | `364f4a9b-8f08-4599-a848-68ade4fa48e0` |
+| `luis@vida.cr` | `nutricionista` | Vida `1111…` | `7c81373c-436e-4180-944e-19f74f0b10da` |
+| `carlos@control.cr` | `admin_clinica` | Control `9999…` | lo asigna Keycloak |
+| `maria.fernandez@ejemplo.cr` | `paciente` | Vida `1111…` | `abee20e8-d79b-433b-8b87-8ac97c983830` |
+| `operador@nutrismart.cr` | `super_admin` | **ninguno** | lo asigna Keycloak |
+
+Contraseña de todos: `nutrismart-dev`. Admin de la consola de Keycloak: `admin` / `admin`.
+
+> **Los ids van escritos a mano en el script, y es la razón de que exista.** El import COMPLETO de un realm respeta el `id` de cada usuario; crear el usuario por el Admin API después, no. Si el id cambia hay que ir a actualizar `profesional.keycloak_user_id` y `paciente.keycloak_user_id` a mano, que es el paso que se olvida.
+
+> **El operador de plataforma no lleva `tenant_id`**, y es deliberado: no pertenece a ninguna clínica. Ver la nota de la Rebanada de superadmin.
+
+Al usuario cuyo id lo asigna Keycloak hay que enlazarlo después:
+
+```sql
+update profesional set keycloak_user_id = '<el id nuevo>'
+ where correo = 'carlos@control.cr';
+```
+
+## Dos cosas que hay que hacer DESPUÉS, o parece que no funcionó
+
+### 1 · El alias de red `keycloak`
+
+La API llama a `http://keycloak:8080` (`KEYCLOAK_JWKS_URL` y `KEYCLOAK_ADMIN_URL` del compose). El contenedor se llama `nutrismart-keycloak`, así que ese nombre **no resuelve** sin un alias, y la API rechaza todo con 401:
+
+```
+{"motivo":"getaddrinfo ENOTFOUND keycloak","msg":"auth: peticion rechazada"}
+```
+
+El 401 engaña: el token es correcto —`iss`, `aud: nutrismart-api` y `sub` están bien—, lo que falla es que la API no puede bajar el JWKS para comprobar la firma. Se arregla sin recrear el contenedor, que es importante porque recrearlo borraría el realm otra vez:
+
+```
+docker network disconnect infra_nutrismart nutrismart-keycloak
+docker network connect --alias keycloak infra_nutrismart nutrismart-keycloak
+```
+
+**El alias no sobrevive a recrear el contenedor de Keycloak.** Si vuelve el `ENOTFOUND`, es esto.
+
+### 2 · Reiniciar la API
+
+El realm nuevo firma con claves nuevas y la API tiene el JWKS en caché:
+
+```
+docker restart nutrismart-api
+```
+
+## Comprobación
+
+```
+python infra/keycloak/restaurar-realm-dev.py   # imprime los ids, los roles y un login de prueba
+```
+
+Y luego, con el token de cada uno:
+
+| Usuario | `/api/profesional/yo` | `/api/admin/clinica` | Menú |
+|---|---|---|---|
+| `ana@vida.cr` | 200, `esAdmin: true` | 200 | Dashboard, Clínica, Equipo y Marca **visibles** |
+| `luis@vida.cr` | 200, `esAdmin: false` | 403 `solo_administradores` | los cuatro **no aparecen** |
+
+Si `ana@vida.cr` da `esAdmin: false`, el `sub` y el `keycloak_user_id` no casan: el script no corrió o corrió antes de la última recreación del realm.
+
+---
+
+# Consumo Usual: las cuatro casillas se corrigen a mano — R50
+
+## Qué cambió
+
+Hasta ahora solo las **kcal** se podían corregir; CHO, proteínas y grasas eran etiquetas fijas con el número de la lista de intercambios. El argumento era bueno —corregir un macro sin recalcular el conjunto da un reparto que no cuadra— y se cae en el único caso que importa: **cuando el alimento no está en la lista**. Ahí no hay reparto que respetar, hay cuatro casillas vacías y un profesional que sabe lo que comió el paciente.
+
+| Antes | Ahora |
+|---|---|
+| `kcal_manual` | `kcal_manual`, `cho_g_manual`, `prot_g_manual`, `grasas_g_manual` |
+| Macros en `<span>` | Cuatro `<input type="number">` por fila |
+| Pie en prosa | Fila de totales alineada con sus columnas |
+| El ⚠ se perdía al recargar | `ai_no_encontrado` se persiste también cuando no se encuentra **ninguno** |
+
+> **Los cuatro viven en el jsonb `filas`, no en columnas.** El pedido decía «agregar columnas `*_override` a la tabla», y no cabe: `registro_dietetico` guarda **un registro por (consulta, tipo)** con los seis tiempos de comida dentro de `filas`. Una columna sería un valor por registro, no por tiempo de comida. Van como claves de cada elemento del array, junto a `kcal_manual`, que ya estaba ahí haciendo exactamente esto. Se llaman `*_manual` y no `*_override` por lo mismo: no se añade una segunda convención al lado de la que ya existe.
+
+## Las dos reglas que gobiernan una corrección
+
+**1. Lo calculado nunca se pisa.** `ai_cho_g` y `cho_g_manual` son campos distintos. Vaciar la casilla devuelve el número de la lista, intacto. Y si lo escrito **coincide** con lo calculado no se guarda como corrección: guardarlo congelaría la casilla y un re-análisis posterior no se vería.
+
+**2. Las correcciones son sobre un texto concreto.** Cambiar «Alimentos consumidos» vacía las cuatro casillas, **y se ve vaciarse en la pantalla**. Antes el servidor hacía ese borrado solo y en silencio, lo que dejaba al profesional mirando unos valores que el guardado iba a tirar.
+
+> **El fallo que esto destapó.** La condición del servidor era `textoCambio ? null : …`, y anulaba también las correcciones que llegaban **en la misma petición** que el texto nuevo. Es el caso normal —escribir el alimento, escribir sus cuatro valores porque no está en la lista, pulsar Guardar— y los cuatro se perdían sin decir nada. Ahora lo que manda el cliente vale; `textoCambio` solo anula lo que venía de antes cuando la fila no viaja en el cuerpo.
+
+## Comprobación
+
+Requiere la API en el 4001 y `ana@vida.cr` con sesión (ver la sección de Keycloak si da 401).
+
+| Paso | Qué comprobar |
+|---|---|
+| Escribir «pizza con piña» en Desayuno → Analizar IA | Aparece **⚠ 1 alimento sin equivalencia**; las cuatro casillas quedan vacías, **no en cero** |
+| Recargar la consulta | **El ⚠ sigue ahí.** Es lo que antes se perdía |
+| Escribir 62,5 / 18 / 24 / 540 en las cuatro casillas | Las cuatro con borde de color; la fila de totales se mueve en cada pulsación |
+| Guardar y recargar | Los cuatro valores siguen, y los totales también |
+| Poner CHO 30 y Prot 10 en Almuerzo, dejar kcal vacío | **Los gramos suman en los totales.** Con la regla vieja la fila entera se descartaba por no tener kcal |
+| Analizar un tiempo con alimentos de la lista, luego corregir las kcal | La casilla corregida lleva borde de color y su `title` dice el valor calculado |
+| Cambiar el texto de los alimentos de esa fila | Las cuatro casillas se vacían a la vista |
+| Escribir 999999 en CHO y guardar | Se descarta esa casilla, **el resto de la fila se guarda** y el texto no se pierde |
+| «Resumen y macros» de la misma consulta | Da los MISMOS cuatro números que el pie de la tabla |
+
+El último es el que se olvida: `TotalesRecordatorio` sumaba con la regla vieja —solo filas con kcal, y los gramos siempre de la IA— y habría contradicho al pie de la tabla de la que sale.
+
+### Lo que ya estaba hecho y no se volvió a hacer
+
+El pedido pedía además la migración de las listas de intercambio, el endpoint de cálculo y quitar `SISTEMA_ADA` del prompt. Las tres estaban:
+
+| Pedido | Dónde está |
+|---|---|
+| Migración `048_listas_intercambio.sql` | existe; 11 grupos y **252** equivalencias sembradas |
+| Endpoint de cálculo | `POST …/registro-dietetico/:tipo/calcular` |
+| `SISTEMA_ADA` fuera del prompt | hecho; el modelo solo parte el texto en alimentos |
+
+> **El endpoint no lleva `clinica_id` en la query, y es a propósito.** El pedido lo describía como `?alimento=&cantidad=&clinica_id=`. La clínica sale del token, nunca del cliente: un `clinica_id` que viaja en la URL es un parámetro que el navegador puede cambiar, y con él se leerían las equivalencias de otra clínica. Va colgado de la consulta (`/api/pacientes/:id/consultas/:consultaId/…`) para que el mismo chequeo de acceso del resto del expediente aplique aquí.
+
+`npm run verificar:intercambios -w @nutrismart/api` comprueba la aritmética contra el documento: once casos, incluido el `no_encontrado` de «pizza con piña».

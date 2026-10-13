@@ -7,8 +7,10 @@
  * por su lado: son dos fotos distintas —lo de ayer y lo de siempre— y
  * mezclarlas daría un día que el paciente no ha tenido.
  *
- * Las kcal cuentan la corrección manual del profesional cuando la hay,
- * igual que el pie de cada tabla. Los gramos son los de la IA.
+ * Los cuatro valores cuentan la corrección manual del profesional cuando
+ * la hay, igual que el pie de cada tabla —y tiene que ser igual, o el
+ * «Resumen y macros» y la tabla de la que sale dan números distintos para
+ * la misma consulta.
  *
  * ── Por qué no rellena los macros declarados solo ───────────────────
  *
@@ -37,18 +39,28 @@ const FUENTES: { tipo: TipoRegistro; etiqueta: string }[] = [
   { tipo: 'consumo_usual', etiqueta: 'Consumo Usual' },
 ]
 
-/** null si no hay ni una fila con kcal: no es un cero, es que no se ha calculado. */
+/**
+ * null si no hay ni un valor en ninguna fila: no es un cero, es que no se
+ * ha calculado.
+ *
+ * Los cuatro se suman POR SEPARADO, cada uno con su corrección. Antes la
+ * fila entera se descartaba si no tenía kcal, así que unos gramos
+ * escritos a mano sin kcal no sumaban en ningún sitio.
+ */
 function sumar(filas: FilaDietetica[]): Suma | null {
   const t: Suma = { kcal: 0, cho: 0, prot: 0, grasas: 0 }
   let hayAlgo = false
-  for (const f of filas) {
-    const kcal = f.kcal_manual ?? f.ai_kcal
-    if (kcal === null) continue
+  const sumando = (manual: number | null, calculado: number | null): number => {
+    const v = manual ?? calculado
+    if (v === null) return 0
     hayAlgo = true
-    t.kcal += kcal
-    t.cho += f.ai_cho_g ?? 0
-    t.prot += f.ai_prot_g ?? 0
-    t.grasas += f.ai_grasas_g ?? 0
+    return v
+  }
+  for (const f of filas) {
+    t.kcal += sumando(f.kcal_manual, f.ai_kcal)
+    t.cho += sumando(f.cho_g_manual, f.ai_cho_g)
+    t.prot += sumando(f.prot_g_manual, f.ai_prot_g)
+    t.grasas += sumando(f.grasas_g_manual, f.ai_grasas_g)
   }
   return hayAlgo ? t : null
 }

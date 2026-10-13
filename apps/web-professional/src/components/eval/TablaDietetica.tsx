@@ -5,10 +5,21 @@
  * el Recordatorio de 24 horas y para el Consumo Usual: misma estructura y
  * lógica, distinto `tipo`, encabezado y textos guía.
  *
- * Cada fila puede mandarse a Claude (método ADA) para estimar
- * kcal/CHO/Prot/Grasas. El análisis lee el texto YA guardado en el
- * servidor, así que «Analizar» guarda primero y analiza después; el
- * servidor cachea el resultado mientras el texto no cambie.
+ * Cada fila puede mandarse a analizar: el modelo solo parte el texto en
+ * alimentos con su cantidad, y los gramos y las kilocalorías salen de la
+ * lista de intercambios ADA en la base (migración 048). El resultado se
+ * cachea en la fila para no repetir la llamada mientras el texto no
+ * cambie; el análisis lee el texto YA guardado en el servidor, así que
+ * «Analizar» guarda primero y analiza después.
+ *
+ * ── Las cuatro casillas son del profesional ─────────────────────────
+ *
+ * CHO, proteínas, grasas y kcal se calculan y se pueden CORREGIR, las
+ * cuatro. Antes solo las kcal, con el argumento de que corregir un macro
+ * sin recalcular el conjunto da un reparto que no cuadra; el argumento se
+ * cae cuando el alimento no está en la lista de intercambios, que es
+ * justo cuando hace falta escribir a mano. Lo calculado nunca se pisa:
+ * vaciar una casilla devuelve el número de la lista.
  *
  * Autónomo: carga y guarda su propio registro (`registro_dietetico`),
  * aparte del guardado de frecuencia/macros del contenedor dietético.
@@ -47,28 +58,73 @@ const TEXTOS: Record<TipoRegistro, { titulo: string; subtitulo: string; placehol
   },
 }
 
+/* ------------------------------------------------------------------ */
+/* Las cuatro columnas numéricas                                       */
+/* ------------------------------------------------------------------ */
+
+type Campo = 'cho' | 'prot' | 'grasas' | 'kcal'
+
+/**
+ * Los mismos topes que valida el servidor (`registroDietetico.ts`).
+ *
+ * Aquí no son la defensa —el servidor descarta lo que se pase— sino lo
+ * que hace que el `type="number"` avise antes de guardar.
+ */
+const GRAMOS_MAX = 2_000
+const KCAL_MAX = 20_000
+
+const CAMPOS = [
+  { campo: 'cho', etiqueta: 'CHO (g)', tope: GRAMOS_MAX, paso: '0.1', dec: 1 },
+  { campo: 'prot', etiqueta: 'Prot (g)', tope: GRAMOS_MAX, paso: '0.1', dec: 1 },
+  { campo: 'grasas', etiqueta: 'Grasas (g)', tope: GRAMOS_MAX, paso: '0.1', dec: 1 },
+  { campo: 'kcal', etiqueta: 'kcal', tope: KCAL_MAX, paso: '1', dec: 0 },
+] as const
+
+/** El valor que calculó el servidor desde la lista de intercambios. */
+function calculado(f: FilaDietetica, c: Campo): number | null {
+  switch (c) {
+    case 'cho':
+      return f.ai_cho_g
+    case 'prot':
+      return f.ai_prot_g
+    case 'grasas':
+      return f.ai_grasas_g
+    case 'kcal':
+      return f.ai_kcal
+  }
+}
+
+/** La corrección que ya estaba guardada en el servidor. */
+function manualGuardado(f: FilaDietetica, c: Campo): number | null {
+  switch (c) {
+    case 'cho':
+      return f.cho_g_manual
+    case 'prot':
+      return f.prot_g_manual
+    case 'grasas':
+      return f.grasas_g_manual
+    case 'kcal':
+      return f.kcal_manual
+  }
+}
+
 interface FilaLocal extends FilaDietetica {
   analizando: boolean
   /**
-   * Lo que hay escrito en la casilla de kcal, como texto.
+   * Lo que hay escrito en cada casilla, como TEXTO.
    *
-   * Un `number | null` no sirve mientras se teclea: borrar el campo pasa
+   * Un `number | null` no sirve mientras se teclea: borrar la casilla pasa
    * por la cadena vacía, y convertirla a 0 pondría un cero donde el
    * profesional está a medio escribir.
    */
-  kcalTexto: string
-}
-
-/** kcal que vale para esta fila: la corrección manual manda sobre la IA. */
-function kcalEfectivo(f: { ai_kcal: number | null; kcal_manual: number | null }): number | null {
-  return f.kcal_manual ?? f.ai_kcal
+  textos: Record<Campo, string>
 }
 
 function aLocal(filas: FilaDietetica[]): FilaLocal[] {
   const porTiempo = new Map(filas.map((f) => [f.tiempo_comida, f]))
   return TIEMPOS.map((t) => {
     const f = porTiempo.get(t.clave)
-    const base = {
+    const base: FilaDietetica = {
       tiempo_comida: t.clave,
       hora: f?.hora ?? null,
       alimentos_consumidos: f?.alimentos_consumidos ?? null,
@@ -78,44 +134,61 @@ function aLocal(filas: FilaDietetica[]): FilaLocal[] {
       ai_grasas_g: f?.ai_grasas_g ?? null,
       ai_calculado_en: f?.ai_calculado_en ?? null,
       kcal_manual: f?.kcal_manual ?? null,
+      cho_g_manual: f?.cho_g_manual ?? null,
+      prot_g_manual: f?.prot_g_manual ?? null,
+      grasas_g_manual: f?.grasas_g_manual ?? null,
+      ai_no_encontrado: f?.ai_no_encontrado ?? null,
     }
-    const kcal = kcalEfectivo(base)
-    return {
-      ...base,
-      analizando: false,
-      kcalTexto: kcal === null ? '' : String(kcal),
+    // La casilla arranca con lo que VALE: la corrección si la hay, y si no
+    // lo calculado. Es el número que el profesional va a corregir.
+    const textos = {} as Record<Campo, string>
+    for (const c of CAMPOS) {
+      const v = manualGuardado(base, c.campo) ?? calculado(base, c.campo)
+      textos[c.campo] = v === null ? '' : String(v)
     }
+    return { ...base, analizando: false, textos }
   })
 }
 
 /**
- * La corrección que hay que persistir para una fila.
+ * La corrección que hay que persistir para una casilla.
  *
- * Vacío = sin corrección. Y si lo escrito coincide con lo que dijo la
- * IA, tampoco es corrección: guardarlo como tal congelaría la casilla y
- * un re-análisis posterior no se vería. Solo lo que difiere se guarda.
+ * Vacío = sin corrección. Y si lo escrito coincide con lo calculado,
+ * tampoco es corrección: guardarlo como tal congelaría la casilla y un
+ * re-análisis posterior no se vería. Solo lo que difiere se guarda.
  */
-function kcalManualDe(f: FilaLocal): number | null {
-  const t = f.kcalTexto.trim()
+function manualDe(f: FilaLocal, c: Campo): number | null {
+  const t = (f.textos[c] ?? '').trim()
   if (t === '') return null
   const n = Number(t)
   if (!Number.isFinite(n) || n < 0) return null
-  if (f.ai_kcal !== null && n === f.ai_kcal) return null
+  const calc = calculado(f, c)
+  if (calc !== null && n === calc) return null
   return n
 }
 
-/** Totales del día calculados aquí: el pie tiene que seguir al teclado. */
-function totalesLocales(filas: FilaLocal[]) {
-  const t = { kcal: 0, cho: 0, prot: 0, grasas: 0 }
+/** El valor que vale para una casilla: la corrección manda. */
+function efectivo(f: FilaLocal, c: Campo): number | null {
+  return manualDe(f, c) ?? calculado(f, c)
+}
+
+/**
+ * Totales del día, calculados aquí: el pie tiene que seguir al teclado.
+ *
+ * Los cuatro se suman POR SEPARADO. Antes la fila entera se descartaba si
+ * no tenía kcal, de modo que unos gramos escritos a mano sin kcal no
+ * sumaban en ningún sitio.
+ */
+function totalesLocales(filas: FilaLocal[]): Record<Campo, number> | null {
+  const t: Record<Campo, number> = { cho: 0, prot: 0, grasas: 0, kcal: 0 }
   let hayAlgo = false
   for (const f of filas) {
-    const kcal = kcalManualDe(f) ?? f.ai_kcal
-    if (kcal === null) continue
-    hayAlgo = true
-    t.kcal += kcal
-    t.cho += f.ai_cho_g ?? 0
-    t.prot += f.ai_prot_g ?? 0
-    t.grasas += f.ai_grasas_g ?? 0
+    for (const c of CAMPOS) {
+      const v = efectivo(f, c.campo)
+      if (v === null) continue
+      hayAlgo = true
+      t[c.campo] += v
+    }
   }
   return hayAlgo ? t : null
 }
@@ -123,13 +196,8 @@ function totalesLocales(filas: FilaLocal[]) {
 const CTRL =
   'w-full rounded-md border border-border bg-surface p-1.5 text-sm text-ink outline-none placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-[color:var(--ring)]'
 
-function Badge({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="rounded-pill bg-surface-2 px-2 py-0.5 text-xs font-medium tabular-nums text-ink">
-      {children}
-    </span>
-  )
-}
+const NUM =
+  'w-full rounded-md border bg-surface px-1.5 py-1 text-right text-sm tabular-nums text-ink outline-none placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-[color:var(--ring)]'
 
 function envio(filas: FilaLocal[]) {
   return {
@@ -137,7 +205,10 @@ function envio(filas: FilaLocal[]) {
       tiempo_comida: f.tiempo_comida,
       hora: f.hora,
       alimentos_consumidos: f.alimentos_consumidos,
-      kcal_manual: kcalManualDe(f),
+      kcal_manual: manualDe(f, 'kcal'),
+      cho_g_manual: manualDe(f, 'cho'),
+      prot_g_manual: manualDe(f, 'prot'),
+      grasas_g_manual: manualDe(f, 'grasas'),
     })),
   }
 }
@@ -176,7 +247,7 @@ export function TablaDietetica({
 
   // Los totales del servidor no se guardan en estado: se recalculan aquí
   // a partir de las filas (`totalesLocales`). Si dependieran del guardado,
-  // corregir un kcal dejaría el pie de la tabla contradiciendo a la
+  // corregir un valor dejaría el pie de la tabla contradiciendo a la
   // columna que se acaba de editar.
   function hidratar(r: RegistroDietetico) {
     setFilas(aLocal(r.filas))
@@ -216,22 +287,41 @@ export function TablaDietetica({
     return () => ctrl.abort()
   }, [pacienteId, consultaId, tipo])
 
+  /**
+   * Hora y alimentos.
+   *
+   * **Cambiar el texto de los alimentos vacía las cuatro casillas**, y se
+   * ve vaciarse. Los números describían lo que estaba escrito antes: unos
+   * gramos de «gallo pinto con huevo» no son los de lo que se escriba
+   * encima. El servidor hacía este borrado por su cuenta y en silencio, lo
+   * que dejaba al profesional mirando unos valores que el guardado iba a
+   * tirar.
+   *
+   * La hora no toca nada: cambiarla no cambia lo que se comió.
+   */
   function editar(i: number, campo: 'hora' | 'alimentos_consumidos', valor: string) {
     setFilas((prev) =>
-      prev.map((f, j) => (i === j ? { ...f, [campo]: valor === '' ? null : valor } : f)),
+      prev.map((f, j) => {
+        if (i !== j) return f
+        const nuevo = { ...f, [campo]: valor === '' ? null : valor }
+        if (campo !== 'alimentos_consumidos') return nuevo
+        if ((f.alimentos_consumidos ?? '') === valor) return nuevo
+        return { ...nuevo, textos: { cho: '', prot: '', grasas: '', kcal: '' } }
+      }),
     )
     setOk(false)
   }
 
   /**
-   * kcal a mano.
+   * Una casilla numérica a mano.
    *
-   * Solo toca el texto de la casilla; qué se guarda lo decide
-   * `kcalManualDe` al enviar. Vaciarla devuelve el número de la IA, que
-   * nunca se pisó.
+   * Solo toca el texto; qué se guarda lo decide `manualDe` al enviar.
+   * Vaciarla devuelve el número calculado, que nunca se pisó.
    */
-  function editarKcal(i: number, valor: string) {
-    setFilas((prev) => prev.map((f, j) => (i === j ? { ...f, kcalTexto: valor } : f)))
+  function editarNumero(i: number, campo: Campo, valor: string) {
+    setFilas((prev) =>
+      prev.map((f, j) => (i === j ? { ...f, textos: { ...f.textos, [campo]: valor } } : f)),
+    )
     setOk(false)
   }
 
@@ -245,7 +335,7 @@ export function TablaDietetica({
       filas: filas.map((f) => ({
         hora: f.hora,
         alimentos: f.alimentos_consumidos,
-        kcal: f.kcalTexto,
+        textos: f.textos,
       })),
     },
     guardar: () => guardar(),
@@ -313,9 +403,14 @@ export function TablaDietetica({
         <table className="min-w-full border-collapse text-sm">
           <thead>
             <tr className="border-b border-border bg-surface-2 text-left">
-              <th className="w-40 px-3 py-2 font-semibold text-ink">Tiempo de comida</th>
-              <th className="w-28 px-3 py-2 font-semibold text-ink">Hora</th>
-              <th className="px-3 py-2 font-semibold text-ink">Alimentos consumidos</th>
+              <th className="w-36 px-3 py-2 font-semibold text-ink">Tiempo de comida</th>
+              <th className="w-24 px-3 py-2 font-semibold text-ink">Hora</th>
+              <th className="min-w-56 px-3 py-2 font-semibold text-ink">Alimentos consumidos</th>
+              {CAMPOS.map((c) => (
+                <th key={c.campo} className="w-24 px-2 py-2 text-right font-semibold text-ink">
+                  {c.etiqueta}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -323,11 +418,13 @@ export function TablaDietetica({
               const tiempo = TIEMPOS[i]
               const tieneTexto = (f.alimentos_consumidos ?? '').trim() !== ''
               const analizado = f.ai_kcal !== null
-              const corregido = analizado && kcalManualDe(f) !== null
+              const noEncontrados = f.ai_no_encontrado ?? []
               return (
                 <tr key={f.tiempo_comida} className="border-b border-border align-top">
-                  <td className="w-40 bg-surface-2 px-3 py-2 font-medium text-ink">{tiempo?.etiqueta}</td>
-                  <td className="w-28 px-2 py-2">
+                  <td className="w-36 bg-surface-2 px-3 py-2 font-medium text-ink">
+                    {tiempo?.etiqueta}
+                  </td>
+                  <td className="w-24 px-2 py-2">
                     <input
                       type="time"
                       value={f.hora ?? ''}
@@ -348,44 +445,31 @@ export function TablaDietetica({
                       className={`${CTRL} resize-y`}
                     />
 
-                    {/* Macros de la IA + kcal, que sí se puede corregir */}
-                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                      {/* kcal es un campo, no una etiqueta: el método ADA
-                          estima, y quien firma la valoración tiene que
-                          poder decir otra cosa. Los macros siguen siendo
-                          de la IA: corregirlos uno a uno sin recalcular
-                          el conjunto daría un reparto que no cuadra. */}
-                      <label className="flex items-center gap-1 text-xs text-muted">
-                        <input
-                          type="number"
-                          min={0}
-                          step="1"
-                          inputMode="numeric"
-                          value={f.kcalTexto}
-                          disabled={readOnly}
-                          onChange={(e) => editarKcal(i, e.target.value)}
-                          placeholder="—"
-                          aria-label={`Kilocalorías de ${tiempo?.etiqueta}`}
-                          className={`w-20 rounded-md border bg-surface px-1.5 py-0.5 text-xs tabular-nums text-ink outline-none placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-[color:var(--ring)] ${
-                            corregido ? 'border-primary font-semibold' : 'border-border'
-                          }`}
-                        />
-                        kcal
-                      </label>
-                      {corregido && (
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      {/*
+                        El aviso de que estos números NO salen de la lista.
+                        Se pinta desde `ai_no_encontrado`, que el servidor
+                        persiste en la fila: un aviso que se pierde al
+                        recargar es un aviso que solo ve quien estaba
+                        mirando (R48).
+                      */}
+                      {noEncontrados.length > 0 && (
                         <span
-                          className="text-xs text-muted"
-                          title={`La IA estimó ${f.ai_kcal?.toFixed(0)} kcal`}
+                          className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium"
+                          style={{
+                            color: 'var(--status-alert)',
+                            backgroundColor:
+                              'color-mix(in srgb, var(--status-alert) 12%, transparent)',
+                          }}
+                          title={`No encontrado en la lista de intercambios: ${noEncontrados.join(
+                            ', ',
+                          )}. Ajusta los valores manualmente.`}
                         >
-                          (IA: {f.ai_kcal?.toFixed(0)})
+                          <span aria-hidden="true">⚠</span>
+                          {noEncontrados.length === 1
+                            ? '1 alimento sin equivalencia'
+                            : `${noEncontrados.length} alimentos sin equivalencia`}
                         </span>
-                      )}
-                      {analizado && (
-                        <>
-                          <Badge>CHO {f.ai_cho_g?.toFixed(1)} g</Badge>
-                          <Badge>Prot {f.ai_prot_g?.toFixed(1)} g</Badge>
-                          <Badge>Grasas {f.ai_grasas_g?.toFixed(1)} g</Badge>
-                        </>
                       )}
                       {!readOnly && tieneTexto && (
                         <button
@@ -414,26 +498,65 @@ export function TablaDietetica({
                       </p>
                     )}
                   </td>
+
+                  {/*
+                    Las cuatro casillas. El borde de color marca la que
+                    está corregida, y el `title` dice contra qué: sin eso,
+                    un número escrito a mano y uno calculado se ven igual.
+                  */}
+                  {CAMPOS.map((c) => {
+                    const calc = calculado(f, c.campo)
+                    const corregido = manualDe(f, c.campo) !== null
+                    return (
+                      <td key={c.campo} className="w-24 px-2 py-2">
+                        <input
+                          type="number"
+                          min={0}
+                          max={c.tope}
+                          step={c.paso}
+                          inputMode="decimal"
+                          value={f.textos[c.campo]}
+                          disabled={readOnly}
+                          onChange={(e) => editarNumero(i, c.campo, e.target.value)}
+                          placeholder="—"
+                          aria-label={`${c.etiqueta} de ${tiempo?.etiqueta}`}
+                          title={
+                            corregido && calc !== null
+                              ? `Corregido a mano. Calculado desde la lista: ${calc.toFixed(c.dec)}`
+                              : corregido
+                                ? 'Escrito a mano: este alimento no está en la lista de intercambios'
+                                : undefined
+                          }
+                          className={`${NUM} ${
+                            corregido ? 'border-primary font-semibold' : 'border-border'
+                          }`}
+                        />
+                      </td>
+                    )
+                  })}
                 </tr>
               )
             })}
           </tbody>
           <tfoot>
-            <tr className="bg-surface-2">
-              <td colSpan={3} className="px-3 py-2">
-                <p className="text-sm font-semibold text-ink">
-                  Consumo calórico aproximado:{' '}
-                  <span className="tabular-nums text-primary">
-                    {suma !== null ? suma.kcal.toFixed(0) : '—'}
-                  </span>{' '}
-                  kcal/día
-                </p>
-                <p className="text-xs text-muted">
-                  CHO: {suma !== null ? suma.cho.toFixed(1) : '—'} g · Prot:{' '}
-                  {suma !== null ? suma.prot.toFixed(1) : '—'} g · Grasas:{' '}
-                  {suma !== null ? suma.grasas.toFixed(1) : '—'} g
-                </p>
+            {/*
+              La fila de totales, alineada con sus columnas y recalculada
+              en cada pulsación. Antes esto era un párrafo al pie con los
+              cuatro números en prosa: no se podía seguir la columna hasta
+              su suma, que es justo lo que se hace al revisar una tabla.
+            */}
+            <tr className="border-t-2 border-border bg-surface-2 font-semibold">
+              <td colSpan={3} className="px-3 py-2 text-right text-ink">
+                Totales del día
               </td>
+              {CAMPOS.map((c) => (
+                <td
+                  key={c.campo}
+                  className="w-24 px-2 py-2 text-right tabular-nums text-primary"
+                >
+                  {suma !== null ? suma[c.campo].toFixed(c.dec) : '—'}
+                </td>
+              ))}
             </tr>
           </tfoot>
         </table>
