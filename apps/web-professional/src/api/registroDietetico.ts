@@ -76,13 +76,66 @@ export function guardarRegistroDietetico(
   return apiPut<RegistroDietetico>(base(pacienteId, consultaId, tipo), body)
 }
 
+/**
+ * El detalle por alimento que devuelve `/calcular`, al lado del registro.
+ *
+ * La tabla no lo usa todavía —hidrata con las seis filas, como antes— y viaja
+ * en el tipo porque es lo que hace auditable un total: cuántas porciones salió
+ * cada alimento y contra qué fila de la lista de intercambios.
+ */
+export interface AlimentoCalculado {
+  descripcion_usuario: string
+  cantidad_usuario: number | null
+  unidad_usuario: string | null
+  encontrado: boolean
+  no_encontrado: boolean
+  alimento_encontrado: string | null
+  porcion_referencia: string | null
+  grupos: { grupo: string; porciones_por_referencia: number }[]
+  porciones: number | null
+  porciones_supuestas: boolean
+  nota: string | null
+  /** El mensaje de «no se pudo calcular» de ese alimento, o null. */
+  error: string | null
+  cho_g: number | null
+  chon_g: number | null
+  grasa_g: number | null
+  kcal: number | null
+}
+
+export interface RegistroCalculado extends RegistroDietetico {
+  alimentos?: AlimentoCalculado[]
+  /** Presente solo si NINGÚN alimento dio números. */
+  error?: string | null
+  no_encontrado?: boolean
+  alimentos_no_encontrados?: string[]
+}
+
+/**
+ * Calcula un tiempo de comida — `/calcular`, el camino de dos fases.
+ *
+ * ## Por qué ya no es `/analizar-ia`
+ *
+ * `/analizar-ia` buscaba cada alimento por parecido de letras en Postgres:
+ * encontraba «arroz blanco» escribiendo «arroz blanco» y **no** lo encontraba
+ * escribiendo «arroz cocido». `/calcular` hace el emparejamiento con el modelo
+ * —que sí sabe que son el mismo alimento— y la aritmética en el servidor,
+ * contra la tabla de intercambios.
+ *
+ * Se manda `tiempo_comida` y no el texto: el servidor analiza el texto
+ * **guardado**, que es por lo que quien llama guarda primero. Mandar el texto
+ * desde aquí permitiría calcular una cosa y tener otra escrita en la fila.
+ *
+ * La respuesta sigue siendo el registro completo —las seis filas—, así que la
+ * tabla hidrata igual que antes.
+ */
 export function analizarFilaDietetica(
   pacienteId: string,
   consultaId: string,
   tipo: TipoRegistro,
   tiempoComida: string,
-): Promise<RegistroDietetico> {
-  return apiPost<RegistroDietetico>(`${base(pacienteId, consultaId, tipo)}/analizar-ia`, {
+): Promise<RegistroCalculado> {
+  return apiPost<RegistroCalculado>(`${base(pacienteId, consultaId, tipo)}/calcular`, {
     tiempo_comida: tiempoComida,
   })
 }

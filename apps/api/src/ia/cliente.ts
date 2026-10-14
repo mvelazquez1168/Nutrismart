@@ -49,7 +49,19 @@ export interface ResultadoIA {
 interface Contexto {
   clinicaId: string
   profesionalId: string | null
-  funcion: 'interpretacion_labs' | 'nota_soap' | 'analisis_dietetico' | 'resumen_clinico_plan'
+  funcion:
+    | 'interpretacion_labs'
+    | 'nota_soap'
+    | 'analisis_dietetico'
+    /**
+     * La fase 1 de `/calcular`: el modelo empareja el texto con una fila del
+     * catalogo de equivalencias y no calcula nada. Se anota aparte de
+     * `analisis_dietetico` porque es otra llamada, con otro prompt y otro
+     * tamano de entrada —lleva el catalogo—, y mezclarlas en el medidor
+     * esconderia cual de las dos consume.
+     */
+    | 'identificacion_dietetica'
+    | 'resumen_clinico_plan'
 }
 
 /**

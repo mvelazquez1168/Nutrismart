@@ -29,16 +29,42 @@ import {
 } from '../api/planes'
 import { Modal } from './Modal'
 
-/** Los siete bloques, en el orden del requerimiento. */
+/**
+ * Los siete bloques, en el orden del requerimiento.
+ *
+ * `soloSiTiene` marca los dos que **desaparecen cuando están vacíos** en vez
+ * de mostrar el encabezado con «Sin contenido para este bloque».
+ *
+ * No es una preferencia estética. Un encabezado «Recomendaciones» vacío es
+ * un hueco con forma de recomendación, y el expediente lo firma el
+ * profesional: lo que se lee ahí queda como algo que él dijo. La API ya no
+ * genera esos bloques sin contenido registrado (ver `limpiarBloquesCondicionales`
+ * en la API); esto cierra el otro lado, incluidos los resúmenes guardados
+ * antes del cambio, que pueden traer «No registrado» escrito.
+ *
+ * Los otros cinco sí muestran su hueco: ahí la ausencia describe la consulta
+ * —no hay laboratorios, no se registró justificación— y verla es útil.
+ */
 const BLOQUES = [
   { clave: 'objetivos', titulo: 'Objetivos' },
   { clave: 'observacionesClinicas', titulo: 'Observaciones clínicas' },
   { clave: 'justificacion', titulo: 'Justificación' },
   { clave: 'planAlimentario', titulo: 'Plan alimentario' },
   { clave: 'distribucionMacros', titulo: 'Distribución de macros' },
-  { clave: 'recomendaciones', titulo: 'Recomendaciones' },
-  { clave: 'tareas', titulo: 'Tareas' },
+  { clave: 'recomendaciones', titulo: 'Recomendaciones', soloSiTiene: true },
+  { clave: 'tareas', titulo: 'Tareas', soloSiTiene: true },
 ] as const
+
+/** `true` cuando el cuerpo está vacío o es el «No registrado» de la API. */
+function sinContenido(texto: string | null | undefined): boolean {
+  if (texto === null || texto === undefined) return true
+  const n = texto
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[.\s]/g, '')
+    .toLowerCase()
+  return n === '' || n === 'noregistrado'
+}
 
 /** 'AAAA-MM-DDTHH:MM:SSZ' → '12 de octubre de 2026, 14:35'. */
 function fechaHora(iso: string): string {
@@ -262,10 +288,15 @@ export function ResumenClinicoModal({
                 bloques se pasa de pantalla con facilidad.
               */}
               <div className="max-h-[60vh] space-y-5 overflow-y-auto pr-1">
-                {BLOQUES.map(({ clave, titulo }) => {
+                {BLOQUES.map((bloque) => {
+                  const { clave, titulo } = bloque
                   const texto = resumen.bloques[clave]
                   const esMacros = clave === 'distribucionMacros'
                   const tabla = esMacros && resumen.macros && resumen.macros.fuente !== 'ausente'
+
+                  // Recomendaciones y Tareas sin contenido: el bloque no
+                  // existe, no se muestra vacío.
+                  if ('soloSiTiene' in bloque && sinContenido(texto)) return null
 
                   return (
                     <section key={clave}>

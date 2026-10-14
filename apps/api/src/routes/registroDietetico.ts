@@ -22,7 +22,22 @@ import {
   resolverAlimento,
   sumarMacros,
   type AlimentoResuelto,
+  type GrupoIntercambio,
+  type Macros,
 } from '../dietetico/intercambios.js'
+import {
+  construirPromptIdentificacion,
+  leerCatalogo,
+  parsearIdentificacion,
+  type AlimentoIdentificado,
+  type EntradaCatalogo,
+} from '../dietetico/identificacion.js'
+import {
+  calcular,
+  cotejarReferencia,
+  MENSAJE_INCALCULABLE,
+  type Calculo,
+} from '../dietetico/calculo.js'
 
 /** Los seis tiempos fijos, en orden, con su etiqueta para el prompt. */
 const TIEMPOS = [
@@ -235,6 +250,153 @@ function estadoDeFalloIa(tipo: string): number {
   return tipo === 'tiempo_agotado' ? 504 : 503
 }
 
+/**
+ * Traduce un fallo de la fase de IA a su respuesta, con el motivo en el cuerpo.
+ *
+ * Lo comparten `/calcular` y `/analizar-ia` porque el profesional necesita la
+ * misma distincion en las dos: «esto se arregla esperando» contra «esto lo
+ * arregla quien administra el servidor» (R46). Lo que no es un fallo de la IA
+ * —un JSON que no se puede leer— sale como 502 y no como 503: el proveedor
+ * respondio, lo que vino mal es la respuesta.
+ */
+function responderFalloIa(
+  e: unknown,
+  request: { log?: { error?: (...a: unknown[]) => void } },
+  reply: import('fastify').FastifyReply,
+  etiqueta: string,
+) {
+  if (e instanceof IaNoDisponibleError) {
+    request.log?.error?.({ tipo: e.tipo }, `[${etiqueta}] IA no disponible`)
+    return reply.code(estadoDeFalloIa(e.tipo)).send({
+      error: e.tipo,
+      tipo: e.tipo,
+      message: MENSAJE_FALLO_IA[e.tipo] ?? FALLO_IA_GENERICO,
+    })
+  }
+  request.log?.error?.({ err: e }, `[${etiqueta}] respuesta no interpretable`)
+  return reply.code(502).send({
+    error: 'respuesta_invalida',
+    tipo: 'respuesta_invalida',
+    message:
+      'No se pudo interpretar la respuesta del modelo de análisis nutricional. Vuelve a intentarlo; si persiste, escribe las kcal a mano.',
+  })
+}
+
+/**
+ * El texto que va a la fase 1, venga en la forma nueva o en la anterior.
+ *
+ * Devuelve null cuando no hay nada que identificar. `alimento` + `cantidad` se
+ * unen en ese orden —«250 ml» + «leche descremada»— porque es como se escribe y
+ * como el modelo lo lee mejor.
+ */
+function textoAIdentificar(body: Record<string, unknown>): string | null {
+  const libre = typeof body['texto'] === 'string' ? body['texto'].trim() : ''
+  if (libre !== '') return libre
+
+  const alimento = typeof body['alimento'] === 'string' ? body['alimento'].trim() : ''
+  if (alimento === '') return null
+  const cantidad = typeof body['cantidad'] === 'string' ? body['cantidad'].trim() : ''
+  return cantidad === '' ? alimento : `${cantidad} de ${alimento}`
+}
+
+/** Un alimento identificado, con su fila de la base y su calculo. */
+interface Resuelto {
+  identificado: AlimentoIdentificado
+  entrada: EntradaCatalogo | null
+  calculo: Calculo | null
+}
+
+/**
+ * Pasa de la fase 1 a la fase 2: resuelve el indice a su fila y calcula.
+ *
+ * Un `equivalencia_id` que no esta en el catalogo se trata como no encontrado y
+ * se registra: significa que el modelo devolvio un numero que no se le dio, y
+ * eso hay que verlo en los registros aunque la respuesta al profesional sea la
+ * misma que si no hubiera encontrado nada.
+ */
+function resolver(
+  identificado: AlimentoIdentificado,
+  porIndice: Map<number, EntradaCatalogo>,
+  grupos: Map<string, GrupoIntercambio>,
+  request: { log?: { warn?: (...a: unknown[]) => void } },
+): Resuelto {
+  if (!identificado.encontrado || identificado.equivalencia_id === null) {
+    return { identificado, entrada: null, calculo: null }
+  }
+
+  const entrada = porIndice.get(identificado.equivalencia_id)
+  if (!entrada) {
+    request.log?.warn?.(
+      { equivalencia_id: identificado.equivalencia_id, alimento: identificado.descripcion_usuario },
+      '[calculo-dietetico] el modelo devolvio un numero de equivalencia que no existe',
+    )
+    return { identificado, entrada: null, calculo: null }
+  }
+
+  const divergencias = cotejarReferencia(identificado, entrada)
+  if (divergencias.length > 0) {
+    request.log?.warn?.(
+      { divergencias, alimento: identificado.descripcion_usuario },
+      '[calculo-dietetico] lo que el modelo dijo de la fila no coincide con la fila',
+    )
+  }
+
+  return { identificado, entrada, calculo: calcular(identificado, entrada, grupos) }
+}
+
+/**
+ * La forma que ve el frontend.
+ *
+ * Los campos de la equivalencia salen de `entrada` —la base— y no del objeto
+ * del modelo: lo que el modelo dijo ya se cotejo y se registro, y lo que viaja
+ * a la pantalla tiene que ser lo mismo que entro en la multiplicacion. Dos
+ * origenes distintos para el numero mostrado y el numero calculado es como se
+ * construye una pantalla que miente sin que nadie mienta.
+ */
+function aRespuesta(r: Resuelto) {
+  const { identificado: i, entrada, calculo } = r
+  const ok = calculo?.estado === 'ok' ? calculo : null
+  const fallo =
+    calculo !== null && (calculo.estado === 'unidades_incompatibles' || calculo.estado === 'porciones_absurdas' || calculo.estado === 'cantidad_invalida')
+
+  if (calculo?.estado === 'porciones_absurdas') {
+    // Se registra con el numero que se rechazo: es el dato que permite decidir
+    // si el tope de 15 esta bien puesto o esta rechazando calculos buenos.
+    console.warn(
+      '[calculo-dietetico] porciones rechazadas por absurdas: %s -> %d porciones de "%s" (%s)',
+      i.descripcion_usuario,
+      calculo.porciones,
+      entrada?.alimento,
+      entrada?.cantidadDescripcion,
+    )
+  }
+
+  return {
+    descripcion_usuario: i.descripcion_usuario,
+    cantidad_usuario: i.cantidad_usuario,
+    unidad_usuario: i.unidad_usuario,
+    encontrado: entrada !== null,
+    no_encontrado: entrada === null,
+    alimento_encontrado: entrada?.alimento ?? null,
+    equivalencia_id: entrada?.indice ?? null,
+    porcion_referencia: entrada?.cantidadDescripcion ?? null,
+    grupo: entrada?.subtipo ?? null,
+    grupos:
+      entrada?.porciones.map((p) => ({
+        grupo: p.grupo_id,
+        porciones_por_referencia: Number(p.cantidad_decimal),
+      })) ?? [],
+    porciones: ok?.porciones ?? null,
+    porciones_supuestas: ok?.porcionesSupuestas ?? false,
+    nota: i.nota,
+    error: fallo ? MENSAJE_INCALCULABLE : null,
+    cho_g: ok?.macros.cho_g ?? null,
+    chon_g: ok?.macros.chon_g ?? null,
+    grasa_g: ok?.macros.grasa_g ?? null,
+    kcal: ok?.macros.kcal ?? null,
+  }
+}
+
 function sinProfesional() {
   return { error: 'profesional_no_encontrado', message: 'Tu usuario no tiene un profesional asociado en esta clínica' }
 }
@@ -435,17 +597,66 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
 
   /* ---- POST /calcular ---- */
   /**
-   * **Un alimento con su cantidad, calculado desde la base. Sin modelo.**
+   * **Dos fases: el modelo identifica, el servidor calcula.**
    *
-   * Es el camino que el requerimiento describe: *«cuando el profesional
-   * registra un alimento y una cantidad»*. Un alimento y una cantidad no
-   * necesitan IA — necesitan la tabla. Asi que esta ruta no llama a Claude, no
-   * consume saldo y no puede fallar por el proveedor.
+   * ## Que problema resuelve partirlo en dos
    *
-   * Devuelve `no_encontrado: true` cuando el alimento no esta en la lista de
-   * intercambios, con los cuatro valores en cero y sin pretender que son un
-   * calculo: es la bandera que la pantalla convierte en el aviso al
-   * profesional.
+   * Antes esta ruta buscaba el alimento con trigramas en Postgres y no llamaba
+   * a ningun modelo. Encontraba «arroz blanco» escribiendo «arroz blanco», y no
+   * lo encontraba escribiendo «arroz cocido»: comparar cadenas no sabe que son
+   * el mismo alimento. Eso es exactamente lo que un modelo hace bien.
+   *
+   * Pero un modelo que encuentra el alimento tambien querra multiplicarlo, y
+   * entonces el numero sale de una cadena de texto y no se puede comprobar. De
+   * ahi las dos fases, y la frontera entre ellas:
+   *
+   *   FASE 1 (`dietetico/identificacion.ts`) — el modelo recibe el catalogo
+   *   numerado y devuelve QUE fila es y QUE cantidad escribio el profesional.
+   *   No ve los valores nutricionales de los grupos, asi que no puede
+   *   multiplicar nada aunque se lo propusiera.
+   *
+   *   FASE 2 (`dietetico/calculo.ts` + `dietetico/unidades.ts`) — el servidor
+   *   convierte las dos cantidades a una base comun, comprueba que se puedan
+   *   comparar, divide, y multiplica por las filas de `grupo_intercambio`.
+   *
+   * ## Lo que esta ruta ahora SI puede hacer y antes no
+   *
+   * Fallar por el proveedor de IA y consumir saldo. Se trata como en
+   * `/analizar-ia`: el motivo viaja en el cuerpo con su mensaje, y el
+   * profesional escribe los valores a mano. La regla de oro se mantiene —la
+   * falta de IA no bloquea el trabajo clinico—, pero conviene saber que esta
+   * ruta dejo de ser gratuita.
+   *
+   * ## Los tres finales posibles por alimento
+   *
+   *   `encontrado: false`     el catalogo no lo tiene. No se inventa un numero.
+   *   `error` con mensaje     se encontro, pero la cantidad escrita no se puede
+   *                           comparar con la unidad de la fila, o el resultado
+   *                           era absurdo. Ver `MENSAJE_INCALCULABLE`.
+   *   porciones y macros      el calculo, con `porciones_supuestas` cuando no
+   *                           habia cantidad que dividir.
+   *
+   * El `error` de nivel superior aparece cuando NINGUN alimento dio numeros: es
+   * el caso que el requerimiento pide devolver al frontend tal cual.
+   *
+   * ## Dos modos de llamada, y por que hay dos
+   *
+   *   **Modo fila** — el cuerpo trae `tiempo_comida`. Es el que usa la tabla de
+   *   Consumo Usual y Recordatorio 24 h. Lee el texto GUARDADO de esa fila,
+   *   calcula, **persiste** los `ai_*` y el aviso de lo no encontrado, y
+   *   devuelve el registro completo —las seis filas— mas el detalle por
+   *   alimento. Es la forma que reemplaza a `/analizar-ia` en la pantalla.
+   *
+   *   **Modo texto** — el cuerpo trae `texto` (o `alimento` + `cantidad`). No
+   *   toca la base: calcula y devuelve. Sirve para un calculo suelto, fuera de
+   *   una fila.
+   *
+   * El modo fila existe porque sin el la pantalla no puede usar esta ruta. Los
+   * `ai_*` los escribe **solo** el servidor —asi esta documentado arriba en
+   * `Fila`— de modo que un cliente que recibiera unos totales no tendria donde
+   * guardarlos: escribirlos como `*_manual` los marcaria como correcciones del
+   * profesional, que es precisamente lo que no son. Y sin persistir, el analisis
+   * se perderia al recargar la consulta, junto con el aviso de R48.
    */
   app.post<{ Params: { id: string; consultaId: string; tipo: string } }>(
     `${BASE}/calcular`,
@@ -455,31 +666,207 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
       if (!ctx) return
 
       const body = (request.body ?? {}) as Record<string, unknown>
-      const alimento = typeof body['alimento'] === 'string' ? body['alimento'].trim() : ''
-      if (alimento === '') {
-        return reply.code(400).send({ error: 'sin_alimento', message: 'Indica el alimento' })
+
+      const tc = body['tiempo_comida']
+      const modoFila = typeof tc === 'string' && CLAVES.includes(tc)
+
+      let texto: string | null
+      let reg: FilaRow | null = null
+
+      if (modoFila) {
+        reg = await leerRegistro(ctx.consultaId, ctx.tenantId, ctx.tipo)
+        const fila = reg?.filas.find((f) => f.tiempo_comida === tc)
+        texto = fila?.alimentos_consumidos ?? null
+        if (!reg || !fila || !texto) {
+          return reply.code(400).send({
+            error: 'sin_alimentos',
+            message: 'No hay alimentos consumidos para analizar en este tiempo de comida',
+          })
+        }
+        // Misma cache que `/analizar-ia`: el upsert borra los `ai_*` al cambiar
+        // el texto, asi que un `ai_calculado_en` presente significa vigente. Sin
+        // esto, cada pulsacion del boton paga el catalogo otra vez.
+        if (fila.ai_calculado_en !== null && fila.ai_kcal !== null) {
+          return reply.send(respuesta(reg))
+        }
+      } else {
+        /*
+         * `texto` es la forma libre: una frase con cantidad y alimento juntos,
+         * que es lo que el profesional escribe y lo que la fase 1 sabe partir.
+         * Se siguen aceptando `alimento` + `cantidad` por separado —la forma
+         * anterior— uniendolos, porque separados pierden justo lo que el modelo
+         * necesita para elegir bien: «250 ml» al lado de «leche descremada»
+         * dice que la fila buscada mide en volumen.
+         */
+        texto = textoAIdentificar(body)
+        if (texto === null) {
+          return reply.code(400).send({ error: 'sin_alimento', message: 'Indica el alimento' })
+        }
       }
-      const cantidad =
-        typeof body['cantidad'] === 'string' && body['cantidad'].trim() !== ''
-          ? body['cantidad'].trim()
-          : null
 
-      const r = await resolverAlimento(ctx.tenantId, alimento, cantidad)
+      const [catalogo, grupos] = await Promise.all([
+        leerCatalogo(ctx.tenantId),
+        leerGrupos(ctx.tenantId),
+      ])
+      if (catalogo.length === 0) {
+        return reply.code(503).send({
+          error: 'catalogo_vacio',
+          message:
+            'No hay equivalencias de intercambio cargadas en este servidor. Avisa a quien administra la instalación; puedes escribir los valores a mano mientras tanto.',
+        })
+      }
 
+      const porIndice = new Map(catalogo.map((e) => [e.indice, e]))
+      const ia = {
+        clinicaId: ctx.tenantId,
+        profesionalId: ctx.profesionalId,
+        funcion: 'identificacion_dietetica' as const,
+      }
+
+      let identificados: AlimentoIdentificado[]
+      try {
+        identificados = parsearIdentificacion(
+          await analizarConReintento(construirPromptIdentificacion(texto, catalogo), ia),
+        )
+      } catch (e) {
+        return responderFalloIa(e, request, reply, 'identificacion-dietetica')
+      }
+
+      let resueltos = identificados.map((i) => resolver(i, porIndice, grupos, request))
+
+      /*
+       * **La vuelta que pide el requerimiento.**
+       *
+       * Una unidad incomparable no es un fallo del profesional: es una fila mal
+       * elegida. «250 ml de leche» contra una fila que mide en «1 unidad» no se
+       * puede dividir, y lo que corresponde es volver a preguntar vetando esa
+       * fila, no rendirse. Se hace UNA vez y solo con los alimentos que
+       * fallaron: un reintento sin tope es una factura sin tope.
+       */
+      const aReintentar = resueltos.filter((r) => r.calculo?.estado === 'unidades_incompatibles')
+      if (aReintentar.length > 0) {
+        const excluidos = aReintentar.map((r) => r.identificado.equivalencia_id!).filter(Boolean)
+        const textoReintento = aReintentar.map((r) => r.identificado.descripcion_usuario).join(', ')
+        try {
+          const segundos = parsearIdentificacion(
+            await analizarConReintento(
+              construirPromptIdentificacion(textoReintento, catalogo, excluidos),
+              ia,
+            ),
+          )
+          // Se empareja por descripcion y, si el modelo la reescribio, por
+          // posicion. Un emparejamiento equivocado aqui pegaria el calculo de
+          // un alimento al nombre de otro, asi que lo que no se empareja se
+          // queda con su primer resultado — que ya esta marcado como fallido.
+          aReintentar.forEach((previo, i) => {
+            const segundo =
+              segundos.find(
+                (s) =>
+                  s.descripcion_usuario.toLowerCase() ===
+                  previo.identificado.descripcion_usuario.toLowerCase(),
+              ) ?? segundos[i]
+            if (!segundo) return
+            const nuevo = resolver(segundo, porIndice, grupos, request)
+            if (nuevo.calculo?.estado === 'ok') {
+              resueltos = resueltos.map((r) => (r === previo ? nuevo : r))
+            }
+          })
+        } catch (e) {
+          // El reintento es una mejora, no un requisito: si la IA se cae en la
+          // segunda vuelta se responde con lo de la primera, que ya trae su
+          // mensaje de «no se pudo calcular».
+          request.log?.warn?.({ err: e }, '[calculo-dietetico] el reintento de identificacion fallo')
+        }
+      }
+
+      const alimentos = resueltos.map(aRespuesta)
+      const conNumeros = resueltos.filter((r) => r.calculo?.estado === 'ok')
+      const total = sumarMacros(conNumeros.map((r) => (r.calculo as { macros: Macros }).macros))
+
+      /*
+       * **El mensaje de «no se pudo calcular» es para un fallo de CALCULO, no
+       * para un alimento que no esta en la lista.**
+       *
+       * Dice «la cantidad ingresada parece incompatible con la unidad del
+       * alimento encontrado» y pide especificar mejor. Para «pizza con piña»
+       * —que no esta en el catalogo— eso es un consejo equivocado: no hay
+       * ninguna cantidad que lo arregle, y el profesional se quedaria probando
+       * redacciones. Ese caso ya tiene su senal, que es `no_encontrado` y el ⚠
+       * de la fila.
+       *
+       * Asi que el error de nivel superior pide las dos cosas: que nada haya
+       * dado numeros Y que al menos un alimento se haya encontrado y fallado al
+       * calcularse. Con un alimento calculado y otro fallido no aparece: el
+       * total es parcial pero cierto, y el fallido lleva su propio `error`.
+       */
+      const huboFalloDeCalculo = alimentos.some((a) => a.error !== null)
+      const errorGeneral = conNumeros.length === 0 && huboFalloDeCalculo ? MENSAJE_INCALCULABLE : null
+
+      /*
+       * Lo que va al aviso ⚠ de la fila.
+       *
+       * Entran los dos finales que no dieron numeros: el alimento que el
+       * catalogo no tiene, y el que se encontro pero no se pudo calcular. Para
+       * el profesional los dos significan lo mismo —ese alimento no aporto al
+       * total, ajustalo a mano— y la fila tiene un solo aviso donde decirlo.
+       */
+      const sinNumeros = alimentos
+        .filter((a) => a.no_encontrado || a.error !== null)
+        .map((a) => a.descripcion_usuario)
+
+      if (!modoFila) {
+        return reply.send({
+          texto,
+          alimentos,
+          total,
+          error: errorGeneral,
+          no_encontrado: alimentos.some((a) => a.no_encontrado),
+        })
+      }
+
+      /*
+       * **Modo fila: se persiste, con la misma regla que `/analizar-ia`.**
+       *
+       * Si no se calculo NINGUN alimento, los cuatro `ai_*` se quedan en null y
+       * no se escribe un cero: un total de cero con el texto escrito se lee como
+       * «estos alimentos no aportan nada», que es falso. Lo que si se guarda es
+       * el aviso, junto con `ai_calculado_en` —la combinacion que dice «esto ya
+       * se analizo y no dio numeros»—; `ai_kcal` sigue en null, asi que el boton
+       * continua ofreciendo el calculo y la cache no se envenena.
+       */
+      const calculado = new Date().toISOString()
+      const filas = reg!.filas.map((f) =>
+        f.tiempo_comida !== tc
+          ? f
+          : conNumeros.length === 0
+            ? { ...f, ai_calculado_en: calculado, ai_no_encontrado: sinNumeros }
+            : {
+                ...f,
+                ai_kcal: total.kcal,
+                ai_cho_g: total.cho_g,
+                ai_prot_g: total.chon_g,
+                ai_grasas_g: total.grasa_g,
+                ai_calculado_en: calculado,
+                ai_no_encontrado: sinNumeros,
+              },
+      )
+
+      await guardar(ctx.consultaId, ctx.tenantId, ctx.tipo, reg!.observaciones, filas)
+      const actualizado = await leerRegistro(ctx.consultaId, ctx.tenantId, ctx.tipo)
+
+      /*
+       * La respuesta ES el registro —las seis filas y las observaciones—, con el
+       * detalle del calculo al lado. La pantalla hidrata su tabla con esto, igual
+       * que hacia con `/analizar-ia`: cambiar la forma obligaria a la tabla a
+       * saber de donde vino cada campo.
+       */
       return reply.send({
-        alimento: r.pedido,
-        cantidad: r.cantidadPedida,
-        no_encontrado: !r.encontrado,
-        equivalencia: r.equivalencia?.alimento ?? null,
-        porcion_referencia: r.equivalencia?.cantidadDescripcion ?? null,
-        grupo: r.equivalencia?.subtipo ?? null,
-        porciones: r.equivalencia?.porciones ?? [],
-        factor: r.factor,
-        factor_supuesto: r.factorSupuesto,
-        cho_g: r.macros.cho_g,
-        chon_g: r.macros.chon_g,
-        grasa_g: r.macros.grasa_g,
-        kcal: r.macros.kcal,
+        ...respuesta(actualizado),
+        alimentos,
+        total,
+        error: errorGeneral,
+        no_encontrado: sinNumeros.length > 0,
+        alimentos_no_encontrados: sinNumeros,
       })
     },
   )
@@ -523,21 +910,11 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
         })
         partidos = parsearAlimentos(salida)
       } catch (e) {
-        if (e instanceof IaNoDisponibleError) {
-          // El motivo viaja en el cuerpo y el mensaje lo nombra. Antes los
-          // cuatro fallos colapsaban en «no está disponible ahora mismo», y
-          // eso hacía indistinguible una clave que falta —que no se arregla
-          // esperando— de una saturación que sí (R46).
-          request.log?.error?.({ tipo: e.tipo }, '[analisis-dietetico] IA no disponible')
-          return reply.code(estadoDeFalloIa(e.tipo)).send({
-            error: e.tipo,
-            tipo: e.tipo,
-            message: MENSAJE_FALLO_IA[e.tipo] ?? FALLO_IA_GENERICO,
-          })
-        }
-        // JSON no parseable u otra cosa.
-        request.log?.error?.({ err: e }, '[analisis-dietetico] respuesta no interpretable')
-        return reply.code(502).send({ error: 'respuesta_invalida', tipo: 'respuesta_invalida', message: 'No se pudo interpretar la respuesta del modelo de análisis nutricional. Vuelve a intentarlo; si persiste, escribe las kcal a mano.' })
+        // El motivo viaja en el cuerpo y el mensaje lo nombra. Antes los cuatro
+        // fallos colapsaban en «no está disponible ahora mismo», y eso hacía
+        // indistinguible una clave que falta —que no se arregla esperando— de
+        // una saturación que sí (R46). Ver `responderFalloIa`.
+        return responderFalloIa(e, request, reply, 'analisis-dietetico')
       }
 
       /*
@@ -700,7 +1077,14 @@ export function parsearAlimentos(texto: string): { alimento: string; cantidad: s
 }
 
 /** Un reintento tras 2 s si el modelo devuelve límite de uso (429). */
-async function analizarConReintento(prompt: string, ctx: { clinicaId: string; profesionalId: string | null; funcion: 'analisis_dietetico' }): Promise<string> {
+async function analizarConReintento(
+  prompt: string,
+  ctx: {
+    clinicaId: string
+    profesionalId: string | null
+    funcion: 'analisis_dietetico' | 'identificacion_dietetica'
+  },
+): Promise<string> {
   try {
     return (await llamarClaude(prompt, ctx)).texto
   } catch (e) {

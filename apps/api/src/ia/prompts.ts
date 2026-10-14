@@ -306,6 +306,63 @@ function campoLista(etiqueta: string, items: string[]): string {
 }
 
 /**
+ * **Si estos dos bloques existen o no en el resumen.**
+ *
+ * Se exportan porque la decision se toma DOS veces y tiene que ser la misma:
+ * aqui para no pedirle el bloque al modelo, y en `generarResumen` para
+ * descartarlo si lo devuelve igual. Dos definiciones del mismo «esta vacio»
+ * terminan divergiendo, y la que falla es la que nadie mira.
+ *
+ * La segunda comprobacion no sobra. Un prompt es una peticion: pide bien, se
+ * cumple casi siempre, y «casi siempre» en el expediente clinico significa que
+ * algun paciente tiene firmada una recomendacion que su nutricionista no dio.
+ * La unica forma de que el bloque NO PUEDA aparecer es que el codigo lo borre.
+ */
+export function tieneFuentesRecomendaciones(datos: DatosResumenPlan): boolean {
+  return lista(datos.recomendaciones) !== null || (datos.suplementos ?? '').trim() !== ''
+}
+
+export function tieneFuentesTareas(datos: DatosResumenPlan): boolean {
+  return lista(datos.tareas) !== null || lista(datos.acuerdos) !== null
+}
+
+/**
+ * Deja en null los dos bloques condicionales que no debian existir.
+ *
+ * Tres cosas los vacian, y las tres pasan:
+ *
+ *   1. El profesional no registro fuentes -> el bloque no se pidio. Si el
+ *      modelo lo escribio de todas formas, lo que escribio es invencion por
+ *      definicion: no habia de donde copiarlo.
+ *   2. El modelo devolvio «${AUSENTE}» en el cuerpo, que es lo que el resto
+ *      del prompt le ensena a hacer con los huecos.
+ *   3. El cuerpo quedo vacio o es solo el encabezado.
+ */
+export function limpiarBloquesCondicionales(
+  bloques: BloquesResumen,
+  datos: DatosResumenPlan,
+): BloquesResumen {
+  const vacio = (v: string | null): boolean => {
+    if (v === null) return true
+    const n = v
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .replace(/[.\s]/g, '')
+      .toLowerCase()
+    return n === '' || n === AUSENTE.normalize('NFD').replace(/[.\s]/g, '').toLowerCase()
+  }
+
+  return {
+    ...bloques,
+    recomendaciones:
+      !tieneFuentesRecomendaciones(datos) || vacio(bloques.recomendaciones)
+        ? null
+        : bloques.recomendaciones,
+    tareas: !tieneFuentesTareas(datos) || vacio(bloques.tareas) ? null : bloques.tareas,
+  }
+}
+
+/**
  * **El modelo redacta seis bloques; el septimo lo calcula el servidor.**
  *
  * «Distribucion de macros» no se le pide al modelo y no se acepta si lo
@@ -318,12 +375,13 @@ function campoLista(etiqueta: string, items: string[]): string {
  * Es la misma linea que trazo la migracion 048 con las listas de
  * intercambio: la IA lee y redacta, la aritmetica la hace el codigo.
  *
- * ## El modelo transcribe; no interpreta
+ * ## El modelo formatea; no interpreta ni completa
  *
- * Aqui la IA **no es un asistente clinico**: es un transcriptor. Organiza y
- * redacta lo que el profesional escribio en el formulario, y nada mas.
- * Nada de inferir, de agregar razonamiento clinico, de completar con
- * recomendaciones de catalogo ni de poner tareas genericas.
+ * Aqui la IA **no es un asistente clinico ni un transcriptor con criterio**:
+ * es un sistema de formateo de texto. Organiza y redacta lo que el profesional
+ * escribio en el formulario, y nada mas. Nada de inferir, de agregar
+ * razonamiento clinico, de completar con recomendaciones de catalogo ni de
+ * poner tareas genericas.
  *
  * Que el contenido agregado sea clinicamente correcto no lo salva, y es el
  * punto que cuesta ver: el resumen se guarda en el expediente y lo firma el
@@ -331,10 +389,40 @@ function campoLista(etiqueta: string, items: string[]): string {
  * nutricionista nunca dio queda escrita como si la hubiera dado. La
  * trazabilidad clinica es por donde se rompe esto, no la exactitud.
  *
- * Por eso los campos vacios viajan marcados (ver `campo`) y el modelo
- * devuelve `No registrado` en el bloque: el hueco se dice, no se rellena,
- * igual que `textoDistribucion` hace con los macros ausentes y que
- * `sin_referencia` hace con los rangos de laboratorio.
+ * ## Tres cosas que cambiaron cuando «transcriptor» no alcanzo
+ *
+ * El encuadre anterior pedia transcribir y prohibia inventar, y el modelo
+ * seguia agregando frases de catalogo. Lo que se vio es que las prohibiciones
+ * abstractas no se pesan igual que los ejemplos concretos:
+ *
+ * 1. **El rol es mas duro.** «Sistema de formateo de texto, no asistente
+ *    clinico»: sin criterio clinico, sin conocimiento medico aplicable y sin
+ *    permiso para mejorar lo escrito. Un transcriptor todavia suena a alguien
+ *    que entiende lo que copia.
+ *
+ * 2. **La REGLA ABSOLUTA, en una sola frase y destacada.** El criterio es la
+ *    cita textual: si no se puede citar de los campos de entrada, no existe.
+ *
+ * 3. **Ejemplos nombrados de lo prohibido.** Las cuatro frases que de hecho
+ *    aparecian —hidratacion, medicacion en ayunas, actividad fisica, registro
+ *    de la ingesta— y los tres arranques que las introducen («Se recomienda»,
+ *    «Se sugiere», «Es importante»). Prohibir «agregar recomendaciones» deja
+ *    al modelo decidiendo que cuenta como agregar; nombrar la frase no.
+ *
+ * ## Los dos bloques que pueden no existir
+ *
+ * «Recomendaciones» y «Tareas» **solo se le piden si el profesional escribio
+ * contenido para ellos**. Si estan vacios, el bloque no se pide, sus fuentes no
+ * se envian y el resumen no lo trae: ni el encabezado, ni `No registrado`, ni
+ * una linea diciendo que falta.
+ *
+ * La razon es que son los dos bloques donde el relleno es invisible. Un
+ * encabezado «Recomendaciones» seguido de `No registrado` es una invitacion
+ * permanente a poner algo razonable ahi —y «algo razonable» en un bloque de
+ * recomendaciones es exactamente una recomendacion que nadie dio. Los otros
+ * cuatro bloques siguen viajando con sus campos vacios marcados (ver `campo`)
+ * y devolviendo `No registrado`: ahi el hueco describe la consulta, igual que
+ * en `textoDistribucion` con los macros ausentes.
  */
 export function promptResumenClinico(datos: DatosResumenPlan): string {
   const edad = datos.pacienteEdad !== null ? `${datos.pacienteEdad} anos` : 'edad no registrada'
@@ -347,6 +435,9 @@ export function promptResumenClinico(datos: DatosResumenPlan): string {
       return `- ${c.tiempo}: ${partes.join(' // ')}`
     })
     .join('\n')
+
+  const hayRecomendaciones = tieneFuentesRecomendaciones(datos)
+  const hayTareas = tieneFuentesTareas(datos)
 
   /*
    * El contexto va agrupado por bloque de destino, no en una lista plana.
@@ -377,17 +468,68 @@ export function promptResumenClinico(datos: DatosResumenPlan): string {
     comidas === ''
       ? `Patron diario por tiempo de comida: ${AUSENTE}`
       : `Patron diario por tiempo de comida:\n${comidas}`,
-    '',
-    'FUENTES DEL BLOQUE «RECOMENDACIONES»',
-    campoLista('Recomendaciones registradas', datos.recomendaciones),
-    campo('Suplementos', datos.suplementos),
-    '',
-    'FUENTES DEL BLOQUE «TAREAS»',
-    campoLista('Tareas asignadas', datos.tareas),
-    campoLista('Acuerdos con el paciente', datos.acuerdos),
+    ...(hayRecomendaciones
+      ? [
+          '',
+          'FUENTES DEL BLOQUE «RECOMENDACIONES»',
+          campoLista('Recomendaciones registradas', datos.recomendaciones),
+          campo('Suplementos', datos.suplementos),
+        ]
+      : []),
+    ...(hayTareas
+      ? [
+          '',
+          'FUENTES DEL BLOQUE «TAREAS»',
+          campoLista('Tareas asignadas', datos.tareas),
+          campoLista('Acuerdos con el paciente', datos.acuerdos),
+        ]
+      : []),
   ].join('\n')
 
-  return `Eres un TRANSCRIPTOR clinico. No eres un asistente que opina ni un nutricionista que recomienda: el trabajo clinico ya lo hizo el profesional y lo escribio en el formulario de la consulta. Tu unico trabajo es ORGANIZAR Y REDACTAR ese contenido en seis bloques.
+  /* Los cuatro fijos, y los dos condicionales si tienen de donde salir. */
+  const bloques = [
+    `OBJETIVOS:
+Los objetivos tal como los escribio el profesional, ordenados y en frases completas.`,
+    `OBSERVACIONES CLINICAS:
+Los hallazgos registrados: diagnostico, antropometria, laboratorios, antecedentes y las observaciones del profesional. Transcribelos; no los interpretes.`,
+    `JUSTIFICACION:
+La justificacion que escribio el profesional, y solo esa. Si no escribio ninguna, no la construyas tu a partir del resto del plan.`,
+    `PLAN ALIMENTARIO:
+El patron prescrito por tiempos de comida. No copies el ejemplo de menu entero: resumelo sin agregarle alimentos, cantidades ni horarios que no aparezcan.`,
+  ]
+  if (hayRecomendaciones) {
+    bloques.push(`RECOMENDACIONES:
+Las recomendaciones y los suplementos registrados, cada uno reconocible en sus fuentes. Ninguna mas.`)
+  }
+  if (hayTareas) {
+    bloques.push(`TAREAS:
+Las tareas y los acuerdos registrados, en lineas que empiecen con un verbo. Ninguna mas.`)
+  }
+
+  /*
+   * La prohibicion de los bloques que no se piden va EXPLICITA y nombrada.
+   *
+   * No basta con no pedirlos: el modelo conoce la estructura de un resumen
+   * clinico y la completa por su cuenta. Y tiene que decir que no se escriba
+   * «${AUSENTE}» en su lugar, porque es la salida que el resto del prompt
+   * ensena para los huecos.
+   */
+  const omitidos = [
+    ...(hayRecomendaciones ? [] : ['RECOMENDACIONES']),
+    ...(hayTareas ? [] : ['TAREAS']),
+  ]
+  const prohibicionDeOmitidos =
+    omitidos.length === 0
+      ? ''
+      : `
+PROHIBIDO escribir ${omitidos.map((x) => `«${x}»`).join(' y ')}. El profesional no registro contenido para ${omitidos.length === 1 ? 'ese bloque' : 'esos bloques'}, asi que ${omitidos.length === 1 ? 'NO EXISTE' : 'NO EXISTEN'} en este resumen: ni el encabezado, ni «${AUSENTE}», ni una linea explicando que falta, ni el encabezado solo sin cuerpo. El resumen termina en el ultimo bloque de la lista de arriba.
+`
+
+  return `Eres un SISTEMA DE FORMATEO DE TEXTO, no un asistente clinico. No tienes criterio clinico. No tienes conocimiento medico aplicable a este trabajo. No puedes completar, mejorar, enriquecer ni corregir el contenido de lo que el profesional escribio: solo reorganizarlo y redactarlo en bloques.
+
+El trabajo clinico ya lo hizo el profesional y lo escribio en el formulario de la consulta. Tu unica funcion es ORGANIZAR Y REDACTAR ese contenido.
+
+**REGLA ABSOLUTA: Si una frase, recomendación, dato o conclusión no puede citarse textualmente de los campos de entrada, no existe y no debe aparecer en el resumen. Ni aunque sea clínicamente correcto. Ni aunque sea obvio. Ni aunque el profesional probablemente lo sepa.**
 
 Todo lo que escribas tiene que poder senalarse con el dedo en una linea de <datos_plan>. Lo que no este ahi, no se escribe.
 
@@ -401,30 +543,21 @@ ${contexto}
 
 Cada bloque se redacta SOLO con las lineas marcadas como sus fuentes. No pases contenido de un bloque a otro, y no uses el dato de un bloque para deducir lo que falta en otro.
 
-Genera SEIS bloques, cada encabezado en una linea propia y escrito literalmente asi, en este orden:
+Genera EXACTAMENTE ${bloques.length === 6 ? 'SEIS' : bloques.length === 5 ? 'CINCO' : 'CUATRO'} bloques —ni uno mas—, cada encabezado en una linea propia y escrito literalmente asi, en este orden:
 
-OBJETIVOS:
-Los objetivos tal como los escribio el profesional, ordenados y en frases completas.
-
-OBSERVACIONES CLINICAS:
-Los hallazgos registrados: diagnostico, antropometria, laboratorios, antecedentes y las observaciones del profesional. Transcribelos; no los interpretes.
-
-JUSTIFICACION:
-La justificacion que escribio el profesional, y solo esa. Si no escribio ninguna, no la construyas tu a partir del resto del plan.
-
-PLAN ALIMENTARIO:
-El patron prescrito por tiempos de comida. No copies el ejemplo de menu entero: resumelo sin agregarle alimentos, cantidades ni horarios que no aparezcan.
-
-RECOMENDACIONES:
-Las recomendaciones y los suplementos registrados. Ninguna mas.
-
-TAREAS:
-Las tareas y los acuerdos registrados, en lineas que empiecen con un verbo. Ninguna mas.
-
+${bloques.join('\n\n')}
+${prohibicionDeOmitidos}
 Lo que SI puedes hacer:
 - Ordenar, agrupar y unir en prosa lo que llega suelto o abreviado.
 - Corregir ortografia y gramatica, y desarrollar abreviaturas evidentes (IMC, VCT, kg).
 - Acortar un texto largo sin quitarle informacion.
+
+EJEMPLOS DE LO QUE ESTA PROHIBIDO GENERAR, aunque los datos lo sugieran:
+- «Mantener hidratación de al menos 2 litros diarios» → PROHIBIDO si no está escrito.
+- «Tomar la medicación en ayunas» → PROHIBIDO si no está escrito.
+- «Continuar con la actividad física» → PROHIBIDO si no está escrito.
+- «Registrar la ingesta diaria» → PROHIBIDO si no está escrito.
+- Cualquier oración que empiece con «Se recomienda», «Se sugiere» o «Es importante» → PROHIBIDO a menos que sea cita textual del profesional.
 
 Lo que NO puedes hacer en ningun caso:
 - Inferir, deducir o completar. Si el profesional anoto «IMC 31», eso es lo que va: no «obesidad grado I», no «riesgo cardiometabolico aumentado», ninguna lectura tuya del dato.
@@ -434,7 +567,7 @@ Lo que NO puedes hacer en ningun caso:
 - Inventar o calcular cifras, plazos, frecuencias o metas. Las que uses tienen que aparecer literalmente en los datos.
 - Escribir un bloque de distribucion de macros, o repetir sus cifras como si las hubieras calculado: ese bloque lo arma el sistema con los numeros de la prescripcion.
 
-Cuando todas las fuentes de un bloque dicen «${AUSENTE}», el cuerpo de ese bloque es exactamente «${AUSENTE}» y nada mas: ni suposiciones verosimiles, ni texto tomado de otro bloque, ni una explicacion de por que falta.
+Cuando todas las fuentes de un bloque de la lista dicen «${AUSENTE}», el cuerpo de ese bloque es exactamente «${AUSENTE}» y nada mas: ni suposiciones verosimiles, ni texto tomado de otro bloque, ni una explicacion de por que falta.
 
 Que algo sea clinicamente correcto no lo autoriza. Si el profesional no lo escribio, no aparece en el resumen.
 

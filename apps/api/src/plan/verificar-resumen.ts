@@ -15,7 +15,12 @@
  *    seccion nueva.
  */
 import { calcularMacros, textoDistribucion } from './resumenClinico.js'
-import { partirResumen } from '../ia/prompts.js'
+import {
+  partirResumen,
+  promptResumenClinico,
+  limpiarBloquesCondicionales,
+  type DatosResumenPlan,
+} from '../ia/prompts.js'
 
 let fallos = 0
 
@@ -276,9 +281,154 @@ Caminar.`)
   ])
 }
 
+console.log('\n== Los dos bloques que pueden no existir ==\n')
+
+/*
+ * `limpiarBloquesCondicionales` es la red que hace imposible —no improbable—
+ * que una recomendacion que nadie escribio llegue al expediente. El prompt ya
+ * no pide esos bloques; esto cubre el caso de que el modelo los devuelva igual.
+ *
+ * Es la misma linea que el resto del archivo: lo que no se puede comprobar
+ * desde fuera lo tiene que garantizar el codigo.
+ */
+const DATOS_BASE: DatosResumenPlan = {
+  pacienteNombre: 'Prueba',
+  pacienteEdad: 40,
+  pacienteSexo: 'femenino',
+  planNombre: 'Plan',
+  planObjetivo: 'Bajar de peso',
+  planNotas: null,
+  comidas: [],
+  diagnostico: 'Obesidad grado I',
+  objetivosConclusion: null,
+  observacionesConclusion: null,
+  justificacionConclusion: null,
+  antropometria: 'IMC 32',
+  laboratorios: null,
+  antecedentes: null,
+  recomendaciones: [],
+  restricciones: [],
+  suplementos: null,
+  acuerdos: [],
+  tareas: [],
+  distribucionMacros: 'Valor calorico total: 1600 kcal/dia',
+}
+
+/*
+ * Caso 13 — el modelo escribe los dos bloques que no se le pidieron.
+ *
+ * Es el caso que motivo todo esto: el contenido es plausible, es correcto, y
+ * el profesional no lo escribio. Tiene que desaparecer antes de guardarse.
+ */
+{
+  const salida = `OBJETIVOS:
+Bajar de peso.
+
+RECOMENDACIONES:
+Mantener hidratacion de al menos 2 litros diarios.
+
+TAREAS:
+Registrar la ingesta diaria.`
+  const b = limpiarBloquesCondicionales(partirResumen(salida), DATOS_BASE)
+  comprobar('13. sin fuentes, los dos bloques se descartan', [b.recomendaciones, b.tareas], [null, null])
+  comprobar('13. lo que si tenia fuente se conserva', b.objetivos, 'Bajar de peso.')
+}
+
+/* Caso 14 — con fuentes registradas, el bloque se respeta tal cual. */
+{
+  const datos: DatosResumenPlan = {
+    ...DATOS_BASE,
+    recomendaciones: ['Caminar 30 minutos cinco dias por semana'],
+    tareas: ['Traer el control de glicemia'],
+  }
+  const salida = `RECOMENDACIONES:
+Caminar 30 minutos, cinco dias por semana.
+
+TAREAS:
+Traer el control de glicemia de la proxima semana.`
+  const b = limpiarBloquesCondicionales(partirResumen(salida), datos)
+  contiene('14. la recomendacion registrada sobrevive', b.recomendaciones ?? '', 'Caminar 30 minutos')
+  contiene('14. la tarea registrada sobrevive', b.tareas ?? '', 'control de glicemia')
+}
+
+/*
+ * Caso 15 — «No registrado» en el cuerpo tambien se borra.
+ *
+ * Es lo que el modelo devuelve si decide seguir la regla de los huecos que
+ * rige para los otros cuatro bloques. Aqui el bloque no lleva su ausencia
+ * escrita: no existe.
+ */
+{
+  const datos: DatosResumenPlan = { ...DATOS_BASE, recomendaciones: ['Comer despacio'] }
+  const b = limpiarBloquesCondicionales(
+    partirResumen('RECOMENDACIONES:\nNo registrado.\n\nTAREAS:\nNo registrado'),
+    datos,
+  )
+  comprobar('15. «No registrado» no se guarda como cuerpo', [b.recomendaciones, b.tareas], [null, null])
+}
+
+/* Caso 16 — el prompt no pide los bloques sin fuentes, y si los que tienen. */
+{
+  const sinNada = promptResumenClinico(DATOS_BASE)
+  comprobar('16. no pide RECOMENDACIONES sin fuentes', sinNada.includes('RECOMENDACIONES:\n'), false)
+  comprobar('16. no pide TAREAS sin fuentes', sinNada.includes('TAREAS:\n'), false)
+  comprobar('16. prohibe escribirlos', sinNada.includes('PROHIBIDO escribir'), true)
+
+  const conAmbos = promptResumenClinico({
+    ...DATOS_BASE,
+    recomendaciones: ['Caminar'],
+    tareas: ['Pesarse el lunes'],
+  })
+  comprobar('16. con fuentes si los pide', conAmbos.includes('RECOMENDACIONES:\n'), true)
+  comprobar('16. y entonces no los prohibe', conAmbos.includes('PROHIBIDO escribir'), false)
+
+  // Un solo bloque con fuentes: el otro sigue prohibido, y en singular.
+  const soloTareas = promptResumenClinico({ ...DATOS_BASE, tareas: ['Pesarse el lunes'] })
+  comprobar('16. mixto: pide TAREAS', soloTareas.includes('TAREAS:\n'), true)
+  comprobar(
+    '16. mixto: prohibe solo RECOMENDACIONES',
+    soloTareas.includes('PROHIBIDO escribir «RECOMENDACIONES»'),
+    true,
+  )
+}
+
+/*
+ * Caso 17 — la REGLA ABSOLUTA viaja palabra por palabra.
+ *
+ * Se comprueba el texto literal, con acentos, y no una parafrasis: el resto
+ * del prompt va sin acentos por convencion del archivo, y una «normalizacion»
+ * bienintencionada de esta frase la cambiaria sin que nadie lo note.
+ */
+{
+  const p = promptResumenClinico(DATOS_BASE)
+  comprobar(
+    '17. la REGLA ABSOLUTA es literal',
+    p.includes(
+      'REGLA ABSOLUTA: Si una frase, recomendación, dato o conclusión no puede citarse textualmente de los campos de entrada, no existe y no debe aparecer en el resumen. Ni aunque sea clínicamente correcto. Ni aunque sea obvio. Ni aunque el profesional probablemente lo sepa.',
+    ),
+    true,
+  )
+  comprobar('17. el rol es sistema de formateo', p.includes('SISTEMA DE FORMATEO DE TEXTO'), true)
+  comprobar(
+    '17. estan los cuatro ejemplos prohibidos',
+    [
+      'Mantener hidratación de al menos 2 litros diarios',
+      'Tomar la medicación en ayunas',
+      'Continuar con la actividad física',
+      'Registrar la ingesta diaria',
+    ].every((f) => p.includes(f)),
+    true,
+  )
+  comprobar(
+    '17. estan los tres arranques prohibidos',
+    ['«Se recomienda»', '«Se sugiere»', '«Es importante»'].every((f) => p.includes(f)),
+    true,
+  )
+}
+
 console.log(
   fallos === 0
-    ? '\nTodo correcto: la aritmetica y el partido de bloques coinciden con lo calculado a mano.\n'
+    ? '\nTodo correcto: la aritmetica, el partido de bloques y los dos bloques condicionales coinciden con lo esperado.\n'
     : `\n${fallos} comprobacion(es) fallaron.\n`,
 )
 process.exit(fallos === 0 ? 0 : 1)

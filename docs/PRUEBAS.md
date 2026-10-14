@@ -5113,3 +5113,175 @@ El pedido pedía además la migración de las listas de intercambio, el endpoint
 > **El endpoint no lleva `clinica_id` en la query, y es a propósito.** El pedido lo describía como `?alimento=&cantidad=&clinica_id=`. La clínica sale del token, nunca del cliente: un `clinica_id` que viaja en la URL es un parámetro que el navegador puede cambiar, y con él se leerían las equivalencias de otra clínica. Va colgado de la consulta (`/api/pacientes/:id/consultas/:consultaId/…`) para que el mismo chequeo de acceso del resto del expediente aplique aquí.
 
 `npm run verificar:intercambios -w @nutrismart/api` comprueba la aritmética contra el documento: once casos, incluido el `no_encontrado` de «pizza con piña».
+
+---
+
+# Cálculo de intercambios en dos fases: la IA identifica, el servidor calcula
+
+## Qué cambió
+
+`POST …/registro-dietetico/:tipo/calcular` buscaba el alimento con trigramas en Postgres y no llamaba a ningún modelo. Encontraba «arroz blanco» escribiendo «arroz blanco», y **no** lo encontraba escribiendo «arroz cocido»: comparar cadenas no sabe que son el mismo alimento. Ahora el emparejamiento lo hace el modelo y la aritmética la hace el servidor.
+
+| Fase | Quién | Qué hace | Archivo |
+|---|---|---|---|
+| 1 | El modelo | Recibe el catálogo **numerado** y devuelve qué fila es y qué cantidad/unidad escribió el profesional | `dietetico/identificacion.ts` |
+| 2 | El servidor | Convierte a una base común, comprueba compatibilidad, divide y multiplica por `grupo_intercambio` | `dietetico/calculo.ts` + `dietetico/unidades.ts` |
+
+> **Al modelo no se le dan los valores nutricionales de los grupos.** Si los ve, los multiplica —se lo pida o no—, y entonces hay dos números, el suyo y el del servidor, sin forma de saber cuál se mostró. No dándoselos, la única aritmética posible es la del servidor.
+
+> **El `equivalencia_id` es un índice 1..N, no el uuid.** Un uuid en un prompt es una cadena de 36 caracteres sin significado que el modelo puede copiar con un dígito cambiado; el resultado sería **otra fila existente** —otro alimento— y el cálculo saldría plausible. Un índice fuera de rango no resuelve a nada y queda en el log.
+
+## Las conversiones, y lo que el servidor se niega a hacer
+
+| Volumen → ml | Masa → g |
+|---|---|
+| taza / tz = 240 · cucharada / cda = 15 · cucharadita / cdta = 5 · ml = 1 · litro = 1000 | g = 1 · oz = 28,35 · libra = 453,59 · kg = 1000 |
+
+Todo lo demás —rebanada, paquete, dedos, galleta, «unidad mediana»— es una **cuenta**, y una cuenta solo se divide contra otra cuenta.
+
+**No hay conversión entre sistemas, y es deliberado.** Una taza de arroz no son 240 g; eso depende de la densidad, que el documento de intercambios no da. Si el profesional escribe ml y la fila mide en unidades, la división correcta no existe: se marca `unidades_incompatibles` y **se le vuelve a preguntar al modelo** vetando esa fila (una vez; un reintento sin tope es una factura sin tope).
+
+> **Una fila puede tener DOS lecturas, y cuál se usa lo decide lo que escribió el profesional.** «arroz blanco, ½ tz, 90 g» se lee como 120 ml o como 90 g, y las dos son correctas. «1 taza» pide la volumétrica (240/120 = 2); «180 g» pide la de masa (180/90 = 2). Fijar el orden era el defecto sutil: preferir siempre los gramos convierte «1 taza de arroz» en un problema sin solución.
+
+**Tope de sensatez: 15 porciones** para un alimento simple (uno que toca un solo grupo). Por encima se rechaza, se registra el número con el alimento, y el frontend recibe el mensaje literal del requerimiento. Los frijoles (1 harina + 1 proteína magra) cuentan como compuestos y se saltan el tope: el error va hacia aceptar, porque rechazar un cálculo correcto es lo que el profesional no puede arreglar.
+
+## Comprobación
+
+```
+npm run verificar:calculo -w @nutrismart/api          # gratis, sin IA, determinista
+npm run verificar:identificacion -w @nutrismart/api   # llama al modelo: ~10 k tokens por caso
+```
+
+La primera simula la fase 1 —cada caso trae el JSON que el modelo debería devolver— y comprueba la aritmética. Es la que se corre siempre: una comprobación que cuesta dinero se deja de correr.
+
+| Caso | Cuenta | Resultado |
+|---|---|---|
+| 250 ml de leche descremada | 250 ÷ (1 tz = 240 ml) | 1,04 porc → CHO 12,48 · kcal 104 |
+| 1 huevo | 1 unidad ÷ 1 unidad | 1 porc → CHO 0 · CHON 7 · grasa 5 · kcal 75 |
+| 1 taza de arroz cocido | 240 ÷ (½ tz = 120 ml) | 2 porc → CHO 30 · kcal 160 |
+| ½ taza de frijoles | 120 ÷ 120 ml | 1 porc → CHO 15 · CHON 10 · kcal 125 |
+| 3 cucharadas de leche en polvo descremada | 45 ÷ (3 cdas = 45 ml) | 1 porc → CHO 12 · kcal 100 |
+| **250 ml de huevo** | volumen ÷ cuenta | `unidades_incompatibles` → se repregunta |
+| **1 libra de pollo** | 453,59 ÷ 30 g = 15,12 | `porciones_absurdas` → rechazado |
+| 180 g de arroz blanco | 180 ÷ 90 g | 2 porc (la lectura de masa de la misma fila) |
+| 2 rebanadas de pan cuadrado light | 2 ÷ **2 rebanadas** | 1 porc, no 2 |
+| leche 0% grasa sin cantidad | — | 1 porc con `porciones_supuestas: true` |
+
+La segunda comprueba lo único que el modelo tiene que hacer: elegir la fila. Los cinco casos del requerimiento pasan —«leche descremada» → «leche 0% grasa», «arroz cocido» → «arroz blanco»— y el modelo copia la porción de referencia de la fila en vez de adivinarla.
+
+> **La unidad se compara por lo que MIDE, no por cómo se escribe.** El modelo devuelve «cucharadas», «cucharada» o «cdas» según el día, y las tres valen 15 ml. La primera versión de la prueba comparaba cadenas y marcaba `cdas` como fallo; un fallo que no cambia ningún número entrena a ignorar la prueba.
+
+### Dos cosas que hay que saber de este cambio
+
+| | |
+|---|---|
+| **El endpoint ya consume saldo de IA y puede fallar por el proveedor** | Antes no podía. Se trata como `/analizar-ia`: el motivo viaja en el cuerpo (R46) y el profesional escribe los valores a mano. La regla de oro se mantiene, pero la ruta dejó de ser gratuita: ~10 k tokens de entrada por llamada, porque lleva el catálogo |
+| **El frontend no llama a `/calcular` todavía** | `api/registroDietetico.ts` solo tiene `get`, `guardar` y `analizar-ia`. El cambio de forma de la respuesta (de un alimento plano a `{ alimentos: [...], total, error }`) no rompe ninguna pantalla hoy |
+
+`/analizar-ia` **no se tocó**: sigue con el camino de trigramas y su propia verificación (`verificar:intercambios`, 11 casos, todos pasan).
+
+---
+
+# Resumen clínico: el modelo formatea, y los bloques vacíos no existen
+
+## Qué cambió
+
+El encuadre anterior pedía «transcribir» y prohibía inventar, y el modelo seguía agregando frases de catálogo. Lo que se vio es que **las prohibiciones abstractas no se pesan igual que los ejemplos concretos**.
+
+| Antes | Ahora |
+|---|---|
+| «Eres un TRANSCRIPTOR clínico» | «Eres un SISTEMA DE FORMATEO DE TEXTO»: sin criterio clínico, sin conocimiento médico aplicable, sin permiso para completar ni mejorar |
+| «No agregues recomendaciones de catálogo» | La **REGLA ABSOLUTA** destacada + las cuatro frases nombradas una por una + los tres arranques (`Se recomienda`, `Se sugiere`, `Es importante`) |
+| Seis bloques siempre; los vacíos decían `No registrado` | «Recomendaciones» y «Tareas» **solo se piden si el profesional escribió algo**; si no, el bloque no existe |
+
+El criterio de la regla es la **cita textual**: si no se puede citar de los campos de entrada, no existe. Y va palabra por palabra, con acentos, aunque el resto del prompt vaya sin ellos por convención del archivo — el caso 17 de `verificar:resumen` falla si alguien la «normaliza».
+
+## Por qué esos dos bloques desaparecen en vez de decir «No registrado»
+
+Son los dos donde el relleno es invisible. Un encabezado «Recomendaciones» seguido de `No registrado` es **una invitación permanente a poner algo razonable ahí** — y «algo razonable» en un bloque de recomendaciones es exactamente una recomendación que nadie dio. Los otros cuatro siguen diciendo `No registrado`: ahí el hueco describe la consulta (no hay laboratorios, no se registró justificación) y verlo es útil.
+
+> **El prompt lo pide; el código lo garantiza.** `limpiarBloquesCondicionales` borra esos dos bloques si el modelo los devuelve igual: sin fuentes de donde copiarlos, lo que contengan es invención por definición. Un prompt es una petición —pide bien, se cumple casi siempre—, y «casi siempre» en el expediente significa que algún paciente tiene firmada una recomendación que su nutricionista no dio. El modal tampoco los dibuja vacíos, lo que cubre además los resúmenes guardados antes de este cambio.
+
+## Comprobación
+
+```
+npm run verificar:resumen -w @nutrismart/api      # gratis: 17 casos, incluidos los 5 nuevos
+npm run verificar:resumen-ia -w @nutrismart/api   # llama al modelo con el caso vacío
+```
+
+El caso en vivo está armado para **tentar al modelo**: IMC 32,8, HbA1c 6,3 %, LDL 148, hipertensión en los antecedentes y actividad física registrada — todo lo que un asistente clínico usaría para sugerir hidratación, medicación en ayunas o continuar con el ejercicio — y deja **recomendaciones, suplementos, tareas y acuerdos vacíos**.
+
+| Qué comprueba | Resultado (3 corridas) |
+|---|---|
+| La REGLA ABSOLUTA está literal en el prompt | ok |
+| El prompt no pide `RECOMENDACIONES:` ni `TAREAS:`, y los prohíbe por nombre | ok |
+| Las fuentes vacías de esos bloques **no se envían** | ok |
+| El resumen no trae esos encabezados | ok |
+| El resumen no escribe `No registrado` en su lugar | ok |
+| Ninguna frase prohibida aparece sin respaldo en los campos | ok |
+| `limpiarBloquesCondicionales` deja los dos en `null` | ok |
+
+El resumen generado sale con cuatro bloques —Objetivos, Observaciones clínicas, Justificación, Plan alimentario— y nada más.
+
+> **La prueba se corrigió a sí misma.** La primera versión buscaba las palabras a secas y marcaba «Actividad física moderada, tres sesiones por semana» como violación: es la **transcripción fiel** del campo de antecedentes. Ahora una frase prohibida solo cuenta si **no se puede rastrear a ningún campo de entrada**, que es la REGLA ABSOLUTA convertida en comprobación. Lo que distingue un caso del otro no es el tema sino el acto: «actividad física moderada, tres sesiones por semana» describe lo que el paciente hace; «continuar con la actividad física» le indica algo, y eso no lo dijo nadie.
+
+### Tropiezo de entorno que esto destapó
+
+`.env` tenía `ANTHROPIC_API_KEY: "sk-ant-…"` — **con dos puntos**, cuando dotenv solo entiende `CLAVE=valor`. La línea se ignoraba en silencio, así que `config.anthropicApiKey` era `undefined` y **todas** las funciones de IA respondían `sin_configurar`: resumen clínico, análisis dietético, interpretación de labs y nota SOAP. Corregido a `=`. Si una función de IA dice que no está configurada, esa línea es el primer sitio donde mirar.
+
+---
+
+# Consumo Usual pasa de `/analizar-ia` a `/calcular`
+
+## Qué cambió en la pantalla
+
+`TablaDietetica.tsx` —la tabla de Consumo Usual y de Recordatorio 24 h— llama ahora al camino de dos fases. Una sola línea en `api/registroDietetico.ts`:
+
+| | |
+|---|---|
+| Antes | `POST …/registro-dietetico/:tipo/analizar-ia` |
+| Ahora | `POST …/registro-dietetico/:tipo/calcular` |
+
+El cuerpo sigue siendo `{ tiempo_comida }` y la respuesta sigue siendo **el registro completo**, así que `hidratar(r)` no cambió: la tabla se repinta igual que antes.
+
+Lo que gana la pantalla es el emparejamiento por significado. «arroz cocido» ahora encuentra «arroz blanco»; con la búsqueda por trigramas no lo encontraba, porque comparar cadenas no sabe que son el mismo alimento.
+
+## Lo que hubo que agregarle a `/calcular`
+
+> **No era «solo apuntar al endpoint nuevo».** `/calcular` existía con otro contrato: recibía `{ alimento, cantidad }`, devolvía **un** alimento plano sin `filas`, no leía la fila y no persistía nada. Con `{ tiempo_comida }` respondía **400 `sin_alimento`**, y la respuesta sin `filas` habría dejado la tabla en blanco. Cambiar la URL a secas rompía el botón.
+
+Así que `/calcular` tiene dos modos:
+
+| Modo | Cuerpo | Qué hace |
+|---|---|---|
+| **Fila** | `{ tiempo_comida }` | Lee el texto **guardado** de esa fila, calcula, **persiste** los `ai_*` y el aviso, y devuelve el registro + el detalle por alimento |
+| **Texto** | `{ texto }` o `{ alimento, cantidad }` | Calcula y devuelve. No toca la base |
+
+El modo fila no es un lujo: los `ai_*` los escribe **solo** el servidor —así está documentado en `Fila`—, de modo que un cliente que recibiera unos totales no tendría dónde guardarlos. Escribirlos como `*_manual` los marcaría como correcciones del profesional, que es exactamente lo que no son. Y sin persistir, el cálculo se perdería al recargar la consulta, junto con el ⚠ de R48.
+
+Conserva la **caché** de `/analizar-ia`: un `ai_calculado_en` presente con `ai_kcal` no nulo devuelve el registro sin volver a llamar al modelo. Sin eso, cada pulsación del botón paga el catálogo otra vez (~10 k tokens).
+
+## El mensaje de error que estaba mal dirigido
+
+`MENSAJE_INCALCULABLE` dice «la cantidad ingresada parece incompatible con la unidad del alimento encontrado» y pide especificar mejor. Para «pizza con piña» —que no está en el catálogo— ese es un consejo **equivocado**: no hay ninguna cantidad que lo arregle, y el profesional se quedaría probando redacciones. Ahora el error de nivel superior exige dos cosas: que nada haya dado números **y** que al menos un alimento se haya encontrado y fallado al calcularse. El no-encontrado tiene su propia señal, que es `no_encontrado` y el ⚠ de la fila.
+
+## Comprobación
+
+Con la API local en otro puerto para no competir con el contenedor (`API_PORT=4011 npx tsx src/server.ts`), token de `ana@vida.cr`, y una consulta de María. Se escribe el texto con un PUT —como hace la pantalla antes de calcular— y luego se llama a `/calcular`:
+
+| Texto de la fila | Fila persistida | Aviso |
+|---|---|---|
+| `250 ml de leche descremada y 1 taza de arroz cocido` | kcal **264**, CHO **42,48**, prot 14,32, grasas 3,56 | — |
+| `1 huevo` | kcal **75**, CHO 0, prot 7, grasas 5 | — |
+| `pizza con piña` | los cuatro en **null**, no en cero | `ai_no_encontrado: ["pizza con piña"]` |
+| `250 ml de huevo` | los cuatro en **null** | `ai_no_encontrado: ["250 ml de huevo"]` |
+
+La suma del primero cuadra a mano: 12,48 + 30 = 42,48 de CHO; 104 + 160 = 264 kcal.
+
+El tercero es el que importa: el modelo **no** empareja «pizza con piña» con la fila «piña», y lo razona en su `nota` («Pizza no está en el catálogo… se requiere desglosar»). Es el mismo fallo que la búsqueda por trigramas evitaba con `COBERTURA_MINIMA`, y que un acierto plausible habría convertido en 1 fruta —15 g de CHO— para una pizza.
+
+> **Cuidado al probar esto desde bash en Windows.** Un cuerpo JSON con `ñ` escrito en línea con `-d` llega mal y el PUT falla; como el PUT falla, la fila conserva su texto anterior y `/calcular` devuelve la **caché** del cálculo anterior. Se ve como si el endpoint ignorara el texto nuevo. Escribir el cuerpo a un archivo UTF-8 y mandarlo con `--data-binary @archivo` lo resuelve.
+
+## Lo que queda fuera de este cambio
+
+`/analizar-ia` **sigue existiendo y no se tocó**: mismo camino de trigramas, misma verificación (`verificar:intercambios`). Ninguna pantalla lo llama ya. Borrarlo es una decisión aparte — mientras esté, un cliente viejo sigue funcionando.

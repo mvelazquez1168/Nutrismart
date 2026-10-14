@@ -24,7 +24,12 @@
  */
 import { pool } from '../db.js'
 import { llamarClaude } from '../ia/cliente.js'
-import { promptResumenClinico, partirResumen, type DatosResumenPlan } from '../ia/prompts.js'
+import {
+  promptResumenClinico,
+  partirResumen,
+  limpiarBloquesCondicionales,
+  type DatosResumenPlan,
+} from '../ia/prompts.js'
 
 /* ------------------------------------------------------------------ */
 /* La distribucion de macros: aritmetica, no redaccion                 */
@@ -396,7 +401,16 @@ export async function generarResumen(
       profesionalId,
       funcion: 'resumen_clinico_plan',
     })
-    bloques = partirResumen(salida.texto)
+    /*
+     * `limpiarBloquesCondicionales` es la red, no el plan.
+     *
+     * El prompt ya no pide «Recomendaciones» ni «Tareas» cuando el
+     * profesional no escribio nada para ellos. Esto borra el bloque si el
+     * modelo lo devuelve igual: sin fuentes de donde copiarlo, lo que
+     * contenga es invencion por definicion, y es el tipo de invencion que
+     * queda firmada en el expediente.
+     */
+    bloques = limpiarBloquesCondicionales(partirResumen(salida.texto), ctx.datos)
     modelo = salida.modelo
     tokensSalida = salida.tokensSalida
   } catch (e) {
