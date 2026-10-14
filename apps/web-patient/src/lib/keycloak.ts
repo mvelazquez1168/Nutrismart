@@ -48,7 +48,7 @@ export const keycloak = new Keycloak({
 let inicializacion: Promise<boolean> | null = null
 
 /**
- * A donde vuelve Keycloak: la ruta actual, SIN query ni fragmento.
+ * A donde vuelve Keycloak: la ruta actual CON su query, sin el fragmento.
  *
  * Por defecto keycloak-js usa `window.location.href` entero. Al volver
  * del login la URL trae `#state=…&code=…`; si esa vuelta no se completa
@@ -60,11 +60,24 @@ let inicializacion: Promise<boolean> | null = null
  * Aqui `onLoad` es 'check-sso' y no 'login-required', asi que el ciclo
  * es menos probable — pero `entrar()` y `registrarse()` reciben la URL
  * desde cada pantalla, y esas si pueden traer fragmento.
+ *
+ * ## Por que la query SI se conserva
+ *
+ * Lo que hace crecer la direccion es el fragmento, no la query: el
+ * fragmento se acumula en cada vuelta, la query no.
+ *
+ * Y quitarla rompia la activacion del paciente. `Activar.tsx` manda a
+ * Keycloak con `/activar?token=…` y espera volver a esa MISMA direccion
+ * con el token puesto, porque es lo que le permite unir la sesion recien
+ * creada con la invitacion. Sin la query el paciente volvia a `/activar`
+ * pelado: con sesion, sin token, y sin forma de saber a que invitacion
+ * correspondia. Moria en el unico paso que no se puede repetir, porque
+ * el enlace del correo ya estaba usado.
  */
 function limpia(url: string): string {
   try {
     const u = new URL(url)
-    return `${u.origin}${u.pathname}`
+    return `${u.origin}${u.pathname}${u.search}` // conserva ?token=…, descarta solo el fragmento #
   } catch {
     return `${window.location.origin}${window.location.pathname}`
   }
