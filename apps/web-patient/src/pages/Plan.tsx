@@ -4,6 +4,18 @@
  * Lo que el paciente marca aquí NO cambia el acuerdo que pactó con su
  * nutricionista: se guarda aparte, con fecha. Por eso la pantalla dice
  * «lo que has ido haciendo» y no «completado».
+ *
+ * ── Dos cosas distintas, y se dice cuál es cuál ─────────────────────
+ *
+ * «Lo que acordaste» son los acuerdos que el paciente marca. «Tu plan
+ * prescrito» es lo que indicó el profesional y el paciente no toca
+ * (R47). Antes solo se veía lo primero, y el plan por el que el paciente
+ * venía a esta pantalla no estaba en ninguna parte de la aplicación.
+ *
+ * Lo que NO se enseña aquí: diagnóstico, código CIE-10, observaciones
+ * clínicas y justificación. Son documentación dirigida a otro
+ * profesional, y un diagnóstico que el nutricionista todavía no ha
+ * comunicado no debe conocerse por una pantalla.
  */
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -20,6 +32,17 @@ const RESTRICCIONES: Record<string, string> = {
   renal: 'Renal',
   diabetica: 'Para diabetes',
   bajo_purinas: 'Bajo en purinas',
+}
+
+/** «2026-12-15» → «15 de diciembre de 2026». Una meta se lee, no se descifra. */
+function fechaLegible(iso: string): string {
+  const [a, m, d] = iso.split('-').map(Number)
+  if (!a || !m || !d) return iso
+  return new Date(a, m - 1, d).toLocaleDateString('es-CR', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  })
 }
 
 function Tarjeta({ titulo, children }: { titulo: string; children: React.ReactNode }) {
@@ -190,6 +213,76 @@ export function Plan() {
             {plan.suplementos && (
               <Tarjeta titulo="Suplementos">
                 <p className="whitespace-pre-wrap text-sm text-ink">{plan.suplementos}</p>
+              </Tarjeta>
+            )}
+
+            {/* La meta de peso — R47. Primero porque es la pregunta con la
+                que el paciente abre esta pantalla. */}
+            {plan.pesoObjetivo !== null && (
+              <Tarjeta titulo="Meta de peso">
+                <p className="text-3xl font-bold text-primary">
+                  {plan.pesoObjetivo}
+                  <span className="ml-1 text-base font-normal text-muted">kg</span>
+                </p>
+                {plan.fechaObjetivoPeso && (
+                  <p className="mt-1 text-sm text-muted">
+                    Para el {fechaLegible(plan.fechaObjetivoPeso)}
+                  </p>
+                )}
+                {/* Una meta sin su autor se lee como una exigencia de la
+                    aplicación. La puso una persona, en consulta. */}
+                <p className="mt-2 text-xs text-muted">
+                  La fijó {plan.profesional ?? 'tu nutricionista'} contigo en consulta.
+                </p>
+              </Tarjeta>
+            )}
+
+            {/* El plan prescrito — R47. Separado de «Lo que acordaste» y
+                dicho con todas las letras: esto lo indicó el profesional y
+                no se marca ni se cambia desde aquí. */}
+            {(plan.objetivos || plan.recomendaciones.length > 0) && (
+              <Tarjeta titulo="Tu plan prescrito">
+                <p className="-mt-2 mb-3 text-xs text-muted">
+                  Lo que te indicó {plan.profesional ?? 'tu nutricionista'} en la consulta del{' '}
+                  {plan.fecha}.
+                </p>
+
+                {plan.objetivos && (
+                  <>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
+                      Objetivos
+                    </h3>
+                    <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-ink">
+                      {plan.objetivos}
+                    </p>
+                  </>
+                )}
+
+                {plan.recomendaciones.length > 0 && (
+                  <>
+                    <h3
+                      className={`text-xs font-semibold uppercase tracking-wide text-muted ${
+                        plan.objetivos ? 'mt-4' : ''
+                      }`}
+                    >
+                      Recomendaciones
+                    </h3>
+                    <ul className="mt-2 space-y-2">
+                      {plan.recomendaciones.map((r) => (
+                        <li key={r} className="flex items-start gap-2 text-sm text-ink">
+                          {/* Un punto, no una casilla: estas no se marcan.
+                              Una casilla invitaría a tocarlas y no pasaría
+                              nada, que es la peor respuesta a un toque. */}
+                          <span
+                            aria-hidden="true"
+                            className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-pill bg-primary"
+                          />
+                          <span className="leading-relaxed">{r}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
               </Tarjeta>
             )}
 

@@ -5505,3 +5505,116 @@ El caso que más dice es la **glucosa**: tres puntos descendiendo desde fuera de
 | Solo añadir la sección y el panel | Además, `informativa` en `SECCIONES` y en `TabsValoracion` | Sin eso la pestaña nueva enseñaría un «pendiente» permanente. Es un efecto del cambio pedido, no una función aparte |
 
 Los decimales de cada biomarcador salen del catálogo (`decimales`), no de un redondeo fijo: un TSH de 2,30 y uno de 2,35 no deben verse iguales.
+
+---
+
+# R47 — Siete mejoras en la app del paciente
+
+## 1 · Cancelar una cita confirmada
+
+`PATCH /api/paciente/citas/:id/cancelar`, simétrico del de confirmar. **PATCH y no DELETE**: la cita no se borra, cambia de estado y sigue en la agenda del profesional, que necesita ver que ese hueco se liberó y cuándo.
+
+Las condiciones van en el `WHERE`, no en un SELECT previo: entre la comprobación y el UPDATE la cita puede cambiar. **Solo `confirmada` y solo futura** — cancelar algo que ya ocurrió no es cancelar, es reescribir lo que pasó.
+
+En pantalla, **dos toques**: el primero abre la pregunta, el segundo cancela. Cancelar no se deshace desde la app, y un botón que lo hace al primer toque —en un móvil, al lado de otros botones— cancela citas sin querer. Y al revés que confirmar, **espera la respuesta del servidor antes de pintar**: confirmar y equivocarse no cuesta nada; ver «cancelada» y que no lo esté manda al paciente a una cita a la que cree que no va.
+
+| Caso | Resultado |
+|---|---|
+| Cita **confirmada** futura | **200** `{estado: "cancelada"}` |
+| La misma otra vez | **200** — idempotente, no un error: el paciente pidió que quedara cancelada y lo está |
+| Cita **programada** | **409** «Esta cita aún no está confirmada. Escríbele a tu nutricionista para cambiarla.» |
+| Cita de **otro paciente** | **404**, sin filtrar que existe |
+| En pantalla | Diálogo de confirmación → tras cancelar, sube la siguiente cita y desaparece «Asistencia confirmada» |
+
+## 2 y 7 · La meta de peso y el plan prescrito
+
+El endpoint `/api/paciente/plan` no devolvía ni la meta de peso ni lo prescrito; la pantalla solo tenía «Lo que acordaste». Ahora viajan `pesoObjetivo`, `fechaObjetivoPeso`, `objetivos` y `recomendaciones`, y la pantalla tiene dos secciones nuevas:
+
+- **Meta de peso** — «72 kg · Para el 15 de diciembre de 2026 · La fijó Dra. Ana Rodríguez contigo en consulta». Lo último importa: una meta sin autor se lee como una exigencia de la aplicación.
+- **Tu plan prescrito** — objetivos y recomendaciones, con viñetas y **no** con casillas: estas no se marcan, y una casilla invitaría a tocarlas sin que pasara nada.
+
+### Lo que NO viaja al paciente, a propósito
+
+`diagnostico_principal`, `diagnostico_cie10`, `observaciones_clinicas` y `justificacion` se quedan en el servidor. Son documentación dirigida a otro profesional, y **un diagnóstico que el nutricionista todavía no ha comunicado no debe conocerse por una pantalla**. Si algún día hay que enseñarlo será una decisión explícita, no el efecto de haber añadido un campo al `select`.
+
+Comprobado: la respuesta trae `pesoObjetivo: 72`, `fechaObjetivoPeso: 2026-12-15` y tres recomendaciones; ninguno de los cuatro campos clínicos aparece.
+
+## 3 · «Mis temas»: la biblioteca filtrada por categorías
+
+Tabla `paciente_preferencia_biblioteca` (migración **052**), una fila por categoría elegida —no un array— para que la clave primaria impida duplicados y para poder contar suscriptores con un `group by`.
+
+**Sin preferencias guardadas se ve todo.** La ausencia de filas significa «no ha elegido», no «no quiere nada»: leerlo como lista vacía dejaría la biblioteca en blanco a todos los pacientes existentes el día del despliegue.
+
+| Preferencias guardadas | Recursos visibles |
+|---|---|
+| ninguna | **3** (todos) |
+| `["nutricion"]` | **3** — las tres publicaciones son de esa categoría |
+| `["ejercicio"]` | **0** |
+| vaciar otra vez | **3** |
+| `["recetas","inventada"]` | **400** `categoria_invalida` — se rechaza, no se ignora en silencio |
+| `["recetas","recetas","habitos"]` | **200**, deduplicado: sin el `Set` reventaría la clave primaria con un 500 que no explica nada |
+
+El `PUT` reemplaza la lista entera dentro de una transacción. Sin ella, un fallo entre el `delete` y el `insert` dejaría al paciente sin ninguna preferencia —y viendo todo— cuando lo que hizo fue intentar cambiarlas.
+
+El panel «Mis temas» vive dentro de la biblioteca y no en el perfil: se decide mirando la lista que se quiere filtrar.
+
+## 4 · Los documentos se ven, no se bajan
+
+El botón «Descargar guia.pdf» se sustituyó por **«Ver documento»** y un visor a pantalla completa dentro de la app. En la lista, la etiqueta pasó de «archivo para descargar» a «documento para ver». No queda ningún `<a download>` en la pantalla (comprobado: 0).
+
+### El `sandbox` del iframe no se puede usar, y es un hallazgo
+
+El requerimiento proponía un `sandbox` sin `allow-downloads`. Se implementó así y **el PDF no se veía**: Chrome desactiva su visor de PDF en cuanto el iframe lleva el atributo `sandbox`, **con cualquier valor**. Comprobado con el mismo PDF y el mismo blob:
+
+| `sandbox` | ¿Se ve el PDF? |
+|---|---|
+| sin el atributo | **Sí**, completo |
+| `sandbox=""` | No — icono de documento roto |
+| `allow-scripts` | No |
+| `allow-scripts allow-same-origin` | No |
+
+Así que el iframe va **sin `sandbox`**, con `#toolbar=0&navpanes=0` para quitar la barra del visor de PDF, que es donde vive su botón de guardar. Las imágenes van en un `<img>` con `pointer-events-none`, que quita el menú contextual «guardar imagen» del móvil.
+
+### Lo que esto cubre y lo que no
+
+**No impide guardar el archivo a quien se lo proponga.** Los bytes están en el navegador porque tienen que estar para poder pintarse. Lo que se retira es la invitación: ni botón de descargar, ni de compartir, ni barra del visor. **Es una regla de uso, no un candado**, y el código lo dice con esas palabras. El pie del visor se lo dice también al paciente: «Este material es para que lo consultes aquí. No se descarga ni se comparte.»
+
+El riesgo que el sandbox cubriría —un PDF con JavaScript— lo acota lo de siempre: el archivo lo subió el profesional de la clínica a su propia biblioteca, y el tipo se valida por CONTENIDO al subirlo (solo PDF/CSV/PNG/JPEG).
+
+## 5 · El ícono de perfil giraba para siempre — y la causa no era la que parecía
+
+El requerimiento suponía un `.finally()` que faltaba. **No era eso.**
+
+`usePerfil` vive en `NavBar`, que monta en TODAS las pantallas. Cada pantalla, por su parte, inicializa Keycloak en su propio `useEffect`. Las dos cosas arrancaban **a la vez**, así que el perfil salía a pedirse mientras Keycloak todavía no estaba listo: `tokenVigente()` llama a `updateToken()`, que sin inicializar **lanza**, y la petición moría antes de salir.
+
+Era una carrera, y por eso no fallaba siempre: en una máquina rápida o con la sesión caliente, Keycloak ganaba. Cuando perdía, `perfil` se quedaba en `null` para siempre y la pantalla giraba sin decir nada.
+
+Y había un segundo defecto encima: la promesa fallida **se quedaba cacheada** en el módulo, de modo que cada montaje posterior recibía la misma promesa ya rechazada sin volver a pedir nada. No se arreglaba ni navegando a otra sección y volviendo — solo recargando la aplicación entera.
+
+Los tres arreglos:
+
+1. `cargar()` **espera a `initKeycloak()`** antes de pedir el perfil.
+2. Si falla, la promesa **se suelta** para que el siguiente intento vuelva a pedir.
+3. La pantalla **enseña el error** con botones de «Reintentar», «Volver a inicio» y «Cerrar sesión y volver a entrar» — una sesión caducada es la causa más común y salir y entrar la arregla.
+
+Comprobado: **5 de 5 recargas completas de `/perfil` cargan en menos de 1,5 s**, contra los fallos intermitentes de antes.
+
+Además, **«Cerrar sesión» ahora está en el perfil**. Estaba solo en la cabecera de Inicio; el ícono de perfil tiene que llevar a las tres cosas que se buscan en él: quién eres, cambiar lo tuyo y salir.
+
+## 6 · Withings fuera de la pantalla de dispositivos
+
+Se filtra en la app del paciente y **no se toca la API**: el proveedor sigue existiendo en el servidor, con sus tokens y sus lecturas ya sincronizadas, y un paciente que lo tenga conectado sigue aportando datos. Lo que se retira es la oferta.
+
+El filtro es por nombre de proveedor y no por posición, porque la lista la arma el servidor. Y si algún día no quedara ninguno, la pantalla dice «Próximamente: conexión con dispositivos» en vez de quedarse con un título y nada debajo, que se lee como un fallo de carga.
+
+Comprobado: no aparece «Withings»; quedan Fitbit y Google Fit.
+
+## Desviación respecto al prompt: las rutas sin `:id`
+
+El requerimiento describía las preferencias como `/api/pacientes/:id/preferencias-biblioteca`. Se implementaron como **`/api/paciente/preferencias-biblioteca`**, sin id, como TODAS las rutas de esta app: el paciente sale del token, no de un parámetro. Un id en la URL es un id que alguien puede cambiar por el de otro, y habría que defenderlo en cada endpoint; no ofrecerlo es la única defensa que no se olvida.
+
+## Tropiezos de entorno
+
+- **El cliente `nutrismart-patient` de Keycloak no permite «direct access grants»**, así que no se pueden pedir tokens de paciente por API para probar. Se habilitó temporalmente desde la API de administración y **se restauró a `false` al terminar** (comprobado: vuelve a responder `unauthorized_client`). Si hay que repetir las pruebas, es ese el interruptor.
+- **El recurso de biblioteca sembrado apunta a un PDF que no existe en disco**, y la ruta del archivo responde **500** (`ArchivoNoEncontradoError`) en vez de 404. Es un defecto anterior a este cambio y no se tocó; para poder probar el visor se colocó un PDF real en esa ruta. Conviene decidir aparte si un archivo que falta debe ser 404.
+- El arnés de pruebas con Puppeteer necesita **esperar a que aparezca el contenido**, no un número fijo de segundos: la app del paciente pasa por el redirect de Keycloak y varias cargas «vacías» que parecían fallos eran, en realidad, la pantalla de acceso.

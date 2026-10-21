@@ -302,6 +302,10 @@ export async function registerPacienteMensajeriaRoutes(app: FastifyInstance): Pr
               cv.kcal_prescritas, cv.pct_proteina, cv.pct_cho, cv.pct_grasa,
               cv.proteina_g, cv.cho_g, cv.grasa_g,
               cv.restricciones, cv.suplementos, cv.acuerdos,
+              -- R47: la meta de peso y lo prescrito, que el paciente no veia.
+              cv.peso_objetivo,
+              to_char(cv.fecha_objetivo_peso,'YYYY-MM-DD') as fecha_objetivo_peso,
+              cv.objetivos, cv.recomendaciones,
               prof.nombre as profesional
          from conclusion_valoracion cv
          join consulta con on con.id = cv.consulta_id
@@ -365,6 +369,23 @@ export async function registerPacienteMensajeriaRoutes(app: FastifyInstance): Pr
         grasaG: num(p['grasa_g']),
         restricciones: (p['restricciones'] ?? []) as string[],
         suplementos: p['suplementos'],
+        /*
+         * **Lo que el profesional prescribio, no todo lo que escribio** — R47.
+         *
+         * Viajan la meta de peso, los objetivos y las recomendaciones: son lo
+         * que se redacta PARA el paciente y lo que el esperaba encontrar aqui.
+         *
+         * NO viajan `diagnostico_principal`, `diagnostico_cie10`,
+         * `observaciones_clinicas` ni `justificacion`. Son documentacion
+         * clinica dirigida a otro profesional, y un diagnostico que el
+         * nutricionista aun no ha comunicado no debe enterarse el paciente por
+         * una pantalla. Si manana hay que enseñarlo, sera una decision
+         * explicita, no el efecto de haber añadido un campo al select.
+         */
+        pesoObjetivo: num(p['peso_objetivo']),
+        fechaObjetivoPeso: p['fecha_objetivo_peso'],
+        objetivos: p['objetivos'],
+        recomendaciones: (p['recomendaciones'] ?? []) as string[],
         acuerdos,
       },
     })
@@ -538,6 +559,82 @@ export async function registerPacienteMensajeriaRoutes(app: FastifyInstance): Pr
               estado === 'cancelada'
                 ? 'Esta cita se canceló.'
                 : 'Esta cita ya pasó o no se puede confirmar.',
+          })
+        }
+        return reply.code(404).send({ error: 'cita_no_encontrada', message: 'No se encontró la cita' })
+      }
+
+      return reply.send({ id: rows[0]['id'], estado: rows[0]['estado'] })
+    },
+  )
+
+  /* ---------------------------------------------------------------- */
+  /* PATCH /api/paciente/citas/:id/cancelar — R47                      */
+  /* ---------------------------------------------------------------- */
+  /**
+   * El paciente cancela una cita que habia confirmado.
+   *
+   * ## Por que PATCH y no DELETE
+   *
+   * Una cita cancelada **no se borra**: cambia de estado y sigue en la agenda
+   * del profesional, que necesita ver que ese hueco se libero y cuando. Es la
+   * regla de trazabilidad del proyecto —nada se borra fisicamente— y ademas es
+   * lo que ya hace `/confirmar`, con el que este endpoint es simetrico.
+   *
+   * ## Las condiciones van en el WHERE
+   *
+   * Igual que en `/confirmar`, y por lo mismo: entre un SELECT de comprobacion
+   * y el UPDATE la cita puede cambiar —el profesional la completa, otro
+   * dispositivo la cancela— y una comprobacion previa habria mirado un estado
+   * que ya no existe.
+   *
+   * **Solo `confirmada` y solo futura.** Confirmada porque es lo que pide el
+   * requerimiento: una cita que el paciente nunca confirmo se gestiona
+   * hablando con la clinica. Futura porque cancelar algo que ya ocurrio no es
+   * cancelar: es reescribir lo que paso, y eso lo decide el profesional.
+   */
+  app.patch<{ Params: { id: string } }>(
+    '/api/paciente/citas/:id/cancelar',
+    { preHandler: requireAuthPaciente },
+    async (request, reply) => {
+      const pac = await resolverPaciente(request.authPac.sub)
+      if (!pac) {
+        const r = await sinExpediente(request.authPac.sub)
+        return reply.code(r.codigo).send(r.cuerpo)
+      }
+
+      const { id } = request.params
+      if (!esUuid(id)) {
+        return reply.code(404).send({ error: 'cita_no_encontrada', message: 'No se encontró la cita' })
+      }
+
+      const { rows } = await pool.query(
+        `update cita set estado = 'cancelada', updated_at = now()
+          where id = $1 and paciente_id = $2 and clinica_id = $3
+            and estado = 'confirmada' and inicio > now()
+          returning id, estado::text as estado`,
+        [id, pac.id, pac.clinica_id],
+      )
+
+      if (!rows[0]) {
+        const { rows: existe } = await pool.query<{ estado: string }>(
+          `select estado::text as estado from cita
+            where id = $1 and paciente_id = $2 and clinica_id = $3`,
+          [id, pac.id, pac.clinica_id],
+        )
+        const estado = existe[0]?.estado
+        // Ya cancelada: se responde que si. El paciente pidio que quedara
+        // cancelada y lo esta; un error aqui solo le haria pulsar otra vez.
+        if (estado === 'cancelada') {
+          return reply.send({ id, estado: 'cancelada' })
+        }
+        if (estado) {
+          return reply.code(409).send({
+            error: 'no_cancelable',
+            message:
+              estado === 'programada'
+                ? 'Esta cita aún no está confirmada. Escríbele a tu nutricionista para cambiarla.'
+                : 'Esta cita ya pasó o no se puede cancelar desde aquí. Escríbele a tu nutricionista.',
           })
         }
         return reply.code(404).send({ error: 'cita_no_encontrada', message: 'No se encontró la cita' })

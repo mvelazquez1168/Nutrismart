@@ -7,15 +7,30 @@
  * No es una sexta pestaña de la barra inferior —cinco es el máximo
  * razonable en un móvil, como se decidió en la Rebanada 23—; se llega
  * desde una tarjeta de Inicio.
+ *
+ * ── Dos cambios de R47 ──────────────────────────────────────────────
+ *
+ * **Temas.** El paciente elige qué categorías le interesan y la lista
+ * se queda con esas. Sin elegir ninguna ve todo, que es lo que veía
+ * hasta ahora: la ausencia de preferencias es «no ha dicho», no «no
+ * quiere nada».
+ *
+ * **Los documentos se ven, no se bajan.** El botón de descargar se
+ * sustituyó por un visor dentro de la aplicación. No es una protección
+ * criptográfica —los bytes llegan al navegador porque tienen que llegar
+ * para poder verse— sino la retirada de la invitación: ni descarga, ni
+ * compartir, ni menú del visor.
  */
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   ApiError,
   CATEGORIAS_RECURSO,
-  descargarArchivoRecurso,
+  abrirArchivoRecurso,
+  getPreferenciasBiblioteca,
   getRecurso,
   getRecursos,
+  guardarPreferenciasBiblioteca,
   type Recurso,
   type RecursoResumen,
 } from '../lib/api'
@@ -37,9 +52,112 @@ async function conSesion(destino: string): Promise<boolean> {
   return false
 }
 
+/**
+ * «Mis temas»: las categorías que el paciente quiere seguir — R47.
+ *
+ * Vive dentro de la biblioteca y no en el perfil: se decide mirando la lista
+ * que se quiere filtrar, no en otra pantalla a la que hay que acordarse de ir.
+ *
+ * Guarda la lista ENTERA, no los cambios uno a uno. Es lo que el paciente ve
+ * al pulsar: con un guardado por casilla, cerrar a medias dejaría una
+ * selección que nunca estuvo en pantalla.
+ */
+function PanelTemas({ onGuardado }: { onGuardado: () => void }) {
+  const [seguidas, setSeguidas] = useState<string[] | null>(null)
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let vivo = true
+    getPreferenciasBiblioteca()
+      .then((p) => {
+        if (vivo) setSeguidas(p.seguidas)
+      })
+      .catch(() => {
+        if (vivo) setError('No hemos podido cargar tus temas')
+      })
+    return () => {
+      vivo = false
+    }
+  }, [])
+
+  async function guardar() {
+    if (seguidas === null || guardando) return
+    setGuardando(true)
+    setError(null)
+    try {
+      await guardarPreferenciasBiblioteca(seguidas)
+      onGuardado()
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'No se pudo guardar')
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  if (error) {
+    return (
+      <p role="alert" className="rounded-lg border border-border bg-surface p-4 text-sm text-ink">
+        {error}
+      </p>
+    )
+  }
+
+  if (seguidas === null) {
+    return <div className="h-40 animate-pulse rounded-lg bg-surface-2" />
+  }
+
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4 shadow-sm">
+      <h2 className="text-sm font-semibold text-ink">Mis temas</h2>
+      <p className="mt-0.5 text-xs text-muted">
+        Marca lo que te interesa y la biblioteca te enseñará solo eso. Si no marcas nada, verás
+        todo lo que publique tu nutricionista.
+      </p>
+
+      <ul className="mt-3 space-y-1">
+        {CATEGORIAS_RECURSO.map((c) => {
+          const marcada = seguidas.includes(c.clave)
+          return (
+            <li key={c.clave}>
+              <label className="flex cursor-pointer items-center gap-3 rounded-md px-1 py-2">
+                <input
+                  type="checkbox"
+                  checked={marcada}
+                  onChange={() =>
+                    setSeguidas((prev) =>
+                      (prev ?? []).includes(c.clave)
+                        ? (prev ?? []).filter((x) => x !== c.clave)
+                        : [...(prev ?? []), c.clave],
+                    )
+                  }
+                  className="h-5 w-5 shrink-0 accent-[color:var(--primary)]"
+                />
+                <span className="text-sm text-ink">{c.etiqueta}</span>
+              </label>
+            </li>
+          )
+        })}
+      </ul>
+
+      <button
+        type="button"
+        onClick={() => void guardar()}
+        disabled={guardando}
+        className="mt-2 w-full rounded-md bg-primary py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+      >
+        {guardando ? 'Guardando…' : 'Guardar mis temas'}
+      </button>
+    </section>
+  )
+}
+
 export function Biblioteca() {
   const navegar = useNavigate()
   const [categoria, setCategoria] = useState<string | null>(null)
+  const [verTemas, setVerTemas] = useState(false)
+  /** Se incrementa al guardar temas: obliga a recargar la lista filtrada. */
+  const [recarga, setRecarga] = useState(0)
   const [lista, setLista] = useState<RecursoResumen[] | null>(null)
   const [pagina, setPagina] = useState(1)
   const [hayMas, setHayMas] = useState(false)
@@ -68,16 +186,38 @@ export function Biblioteca() {
     return () => {
       vivo = false
     }
-  }, [navegar, categoria, pagina])
+  }, [navegar, categoria, pagina, recarga])
 
   return (
     <main className="min-h-screen bg-background pb-nav">
       <header className="bg-primary px-4 pb-8 pt-10 text-white">
-        <h1 className="text-xl font-bold">Biblioteca</h1>
-        <p className="mt-1 text-sm opacity-90">Material que publica tu nutricionista</p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-bold">Biblioteca</h1>
+            <p className="mt-1 text-sm opacity-90">Material que publica tu nutricionista</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setVerTemas((v) => !v)}
+            aria-expanded={verTemas}
+            className="shrink-0 rounded-pill border border-white/40 px-3 py-1.5 text-xs font-medium"
+          >
+            {verTemas ? 'Cerrar' : 'Mis temas'}
+          </button>
+        </div>
       </header>
 
       <div className="-mt-4 space-y-4 px-4">
+        {verTemas && (
+          <PanelTemas
+            onGuardado={() => {
+              setVerTemas(false)
+              setPagina(1)
+              setRecarga((n) => n + 1)
+            }}
+          />
+        )}
+
         <div className="flex gap-1.5 overflow-x-auto pb-1">
           <button
             type="button"
@@ -174,7 +314,8 @@ export function Biblioteca() {
                       un archivo: son cosas distintas y en un móvil con
                       datos contados, importa. */}
                   {r.tipo === 'enlace' && ' · enlace externo'}
-                  {r.tipo === 'archivo' && ' · archivo para descargar'}
+                  {/* Ya no se descarga: se abre dentro de la app (R47). */}
+                  {r.tipo === 'archivo' && ' · documento para ver'}
                 </p>
                 </div>
               </button>
@@ -202,21 +343,43 @@ export function RecursoDetalle() {
   const { id } = useParams<{ id: string }>()
   const navegar = useNavigate()
   const [recurso, setRecurso] = useState<Recurso | null>(null)
-  const [bajando, setBajando] = useState(false)
+  const [abriendo, setAbriendo] = useState(false)
+  /** La dirección de blob del documento abierto, y su tipo. null = cerrado. */
+  const [visor, setVisor] = useState<{ url: string; mime: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  async function bajar() {
-    if (!recurso?.archivo || bajando) return
-    setBajando(true)
+  /**
+   * Abre el documento DENTRO de la aplicación — R47.
+   *
+   * Antes esto bajaba el archivo. Ahora se trae el blob y se enseña en un
+   * visor propio: ni `download`, ni «compartir», ni la barra de herramientas
+   * del visor de PDF del navegador (`#toolbar=0`).
+   */
+  async function abrir() {
+    if (!recurso?.archivo || abriendo || visor) return
+    setAbriendo(true)
     setError(null)
     try {
-      await descargarArchivoRecurso(recurso.id, recurso.archivo.nombre)
+      setVisor(await abrirArchivoRecurso(recurso.id))
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'No se pudo descargar')
+      setError(e instanceof ApiError ? e.message : 'No se pudo abrir el documento')
     } finally {
-      setBajando(false)
+      setAbriendo(false)
     }
   }
+
+  function cerrarVisor() {
+    // El blob vive en memoria hasta que se suelta a mano.
+    if (visor) URL.revokeObjectURL(visor.url)
+    setVisor(null)
+  }
+
+  // Salir de la pantalla con el visor abierto también suelta el blob.
+  useEffect(() => {
+    return () => {
+      if (visor) URL.revokeObjectURL(visor.url)
+    }
+  }, [visor])
 
   useEffect(() => {
     let vivo = true
@@ -322,14 +485,16 @@ export function RecursoDetalle() {
                 <div className="mt-4">
                   <button
                     type="button"
-                    onClick={() => void bajar()}
-                    disabled={bajando}
+                    onClick={() => void abrir()}
+                    disabled={abriendo}
                     className="w-full rounded-md bg-primary py-2.5 text-sm font-semibold text-white disabled:opacity-60"
                   >
-                    {bajando ? 'Descargando…' : `Descargar ${recurso.archivo.nombre}`}
+                    {abriendo ? 'Abriendo…' : 'Ver documento'}
                   </button>
                   <p className="mt-1 text-center text-xs text-muted">
-                    {Math.max(1, Math.round(recurso.archivo.tamanoBytes / 1024))} kB
+                    {recurso.archivo.nombre} ·{' '}
+                    {Math.max(1, Math.round(recurso.archivo.tamanoBytes / 1024))} kB · se ve aquí
+                    dentro
                   </p>
                 </div>
               )}
@@ -337,6 +502,83 @@ export function RecursoDetalle() {
           </article>
         )}
       </div>
+
+      {/*
+        El visor — R47.
+
+        A pantalla completa y por encima de todo: en un móvil, un PDF metido
+        en una tarjeta de 200 px no se lee.
+
+        ## Por qué el iframe NO lleva `sandbox`
+
+        Se intentó. **Chrome desactiva su visor de PDF en cuanto el iframe
+        tiene el atributo `sandbox`, con cualquier valor**: se comprobó con
+        `sandbox=""`, con `allow-scripts` y con `allow-scripts
+        allow-same-origin`, y en los tres casos el marco pinta el icono de
+        documento roto. Sin el atributo, el PDF se ve. Entre un visor que no
+        enseña nada y uno que enseña el documento, el que cumple el
+        requerimiento es el segundo.
+
+        El riesgo que el sandbox cubriría es un PDF con JavaScript. Lo acota
+        lo de siempre: el archivo lo subió el profesional de la clínica a su
+        propia biblioteca, y el tipo se valida por CONTENIDO al subirlo
+        (`detectarTipo`, solo PDF/CSV/PNG/JPEG).
+
+        ## Qué quita esto y qué no
+
+        `#toolbar=0&navpanes=0` quita la barra del visor de PDF, que es donde
+        vive su botón de descargar. No hay `<a download>`, ni botón de
+        compartir, ni menú.
+
+        **No impide guardar el archivo a quien se lo proponga**: los bytes
+        están en el navegador porque tienen que estar para poder pintarse, y
+        el menú contextual del sistema sigue existiendo. Es una regla de uso
+        —el material se consulta dentro de la aplicación—, no un candado, y se
+        describe como lo que es.
+      */}
+      {visor && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Documento: ${recurso?.titulo ?? ''}`}
+          className="fixed inset-0 z-50 flex flex-col bg-black/90"
+        >
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <p className="min-w-0 flex-1 truncate text-sm font-medium text-white">
+              {recurso?.titulo}
+            </p>
+            <button
+              type="button"
+              onClick={cerrarVisor}
+              className="shrink-0 rounded-md border border-white/40 px-3 py-1.5 text-sm font-medium text-white"
+            >
+              Cerrar
+            </button>
+          </div>
+
+          <div className="min-h-0 flex-1 bg-surface">
+            {visor.mime.startsWith('image/') ? (
+              // Una imagen no necesita iframe. `pointer-events-none` quita el
+              // menú contextual del móvil, que trae «guardar imagen».
+              <img
+                src={visor.url}
+                alt={recurso?.titulo ?? 'Documento'}
+                className="pointer-events-none h-full w-full object-contain"
+              />
+            ) : (
+              <iframe
+                src={`${visor.url}#toolbar=0&navpanes=0`}
+                title={recurso?.titulo ?? 'Documento'}
+                className="h-full w-full border-0"
+              />
+            )}
+          </div>
+
+          <p className="px-4 py-2 text-center text-xs text-white/70">
+            Este material es para que lo consultes aquí. No se descarga ni se comparte.
+          </p>
+        </div>
+      )}
 
       <NavBar />
     </main>

@@ -51,7 +51,19 @@ export function Dispositivos() {
 
   const cargar = useCallback(async () => {
     try {
-      setLista(await getWearables())
+      /*
+       * Withings fuera de la pantalla del paciente — R47.
+       *
+       * Se filtra aquí y NO se toca la API: el proveedor sigue existiendo en
+       * el servidor, con sus tokens y sus lecturas ya sincronizadas, y un
+       * paciente que lo tenga conectado sigue aportando sus datos. Lo que se
+       * retira es la oferta.
+       *
+       * El filtro es por nombre de proveedor y no por posición: la lista la
+       * arma el servidor y su orden puede cambiar.
+       */
+      const todos = await getWearables()
+      setLista(todos.filter((w) => w.proveedor !== 'withings'))
     } catch (e) {
       if (e instanceof ApiError && e.codigo === 'sin_vincular') {
         navegar('/activar', { replace: true })
@@ -165,6 +177,15 @@ export function Dispositivos() {
 
         {lista === null ? (
           <div className="h-40 animate-pulse rounded-lg bg-surface-2" />
+        ) : lista.length === 0 ? (
+          // Sin proveedores que ofrecer, se dice. Una pantalla con título y
+          // nada debajo se lee como un fallo de carga.
+          <section className="rounded-lg border border-border bg-surface p-8 text-center shadow-sm">
+            <p className="font-medium text-ink">Próximamente: conexión con dispositivos</p>
+            <p className="mx-auto mt-1 max-w-xs text-sm text-muted">
+              Mientras tanto puedes apuntar tu peso y tus medidas a mano desde Progreso.
+            </p>
+          </section>
         ) : (
           lista.map((w) => (
             <section

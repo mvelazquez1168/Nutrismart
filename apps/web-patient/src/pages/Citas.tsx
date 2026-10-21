@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   ApiError,
+  cancelarCita,
   confirmarCita,
   getCitasPaciente,
   type AgendaPaciente,
@@ -104,6 +105,15 @@ export function Citas() {
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [confirmando, setConfirmando] = useState(false)
+  /**
+   * El paso intermedio de cancelar — R47.
+   *
+   * Cancelar no se deshace desde aquí: hay que escribirle a la clínica para
+   * recuperar el hueco. Un botón que lo hace al primer toque, en un móvil y
+   * al lado de otros botones, cancela citas sin querer.
+   */
+  const [confirmandoCancelar, setConfirmandoCancelar] = useState(false)
+  const [cancelando, setCancelando] = useState(false)
 
   useEffect(() => {
     let vivo = true
@@ -153,6 +163,34 @@ export function Citas() {
     }
   }
 
+  /**
+   * Cancelar SÍ espera la respuesta del servidor, y no se pinta antes.
+   *
+   * Al revés que confirmar. Confirmar y equivocarse no cuesta nada —se vuelve
+   * a pulsar—; ver «Cancelada» y que no lo esté manda al paciente a una cita
+   * a la que cree que no va, o le hace perder el hueco creyendo que lo
+   * conserva. Aquí la espera de medio segundo vale lo que cuesta.
+   */
+  async function cancelar(cita: CitaPaciente) {
+    if (cancelando || !datos) return
+    setCancelando(true)
+    setError(null)
+    try {
+      await cancelarCita(cita.id)
+      // Una cita cancelada deja de ser «la próxima»: se recarga la agenda
+      // para que suba la siguiente y esta caiga al historial, que es donde
+      // el servidor la coloca.
+      setDatos(await getCitasPaciente())
+      setConfirmandoCancelar(false)
+    } catch (e) {
+      setError(
+        e instanceof ApiError ? e.message : 'No se pudo cancelar. Inténtalo otra vez.',
+      )
+    } finally {
+      setCancelando(false)
+    }
+  }
+
   if (cargando) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-background">
@@ -196,20 +234,71 @@ export function Citas() {
               <p className="mt-2 text-sm text-ink">{datos.proxima.motivo}</p>
             )}
             {datos.proxima.estado === 'confirmada' ? (
-              <p
-                className="mt-3 flex items-center gap-1.5 text-sm font-semibold"
-                style={{ color: 'var(--status-normal)' }}
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                  className="h-4 w-4 fill-none stroke-current"
-                  strokeWidth={3}
+              <>
+                <p
+                  className="mt-3 flex items-center gap-1.5 text-sm font-semibold"
+                  style={{ color: 'var(--status-normal)' }}
                 >
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-                Asistencia confirmada
-              </p>
+                  <svg
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                    className="h-4 w-4 fill-none stroke-current"
+                    strokeWidth={3}
+                  >
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                  Asistencia confirmada
+                </p>
+
+                {/*
+                  Cancelar, en dos toques — R47.
+
+                  El primero abre la pregunta; el segundo cancela de verdad.
+                  Y el botón es discreto a propósito: lo normal es ir a la
+                  cita, no cancelarla, así que no compite con el resto de la
+                  tarjeta.
+                */}
+                {confirmandoCancelar ? (
+                  <div
+                    role="group"
+                    aria-label="Confirmar cancelación"
+                    className="mt-3 rounded-md border border-border bg-surface-2 p-3"
+                  >
+                    <p className="text-sm text-ink">
+                      ¿Seguro que quieres cancelar esta cita? Tu nutricionista lo verá y el
+                      horario quedará libre para otra persona.
+                    </p>
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void cancelar(datos.proxima!)}
+                        disabled={cancelando}
+                        className="flex-1 rounded-md py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+                        style={{ backgroundColor: 'var(--status-critical)' }}
+                      >
+                        {cancelando ? 'Cancelando…' : 'Sí, cancelar'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmandoCancelar(false)}
+                        disabled={cancelando}
+                        className="flex-1 rounded-md border border-border bg-surface py-2.5 text-sm font-semibold text-ink disabled:opacity-60"
+                      >
+                        No, mantenerla
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmandoCancelar(true)}
+                    className="mt-3 text-sm font-medium underline"
+                    style={{ color: 'var(--status-critical)' }}
+                  >
+                    Cancelar cita
+                  </button>
+                )}
+              </>
             ) : (
               <button
                 type="button"

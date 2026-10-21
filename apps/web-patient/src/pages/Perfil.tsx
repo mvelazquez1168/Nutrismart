@@ -7,11 +7,21 @@
  * nombre del expediente, ni su fecha de nacimiento, ni su correo: eso es
  * documentación clínica que escribe la clínica. Se le enseña, para que
  * sepa qué consta de él, con quién comprobarlo si está mal.
+ *
+ * ── El spinner que no paraba (R47) ──────────────────────────────────
+ *
+ * Esta pantalla pintaba una rueda mientras `perfil` fuera null, y nada
+ * más. Si la petición del perfil fallaba —token caducado, API caída, un
+ * móvil que pierde la cobertura justo ahí— `perfil` no llegaba nunca y
+ * la rueda giraba para siempre, sin decir qué pasaba y sin forma de
+ * reintentar. El error ya existía en el hook; esta pantalla no lo
+ * miraba. Ahora se enseña, con un botón de reintentar, y la otra mitad
+ * del arreglo está en `usePerfil`: la promesa fallida ya no se cachea.
  */
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ApiError } from '../lib/api'
-import { entrar, initKeycloak } from '../lib/keycloak'
+import { entrar, initKeycloak, salir } from '../lib/keycloak'
 import { usePerfil } from '../hooks/usePerfil'
 import { FONDOS, type Fondo } from '../lib/temas'
 import { Avatar } from '../components/Avatar'
@@ -29,7 +39,7 @@ function Tarjeta({ titulo, pie, children }: { titulo: string; pie?: string; chil
 
 export function Perfil() {
   const navegar = useNavigate()
-  const { perfil, cambiarFondo, cambiarPerfil } = usePerfil()
+  const { perfil, error: errorPerfil, reintentar, cambiarFondo, cambiarPerfil } = usePerfil()
 
   const [nombre, setNombre] = useState('')
   const [foto, setFoto] = useState('')
@@ -80,6 +90,39 @@ export function Perfil() {
     } catch {
       setError('No se pudo guardar el fondo')
     }
+  }
+
+  // El fallo se enseña ANTES de la rueda: con las dos condiciones al
+  // revés, un error seguiría pintando el spinner para siempre.
+  if (errorPerfil && !perfil) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background px-6">
+        <p role="alert" className="text-center text-sm text-ink">
+          {errorPerfil}
+        </p>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={reintentar}
+            className="rounded-md bg-primary px-5 py-2.5 text-sm font-semibold text-white"
+          >
+            Reintentar
+          </button>
+          <button
+            type="button"
+            onClick={() => navegar('/inicio')}
+            className="rounded-md border border-border bg-surface px-5 py-2.5 text-sm font-semibold text-ink"
+          >
+            Volver a inicio
+          </button>
+        </div>
+        {/* Una sesión caducada es la causa más común, y salir y volver a
+            entrar la arregla. Decirlo evita el «no funciona nada». */}
+        <button type="button" onClick={salir} className="text-xs text-muted underline">
+          Cerrar sesión y volver a entrar
+        </button>
+      </main>
+    )
   }
 
   if (!perfil) {
@@ -215,6 +258,23 @@ export function Perfil() {
             </div>
           </dl>
         </Tarjeta>
+
+        {/*
+          Cerrar sesión, aquí — R47.
+
+          Estaba solo en la cabecera de Inicio. El icono de perfil tiene que
+          llevar a las tres cosas que se buscan en él: quién eres, cambiar lo
+          tuyo y salir. Buscar «Salir» en otra pantalla no es evidente para
+          nadie.
+        */}
+        <button
+          type="button"
+          onClick={salir}
+          className="w-full rounded-lg border border-border bg-surface py-3 text-sm font-semibold shadow-sm"
+          style={{ color: 'var(--status-critical)' }}
+        >
+          Cerrar sesión
+        </button>
       </div>
 
       <NavBar />

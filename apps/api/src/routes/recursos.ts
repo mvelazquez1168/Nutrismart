@@ -107,6 +107,27 @@ export async function registerRecursosRoutes(app: FastifyInstance): Promise<void
       const cat = categoriaValida(request.query.categoria) ? request.query.categoria : null
       const pagina = Math.max(1, Number(request.query.pagina) || 1)
 
+      /*
+       * Las categorias que el paciente eligio seguir — R47.
+       *
+       * **Sin preferencias guardadas se ve todo**, que es lo que se veia hasta
+       * ahora. La ausencia de filas significa «no ha elegido», no «no quiere
+       * nada»: leerlo como lista vacia dejaria la biblioteca en blanco a todos
+       * los pacientes existentes el dia del despliegue.
+       *
+       * El filtro de la barra superior (`categoria`) sigue mandando sobre
+       * esto: es una eleccion de ahora mismo, y una preferencia guardada no
+       * debe impedir mirar algo a proposito... siempre que sea una de las
+       * suyas. Pedir una categoria NO seguida devuelve vacio, que es coherente
+       * con lo que la pantalla ofrece.
+       */
+      const { rows: prefs } = await pool.query<{ categoria: string }>(
+        `select categoria from paciente_preferencia_biblioteca
+          where paciente_id = $1 and clinica_id = $2`,
+        [pac.id, pac.clinica_id],
+      )
+      const seguidas = prefs.length === 0 ? null : prefs.map((f) => f.categoria)
+
       // El paciente solo ve lo publicado y activo de SU clínica. El
       // contenido no viaja en la lista: son artículos largos y la lista
       // solo necesita de qué van.
@@ -124,9 +145,10 @@ export async function registerRecursosRoutes(app: FastifyInstance): Promise<void
                   on l.recurso_id = r.id and l.paciente_id = $1
           where r.clinica_id = $2 and r.publicado = true and r.activo = true
             and ($3::text is null or r.categoria = $3)
+            and ($6::text[] is null or r.categoria = any($6))
           order by r.publicado_en desc
           limit $4 offset $5`,
-        [pac.id, pac.clinica_id, cat, POR_PAGINA, (pagina - 1) * POR_PAGINA],
+        [pac.id, pac.clinica_id, cat, POR_PAGINA, (pagina - 1) * POR_PAGINA, seguidas],
       )
 
       const total = rows[0] ? Number(rows[0]['total']) : 0
@@ -233,6 +255,116 @@ export async function registerRecursosRoutes(app: FastifyInstance): Promise<void
    * vuelve a comprobar el permiso. Una URL prefirmada, una vez emitida,
    * la abre cualquiera que la reciba — y estos son documentos de salud.
    */
+  /* ---------------------------------------------------------------- */
+  /* Preferencias de biblioteca — R47                                  */
+  /* ---------------------------------------------------------------- */
+  /**
+   * **Sin `:id` en la ruta, a proposito.**
+   *
+   * El requerimiento las describia como `/api/pacientes/:id/...`. Aqui el
+   * paciente sale del token —como en TODAS las rutas de esta app— y no de un
+   * parametro: un id en la URL es un id que alguien puede cambiar por el de
+   * otro, y habria que defenderlo en cada endpoint. No ofrecerlo es la unica
+   * defensa que no se olvida.
+   */
+  app.get(
+    '/api/paciente/preferencias-biblioteca',
+    { preHandler: requireAuthPaciente },
+    async (request, reply) => {
+      const pac = await resolverPaciente(request.authPac.sub)
+      if (!pac) {
+        const r = await sinExpediente(request.authPac.sub)
+        return reply.code(r.codigo).send(r.cuerpo)
+      }
+
+      const { rows } = await pool.query<{ categoria: string }>(
+        `select categoria from paciente_preferencia_biblioteca
+          where paciente_id = $1 and clinica_id = $2
+          order by categoria`,
+        [pac.id, pac.clinica_id],
+      )
+
+      return reply.send({
+        // El catalogo viaja con la respuesta: la pantalla necesita pintar
+        // TODAS las casillas, no solo las marcadas, y asi no tiene que
+        // llevar su propia copia de la lista que puede quedarse vieja.
+        categorias: CATEGORIAS,
+        seguidas: rows.map((f) => f.categoria),
+      })
+    },
+  )
+
+  /**
+   * Reemplaza la lista entera, no añade ni quita de una en una.
+   *
+   * Es una pantalla de casillas: lo que el paciente ve al pulsar «Guardar» es
+   * el estado completo que quiere. Un PATCH por categoria obligaria a la
+   * pantalla a llevar la cuenta de lo que cambio, y dos pestañas abiertas
+   * acabarian mezclando sus listas.
+   */
+  app.put<{ Body: { categorias?: unknown } }>(
+    '/api/paciente/preferencias-biblioteca',
+    { preHandler: requireAuthPaciente },
+    async (request, reply) => {
+      const pac = await resolverPaciente(request.authPac.sub)
+      if (!pac) {
+        const r = await sinExpediente(request.authPac.sub)
+        return reply.code(r.codigo).send(r.cuerpo)
+      }
+
+      const crudas = Array.isArray(request.body?.categorias) ? request.body.categorias : []
+      /*
+       * Una categoria que no existe se RECHAZA, no se ignora.
+       *
+       * Ignorarla guardaria una lista distinta de la que el paciente mando y
+       * la pantalla enseñaria otra cosa al recargar, sin explicacion. Y `Set`
+       * porque la misma dos veces reventaria la clave primaria con un 500 que
+       * no dice nada.
+       */
+      const invalidas = crudas.filter((c) => !categoriaValida(c))
+      if (invalidas.length > 0) {
+        return reply.code(400).send({
+          error: 'categoria_invalida',
+          message: 'Alguna de las categorías no existe',
+          categorias: invalidas,
+        })
+      }
+      const elegidas = [...new Set(crudas as Categoria[])]
+
+      /*
+       * Borrar e insertar en UNA transaccion.
+       *
+       * Sin ella, un fallo entre las dos sentencias deja al paciente sin
+       * ninguna preferencia —y por tanto viendo la biblioteca entera— cuando
+       * lo que hizo fue intentar cambiarlas.
+       */
+      const cliente = await pool.connect()
+      try {
+        await cliente.query('begin')
+        await cliente.query(
+          `delete from paciente_preferencia_biblioteca
+            where paciente_id = $1 and clinica_id = $2`,
+          [pac.id, pac.clinica_id],
+        )
+        if (elegidas.length > 0) {
+          await cliente.query(
+            `insert into paciente_preferencia_biblioteca (clinica_id, paciente_id, categoria)
+             select $1, $2, c from unnest($3::text[]) as c`,
+            [pac.clinica_id, pac.id, elegidas],
+          )
+        }
+        await cliente.query('commit')
+      } catch (e) {
+        await cliente.query('rollback')
+        throw e
+      } finally {
+        cliente.release()
+      }
+
+      return reply.send({ categorias: CATEGORIAS, seguidas: elegidas })
+    },
+  )
+
   app.get<{ Params: { id: string } }>(
     '/api/paciente/recursos/:id/archivo',
     { preHandler: requireAuthPaciente },
