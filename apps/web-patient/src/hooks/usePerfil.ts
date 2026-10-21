@@ -13,6 +13,7 @@ import {
   guardarPerfil,
   type Perfil,
 } from '../lib/api'
+import { initKeycloak } from '../lib/keycloak'
 import { aplicarFondo, type Fondo } from '../lib/temas'
 
 let cache: Perfil | null = null
@@ -25,12 +26,40 @@ function publicar(p: Perfil): void {
   for (const s of suscriptores) s(p)
 }
 
-/** Una sola petición aunque monten tres componentes a la vez. */
+/**
+ * Una sola petición aunque monten tres componentes a la vez.
+ *
+ * ## La causa del spinner infinito — R47
+ *
+ * **Se espera a `initKeycloak()` antes de pedir nada.** Este hook vive en
+ * `NavBar`, que monta en TODAS las pantallas; cada pantalla, por su parte,
+ * inicializa Keycloak en su propio `useEffect`. Las dos cosas arrancaban a la
+ * vez, así que el perfil salía a pedirse mientras Keycloak todavía no estaba
+ * listo: `tokenVigente()` llama a `updateToken()`, que sin inicializar
+ * **lanza**, y la petición moría antes de salir.
+ *
+ * Era una carrera, y por eso no fallaba siempre: en una máquina rápida o con
+ * la sesión caliente, Keycloak ganaba. Cuando perdía, `perfil` se quedaba en
+ * null para siempre y la pantalla giraba sin decir nada.
+ *
+ * ## Y si aun así falla, la promesa se suelta
+ *
+ * Antes se quedaba guardada en `cargando`, de modo que el primer fallo
+ * envenenaba la caché: cada montaje posterior recibía la MISMA promesa ya
+ * rechazada, sin volver a pedir nada. No se arreglaba ni navegando a otra
+ * sección y volviendo — solo recargando la aplicación entera.
+ */
 function cargar(): Promise<Perfil> {
-  cargando ??= getPerfil().then((p) => {
-    publicar(p)
-    return p
-  })
+  cargando ??= initKeycloak()
+    .then(() => getPerfil())
+    .then((p) => {
+      publicar(p)
+      return p
+    })
+    .catch((e) => {
+      cargando = null
+      throw e
+    })
   return cargando
 }
 
@@ -46,6 +75,12 @@ export function usePerfil() {
     return () => {
       suscriptores.delete(setPerfil)
     }
+  }, [])
+
+  /** Volver a intentarlo después de un fallo, sin recargar la aplicación. */
+  const reintentar = useCallback(() => {
+    setError(null)
+    cargar().catch(() => setError('No hemos podido cargar tu perfil'))
   }, [])
 
   /**
@@ -85,5 +120,5 @@ export function usePerfil() {
     [],
   )
 
-  return { perfil, error, cambiarFondo, cambiarPerfil }
+  return { perfil, error, reintentar, cambiarFondo, cambiarPerfil }
 }

@@ -165,6 +165,18 @@ export interface PlanPaciente {
   grasaG: number | null
   restricciones: string[]
   suplementos: string | null
+  /**
+   * La meta de peso que fijó el profesional — R47.
+   *
+   * null = no la fijó. La fecha solo existe si existe el peso (lo garantiza
+   * un CHECK en la base).
+   */
+  pesoObjetivo: number | null
+  fechaObjetivoPeso: string | null
+  /** Los objetivos del tratamiento, en las palabras del profesional. */
+  objetivos: string | null
+  /** Lo que el profesional indicó hacer. Es el «plan prescrito». */
+  recomendaciones: string[]
   acuerdos: AcuerdoPaciente[]
 }
 
@@ -208,6 +220,16 @@ export function getCitasPaciente(): Promise<AgendaPaciente> {
 
 export function confirmarCita(id: string): Promise<{ id: string; estado: string }> {
   return pedir(`/api/paciente/citas/${id}/confirmar`, { method: 'PATCH', conAuth: true })
+}
+
+/**
+ * Cancelar una cita confirmada — R47.
+ *
+ * PATCH y no DELETE: la cita no se borra, cambia de estado. El profesional
+ * tiene que seguir viendo que ese hueco se liberó.
+ */
+export function cancelarCita(id: string): Promise<{ id: string; estado: string }> {
+  return pedir(`/api/paciente/citas/${id}/cancelar`, { method: 'PATCH', conAuth: true })
 }
 
 /* ---- Diario de comidas y métricas ---- */
@@ -485,28 +507,60 @@ export interface Recurso extends Omit<RecursoResumen, 'leido' | 'tieneArchivo'> 
 }
 
 /**
- * Descarga el archivo de un recurso.
+ * Trae el archivo de un recurso para **verlo**, no para descargarlo — R47.
  *
- * No sirve un `<a href>`: la API exige la cabecera Authorization y un
- * enlace normal no la envía. Se pide con fetch y se entrega al navegador
- * como descarga.
+ * No sirve un `<a href>`: la API exige la cabecera Authorization y un enlace
+ * normal no la envía. Se pide con fetch y se devuelve una dirección de blob
+ * que el visor monta en pantalla.
+ *
+ * ## Lo que esto es y lo que no
+ *
+ * Antes esto mismo terminaba en un `<a download>` sintético. Se quitó: el
+ * material de la biblioteca se consulta dentro de la aplicación.
+ *
+ * **No es una protección criptográfica y no se presenta como tal.** Los bytes
+ * llegan al navegador —tienen que llegar para poder verse— y quien sepa
+ * abrir las herramientas de desarrollo los tiene. Lo que se quita es la
+ * invitación: ni botón de descargar, ni de compartir, ni barra del visor.
+ * Ver el comentario del visor en `pages/Biblioteca.tsx` para el detalle de
+ * qué cubre esto y qué no.
+ *
+ * Quien llama es responsable de `URL.revokeObjectURL` al cerrar: sin eso el
+ * blob se queda en memoria hasta recargar la página.
  */
-export async function descargarArchivoRecurso(id: string, nombre: string): Promise<void> {
+export async function abrirArchivoRecurso(
+  id: string,
+): Promise<{ url: string; mime: string }> {
   const token = await tokenVigente()
   const r = await fetch(`${BASE}/api/paciente/recursos/${id}/archivo`, {
     headers: { Authorization: `Bearer ${token}` },
   })
-  if (!r.ok) throw new ApiError(r.status, 'No se pudo descargar el archivo')
+  if (!r.ok) throw new ApiError(r.status, 'No se pudo abrir el documento')
   const blob = await r.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = nombre
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  // Sin esto el blob se queda en memoria hasta recargar la página.
-  URL.revokeObjectURL(url)
+  return { url: URL.createObjectURL(blob), mime: blob.type }
+}
+
+/* ---- R47 · Preferencias de biblioteca ---- */
+
+export interface PreferenciasBiblioteca {
+  /** El catálogo completo, para pintar todas las casillas. */
+  categorias: string[]
+  /** Las que el paciente sigue. Vacío = no ha elegido, y ve todo. */
+  seguidas: string[]
+}
+
+export function getPreferenciasBiblioteca(): Promise<PreferenciasBiblioteca> {
+  return pedir('/api/paciente/preferencias-biblioteca', { conAuth: true })
+}
+
+export function guardarPreferenciasBiblioteca(
+  categorias: string[],
+): Promise<PreferenciasBiblioteca> {
+  return pedir('/api/paciente/preferencias-biblioteca', {
+    method: 'PUT',
+    conAuth: true,
+    body: JSON.stringify({ categorias }),
+  })
 }
 
 export function getRecursos(
