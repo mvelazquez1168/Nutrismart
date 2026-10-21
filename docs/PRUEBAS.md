@@ -5444,3 +5444,101 @@ Tres bloques, 24 casos, todos pasando:
 
 - **`curl -F "archivo=@/c/Users/…"` no encuentra el archivo** en el bash de Windows: hay que darle la ruta con letra de unidad (`C:/Users/…`). Falla con `curl: (26) Failed to open/read local data from file`, que parece un problema de permisos y no lo es.
 - Un script suelto en `.ts` fuera de un paquete con `"type": "module"` lo compila `tsx` como CJS y rechaza el `await` de nivel superior. Extensión `.mts`, y ejecutarlo **desde `apps/api`** para que resuelva `puppeteer`.
+
+---
+
+# R45 — Consumo Usual: sin paréntesis no se analiza, abreviaturas clínicas y cuántos SÍ entraron
+
+Tres arreglos de la misma pantalla, los tres sobre lo mismo: que el profesional sepa qué va a pasar y de dónde salió el número.
+
+## 1 · Sin paréntesis no se analiza nada (revierte R43)
+
+**Antes (R43):** un Consumo Usual sin paréntesis se analizaba entero. Se hizo por compatibilidad, para no dejar sin valores los registros ya escritos.
+
+**Ahora (R45):** sin un solo paréntesis **no se llama a la IA**, los `ai_*` de la fila se limpian y la pantalla lo dice.
+
+### Por qué se revirtió
+
+Analizar el relato completo es exactamente lo que la convención vino a evitar. El modelo recibe «desayuna tarde porque entra a las 6» y devuelve raciones; el profesional ve unas kcal y no tiene cómo saber que salieron de ahí. **Un total que nadie pidió es peor que un total ausente: el ausente se ve.**
+
+No cobrar la llamada es un efecto secundario agradable, no el motivo.
+
+### Lo que ve el profesional
+
+El banner ahora dice:
+
+> ⓘ Para la búsqueda de equivalencias en la lista de intercambios solo se consideran los alimentos que escribas **entre paréntesis ( )**. El resto del texto se conserva, pero se ignora en el análisis. Si no incluyes ningún paréntesis, **no se realiza el análisis ADA**.
+
+Y al pulsar «Analizar IA» sin paréntesis aparece, **debajo del botón**, el aviso de que no había nada marcado. Sin eso el botón dejaría de girar y no pasaría nada visible, que es la peor respuesta posible a una pulsación.
+
+> El Recordatorio de 24 horas **no cambia**: ahí se escribe una lista, se analiza entera, y un paréntesis es una aclaración («2 tazas de café (sin azúcar)») que no debe convertirse en el único alimento de la fila.
+
+## 2 · «2 harinas», «3 protes»: los intercambios que el profesional ya contó
+
+Un nutricionista no siempre escribe alimentos: escribe **la cuenta ya hecha**. «2 harinas» no es un alimento que buscar —no existe una fila «harinas» en el catálogo de equivalencias—, así que caía en «sin equivalencia» con las casillas vacías, que es justo lo contrario de lo que el profesional acababa de decir.
+
+Ahora la fase 1 puede devolver **grupo + número de intercambios** en vez de una fila del catálogo, y **el servidor multiplica contra `grupo_intercambio`**, igual que con cualquier alimento. El modelo nombra; el código calcula; la tabla manda. Vocabulario reconocido: harinas/cereales/granos, protes/proteínas/carnes, lácteos/leche, fruta, verdura/vegetal, grasa, azúcar.
+
+Tres decisiones que importan:
+
+- **Los nombres de grupo salen de `grupo_intercambio`, no escritos en el prompt.** Una clínica puede tener grupos propios, y un nombre a mano se desincroniza de la tabla sin que nada avise.
+- **Un grupo que la tabla no tiene se descarta y se registra.** No se aproxima al más parecido: «proteína magra» y «proteína alta en grasa» se diferencian en 55 kcal por intercambio, y elegir por parecido de letras es inventar.
+- **Tope de 20 intercambios por grupo.** Un «200 protes» es una lectura mal hecha; doce ya es mucho para un tiempo de comida.
+
+## 3 · Cuántos SÍ entraron, no solo cuántos fallaron
+
+La fila decía «2 alimentos sin equivalencia» y nada más, y la pregunta era inevitable: **«si dice que no encontró nada, ¿de dónde salen estos valores?»**.
+
+Ahora se persiste también `ai_reconocidos` —el simétrico de `ai_no_encontrado`— y la fila enseña los dos lados:
+
+> **1 alimento clasificado**  ⚠ **1 alimento sin equivalencia**
+
+El `title` de cada badge lista cuáles. Se persiste por lo mismo que el otro: un dato que se pierde al recargar solo lo ve quien estaba mirando. No hizo falta migración — las filas viven en la columna `jsonb` de `registro_dietetico`.
+
+## Comprobación
+
+API local en el 4001, token de `ana@vida.cr`, consulta #20 de Ana Castro. Se escribe el texto con un PUT y se llama a `/calcular`.
+
+| Caso | Texto | Resultado |
+|---|---|---|
+| **A · sin paréntesis** | `Desayuna tarde porque entra a las 6, casi siempre cafe con leche y pan` | `sin_parentesis: true`, los cuatro `ai_*` en **null**, mensaje en pantalla |
+| **B · con paréntesis** | `Desayuna tarde, casi siempre (250 ml de leche descremada) y (1 taza de arroz cocido)` | **264 kcal**, CHO 42,48 · reconocidos: los dos · sin equivalencia: ninguno |
+| **C · abreviaturas** | `Lo tipico: (2 harinas), (3 protes) y (1 fruta)` | **355 kcal**, CHO 45, prot 27, grasas 8 · reconocidos: los tres |
+| **D · mezcla** | `Come (2 harinas) y (pizza con pina)` | **160 kcal** · **1 clasificado** y **1 sin equivalencia**, los dos a la vista |
+
+### El caso A no consumió IA
+
+`select count(*) from uso_ia where funcion='identificacion_dietetica'` pasó de **17 a 20** con los cuatro casos corridos: tres llamadas para B, C y D, **cero para A**.
+
+### La aritmética de C cuadra a mano
+
+Contra `grupo_intercambio`: harina 15/3/1/80, proteína magra 0/7/2/45, fruta 15/0/0/60.
+
+| | CHO | Prot | Grasas | kcal |
+|---|---|---|---|---|
+| 2 × harina | 30 | 6 | 2 | 160 |
+| 3 × proteína magra | 0 | 21 | 6 | 135 |
+| 1 × fruta | 15 | 0 | 0 | 60 |
+| **Total** | **45** | **27** | **8** | **355** |
+
+Es exactamente lo que devolvió el endpoint. El detalle por alimento muestra `2 × harina`, `3 × proteina_magra`, `1 × fruta` — el profesional puede seguir cada número hasta su grupo.
+
+### En pantalla
+
+Banner con el texto nuevo, y la fila del caso D mostrando **«1 alimento clasificado»** junto a **«⚠ 1 alimento sin equivalencia»**.
+
+### Comprobación automática
+
+`npm run verificar:labs-pdf -w @nutrismart/api` incluye los casos de la convención y **se actualizó con la regla nueva**: Consumo Usual sin paréntesis ahora espera `null` (no analizar) donde antes esperaba el texto entero, y se añadió el caso de que el Recordatorio 24 h sin paréntesis sí se analiza entero. Los 26 casos pasan.
+
+## Desviaciones respecto al prompt
+
+El prompt R45 describe código anterior a R46 (el cálculo en dos fases). Tres cosas no existían:
+
+| El prompt decía | Realidad | Qué se hizo |
+|---|---|---|
+| Editar la constante `SISTEMA_ADA` con la lista de abreviaturas | No existe desde R46: la tabla ADA vive en `grupo_intercambio` y el modelo ya no calcula | Las abreviaturas se enseñan en el prompt de la **fase 1**, que devuelve grupo + número; **la multiplicación la sigue haciendo el servidor**. Meter valores ADA en un prompt desharía R46 |
+| `update registro_dietetico_fila set ... where id = $1` | No existe esa tabla: las seis filas viven en una columna `jsonb` de `registro_dietetico` | Se limpian las claves `ai_*` de la fila y se reescribe el `jsonb` con el `guardar()` que ya usa el handler |
+| El estado `sinEquivalencia` y `_sinEquivalencia` en el endpoint `/analizar-ia` | La pantalla usa `/calcular` y lee `ai_no_encontrado`, que se **persiste** | La guardia se puso en **los dos** endpoints, y el contador nuevo usa `ai_reconocidos`, persistido igual |
+
+El prompt también pedía el contador «· N sin equivalencia ADA» junto a los macros. Lo que había que resolver —según su propio contexto— era que no se veía **cuántos SÍ se clasificaron**; el badge de los que fallan ya existía desde R48. Así que se añadió el que faltaba, el de los clasificados, y se dejó el otro como estaba.

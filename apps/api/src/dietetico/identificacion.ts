@@ -109,6 +109,22 @@ export interface AlimentoIdentificado {
   grupos: { grupo: string; porciones_por_referencia: number }[]
   encontrado: boolean
   nota: string | null
+  /**
+   * Intercambios escritos DIRECTAMENTE por el profesional — R45.
+   *
+   * «2 harinas» o «3 protes» no son alimentos: son la cuenta de intercambios
+   * ya hecha por quien sabe hacerla. Buscarlos en el catalogo de equivalencias
+   * no encuentra nada —no hay una fila «harinas»— y caian en «sin
+   * equivalencia» con las casillas vacias, que es exactamente al reves de lo
+   * que el profesional acababa de decir.
+   *
+   * Aqui el modelo no calcula: nombra el grupo y cuantos intercambios. Los
+   * valores de ese grupo salen de `grupo_intercambio` y la multiplicacion la
+   * hace el servidor, igual que con un alimento del catalogo.
+   *
+   * null o vacio = el texto no traia intercambios directos.
+   */
+  intercambios_directos: { grupo: string; porciones: number }[] | null
 }
 
 const INSTRUCCIONES = `Eres un asistente de nutricion clinica. Tu UNICA tarea es IDENTIFICAR alimentos en un texto libre y emparejarlos con una fila del catalogo de equivalencias que se te entrega.
@@ -120,6 +136,21 @@ Lo que SI haces:
 2. Para cada uno, copiar la cantidad y la unidad TAL COMO las escribio el profesional, separadas: "250 ml" -> cantidad_usuario: 250, unidad_usuario: "ml". "1/2 taza" -> cantidad_usuario: 0.5, unidad_usuario: "taza". "1 huevo" -> cantidad_usuario: 1, unidad_usuario: null (no hay unidad, es una cuenta).
 3. Elegir del catalogo la fila que corresponde al alimento, por SIGNIFICADO y no por parecido de letras: "leche descremada" es "leche 0% grasa"; "arroz cocido" es "arroz blanco".
 4. Copiar de la fila elegida su numero (equivalencia_id), su porcion de referencia partida en cantidad y unidad, y sus grupos con las porciones que indica.
+
+ABREVIATURAS CLINICAS — el profesional cuenta intercambios, no alimentos:
+
+A veces no se escribe un alimento sino la cuenta ya hecha: "2 harinas", "3 protes", "1 lacteo". Eso NO va al catalogo —no existe una fila "harinas"— y antes caia en "no encontrado" con las casillas vacias, que es lo contrario de lo que el profesional acababa de decir.
+
+Cuando el texto tenga cantidad + nombre de grupo, devuelve ese alimento con "encontrado": false, "equivalencia_id": null y rellena "intercambios_directos" con el grupo de la lista de abajo y el numero de intercambios. Equivalencias de vocabulario:
+- "harinas", "harina", "cereal(es)", "grano(s)", "almidon(es)" -> grupo de harinas
+- "protes", "proteina(s)", "carne(s)" -> proteina magra, salvo que diga lo contrario ("semimagra", "alta en grasa")
+- "lacteo(s)", "leche(s)" -> lacteo descremado, salvo que diga "semi" o "entero"
+- "fruta(s)" -> frutas
+- "verdura(s)", "vegetal(es)" -> vegetales
+- "grasa(s)" -> grasas
+- "azucar(es)", "dulce(s)" -> azucares
+
+Usa el nombre de grupo EXACTO de la lista GRUPOS DE INTERCAMBIO que viene mas abajo. Si el texto nombra un alimento de verdad —"pan", "pollo", "aguacate", "leche descremada"— eso NO es una abreviatura: buscalo en el catalogo como siempre. Esto es solo para cuando se escribe el grupo por su nombre con una cantidad delante.
 
 Reglas:
 - equivalencia_id es el numero entre corchetes del catalogo. No inventes numeros: si ningun alimento del catalogo corresponde, usa encontrado: false, equivalencia_id: null y explica en "nota" que no esta en el catalogo.
@@ -142,7 +173,21 @@ Formato exacto de la respuesta:
       "unidad_porcion_referencia": "tz",
       "grupos": [{ "grupo": "lacteo_descremado", "porciones_por_referencia": 1 }],
       "encontrado": true,
-      "nota": null
+      "nota": null,
+      "intercambios_directos": null
+    },
+    {
+      "descripcion_usuario": "2 harinas",
+      "alimento_encontrado": null,
+      "cantidad_usuario": 2,
+      "unidad_usuario": null,
+      "equivalencia_id": null,
+      "cantidad_porcion_referencia": null,
+      "unidad_porcion_referencia": null,
+      "grupos": [],
+      "encontrado": false,
+      "nota": "intercambios escritos directamente",
+      "intercambios_directos": [{ "grupo": "harina", "porciones": 2 }]
     }
   ]
 }`
@@ -173,14 +218,27 @@ export function construirPromptIdentificacion(
   texto: string,
   catalogo: EntradaCatalogo[],
   excluidos: number[] = [],
+  gruposDisponibles: string[] = [],
 ): string {
   const lineas = catalogo.map(linea).join('\n')
+  /*
+   * Los nombres de grupo salen de `grupo_intercambio`, no escritos aqui — R45.
+   *
+   * Es lo mismo que se hace con el catalogo de equivalencias y por el mismo
+   * motivo: una clinica puede tener grupos propios, y un nombre escrito a mano
+   * en el prompt se desincroniza de la tabla sin que nada avise. Si no llegan
+   * grupos, el bloque no se imprime y el modelo no usa el atajo.
+   */
+  const bloqueGrupos =
+    gruposDisponibles.length === 0
+      ? ''
+      : `\n\nGRUPOS DE INTERCAMBIO (nombres exactos para "intercambios_directos"):\n${gruposDisponibles.join(', ')}`
   const veto =
     excluidos.length === 0
       ? ''
       : `\n\nIMPORTANTE: ya se intentaron las filas ${excluidos.join(', ')} y su unidad de porcion NO se puede comparar con la cantidad que escribio el profesional (por ejemplo, el escribio mililitros y la fila mide en unidades). Busca otra fila del catalogo cuya unidad de porcion sea del mismo tipo que la que escribio el profesional. Si no existe ninguna, devuelve encontrado: false.`
 
-  return `${INSTRUCCIONES}
+  return `${INSTRUCCIONES}${bloqueGrupos}
 
 CATALOGO DE EQUIVALENCIAS (elige por numero):
 ${lineas}
@@ -231,6 +289,7 @@ export function parsearIdentificacion(texto: string): AlimentoIdentificado[] {
       grupos: grupos(o['grupos']),
       encontrado: o['encontrado'] === true,
       nota: cadena(o['nota']),
+      intercambios_directos: intercambiosDirectos(o['intercambios_directos']),
     })
   }
   return salida
@@ -255,6 +314,31 @@ function numero(v: unknown): number | null {
 function entero(v: unknown): number | null {
   const n = numero(v)
   return n === null ? null : Math.trunc(n)
+}
+
+/**
+ * Los intercambios que el profesional escribio ya contados — R45.
+ *
+ * **Se descarta lo que no sea un numero positivo y sensato.** Un «0 harinas»
+ * no es nada, y un «200 protes» es una lectura mal hecha: el tope deja fuera
+ * lo segundo sin estorbar a nadie —doce intercambios de un grupo en un tiempo
+ * de comida ya es mucho— y un grupo que no existe se filtra despues, contra la
+ * tabla, en el servidor.
+ */
+const INTERCAMBIOS_MAX = 20
+
+function intercambiosDirectos(v: unknown): { grupo: string; porciones: number }[] | null {
+  if (!Array.isArray(v)) return null
+  const salida: { grupo: string; porciones: number }[] = []
+  for (const cruda of v) {
+    const o = (cruda ?? {}) as Record<string, unknown>
+    const grupo = cadena(o['grupo'])
+    const porciones = numero(o['porciones'])
+    if (grupo === null || porciones === null) continue
+    if (porciones <= 0 || porciones > INTERCAMBIOS_MAX) continue
+    salida.push({ grupo, porciones })
+  }
+  return salida.length === 0 ? null : salida
 }
 
 function grupos(v: unknown): { grupo: string; porciones_por_referencia: number }[] {

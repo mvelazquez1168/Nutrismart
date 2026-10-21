@@ -156,6 +156,9 @@ function comoLoDariaElModelo(c: Caso, indice: number): AlimentoIdentificado {
     grupos: [],
     encontrado: true,
     nota: null,
+    // R45: este banco prueba la fase 2 contra una fila del catalogo. Los
+    // intercambios escritos a mano son el otro camino y tienen el suyo.
+    intercambios_directos: null,
   }
 }
 
