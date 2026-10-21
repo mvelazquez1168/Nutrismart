@@ -12,11 +12,29 @@
  * en silencio.
  */
 
+/**
+ * El rango que el INFORME declara para un analito — R44.
+ *
+ * Un lado puede faltar: hay informes que solo dan `< 200` o `> 40`, y un
+ * cero en el lado que falta seria un limite inventado.
+ */
+export interface ReferenciaDeclarada {
+  minimo: number | null
+  maximo: number | null
+}
+
 export interface FilaReconocida {
   codigo: string
   nombre: string
   unidad: string
   valor: number
+  /**
+   * El rango de referencia que venia en el informe — R44.
+   *
+   * Solo lo rellena la lectura del PDF: un CSV de dos columnas no lo trae.
+   * Ausente o null = no se declaro, y manda el catalogo de la clinica.
+   */
+  referencia?: ReferenciaDeclarada | null
 }
 
 export interface FilaNoReconocida {

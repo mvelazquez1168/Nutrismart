@@ -25,6 +25,15 @@
  * para colarse, mientras que un código que no está en el catálogo no resuelve
  * a nada y acaba en «no reconocidos», a la vista.
  *
+ * ## El rango que trae el informe — R44
+ *
+ * Del PDF no solo salen los valores: salen tambien los rangos de referencia
+ * que el laboratorio imprime al lado. Se extraen y viajan con cada resultado
+ * porque son los del laboratorio que hizo ESA medicion, y porque sin ellos el
+ * expediente decia «Sin referencia» en todo: el catalogo de rangos de la
+ * clinica esta vacio. Lo que el informe no declare se queda en null, nunca en
+ * cero — ver `aReferencia`.
+ *
  * ## El PDF escaneado
  *
  * Un informe fotocopiado no tiene texto seleccionable: no hay nada que
@@ -32,7 +41,13 @@
  * es la verdad, en vez de un listado vacío que parece un fallo.
  */
 import { PDFParse } from 'pdf-parse'
-import type { BiomarcadorConocido, FilaNoReconocida, FilaReconocida, ResultadoParseo } from './csv.js'
+import type {
+  BiomarcadorConocido,
+  FilaNoReconocida,
+  FilaReconocida,
+  ReferenciaDeclarada,
+  ResultadoParseo,
+} from './csv.js'
 
 /**
  * Por debajo de esto no hay informe que leer: es un PDF escaneado, o una
@@ -96,17 +111,21 @@ ${texto}
 Instrucciones:
 1. Identifica cada analito del informe junto con su valor numerico.
 2. Mapea cada analito al codigo del catalogo que mejor corresponda. Usa el codigo EXACTO del catalogo, no lo inventes ni lo abrevies.
-3. Copia el valor tal como lo dice el informe. No conviertas unidades: si la unidad del informe no es la del catalogo, deja el valor como esta y el profesional lo corrige.
-4. Si un analito del informe no corresponde a ningun codigo del catalogo, incluyelo en "no_reconocidos" con su etiqueta y su valor tal cual. No lo fuerces a un codigo parecido.
-5. Un valor que el informe da como "< 5" o "no reactivo" no es un numero medido: va en "no_reconocidos".
-6. No incluyas analitos que el informe no menciona.
-7. Devuelve UNICAMENTE JSON valido, sin texto adicional y sin cercas de markdown.
+3. Para cada analito reconocido, extrae tambien el rango de referencia que aparezca en el informe (columna "Rango", "Valores de referencia", "Referencia normal" o similar). Si el rango tiene forma "70.0 - 100.0", extrae minimo=70.0 y maximo=100.0. Si solo tiene limite inferior (">40") extrae minimo=40.0 y maximo=null. Si solo tiene limite superior ("<200") extrae minimo=null y maximo=200.0. Si no hay referencia visible para ese analito, deja referencia en null.
+4. NO inventes un rango que el informe no muestre, ni lo completes con lo que sepas de ese analito. Un rango inventado decide si un valor sale marcado como alterado: si no esta en el papel, es null.
+5. Copia el valor tal como lo dice el informe. No conviertas unidades: si la unidad del informe no es la del catalogo, deja el valor como esta y el profesional lo corrige.
+6. Si un analito del informe no corresponde a ningun codigo del catalogo, incluyelo en "no_reconocidos" con su etiqueta y su valor tal cual. No lo fuerces a un codigo parecido.
+7. Un valor que el informe da como "< 5" o "no reactivo" no es un numero medido: va en "no_reconocidos".
+8. No incluyas analitos que el informe no menciona.
+9. Devuelve UNICAMENTE JSON valido, sin texto adicional y sin cercas de markdown.
 
 Formato:
 {
-  "reconocidos": [{ "codigo": "GLU", "valor": 95.0 }],
+  "reconocidos": [{ "codigo": "GLU", "valor": 95.0, "referencia": { "minimo": 70.0, "maximo": 100.0 } }],
   "no_reconocidos": [{ "etiqueta": "Ferritina", "valor": "45.2" }]
-}`
+}
+
+referencia puede ser null si el informe no muestra rango para ese analito.`
 }
 
 /** Extrae el objeto JSON de la respuesta, tolerando cercas de markdown. */
@@ -120,6 +139,20 @@ function recortarJson(texto: string): string {
   return limpio
 }
 
+/**
+ * Un item de `reconocidos` tal como lo devuelve el modelo — R44.
+ *
+ * Es la forma de ENTRADA, no la de salida: el nombre y la unidad no vienen
+ * del modelo sino del catalogo (ver `interpretarLectura`). Lo que si aporta
+ * el modelo, y nadie mas puede, es el rango que el informe trae impreso.
+ */
+interface ReconocidoParseo {
+  codigo: string
+  valor: number
+  /** Rango de referencia declarado en el informe. null si no se menciona. */
+  referencia: ReferenciaDeclarada | null
+}
+
 function aNumero(bruto: unknown): number | null {
   if (typeof bruto === 'number') return Number.isFinite(bruto) ? bruto : null
   if (typeof bruto !== 'string') return null
@@ -127,6 +160,27 @@ function aNumero(bruto: unknown): number | null {
   if (texto === '' || /^[<>]/.test(texto)) return null
   const n = Number(texto)
   return Number.isFinite(n) ? n : null
+}
+
+/**
+ * El rango declarado por el informe, saneado — R44.
+ *
+ * **Un lado que no se entiende se queda en null, no en cero.** Un cero como
+ * limite inferior convierte cualquier valor en «normal»; un cero como limite
+ * superior convierte todos en «alterado». Los dos son una afirmacion clinica
+ * que el informe no hizo.
+ *
+ * Un rango invertido —minimo mayor que maximo— se descarta entero: no es un
+ * rango, es una lectura mal hecha, y con el no se puede decidir nada.
+ */
+function aReferencia(bruto: unknown): ReferenciaDeclarada | null {
+  if (typeof bruto !== 'object' || bruto === null) return null
+  const o = bruto as Record<string, unknown>
+  const minimo = aNumero(o['minimo'])
+  const maximo = aNumero(o['maximo'])
+  if (minimo === null && maximo === null) return null
+  if (minimo !== null && maximo !== null && minimo > maximo) return null
+  return { minimo, maximo }
 }
 
 /**
@@ -154,12 +208,13 @@ export function interpretarLectura(
 
   const crudos = Array.isArray(obj['reconocidos']) ? (obj['reconocidos'] as unknown[]) : []
   for (const bruto of crudos) {
-    const fila = (bruto ?? {}) as Record<string, unknown>
+    const fila = (bruto ?? {}) as Partial<Record<keyof ReconocidoParseo, unknown>>
     const codigo = typeof fila['codigo'] === 'string' ? fila['codigo'].trim() : ''
     if (codigo === '') continue
 
     const conocido = porCodigo.get(codigo.toLowerCase())
     const valor = aNumero(fila['valor'])
+    const referencia = aReferencia(fila['referencia'])
 
     // Un codigo que el catalogo no tiene es el modelo inventando: se enseña
     // con su etiqueta para que no se pierda, pero no entra como valor.
@@ -183,6 +238,9 @@ export function interpretarLectura(
       nombre: conocido.nombre,
       unidad: conocido.unidad,
       valor,
+      // R44: el rango del informe viaja con el resultado. Null cuando el
+      // informe no lo trae — ahi manda el catalogo de la clinica.
+      referencia,
     })
   }
 

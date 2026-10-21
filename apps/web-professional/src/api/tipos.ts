@@ -243,8 +243,25 @@ export interface ArchivoSubido {
   sha256: string
 }
 
+/**
+ * El rango de referencia que venia impreso en el informe — R44.
+ *
+ * Un lado puede faltar: hay informes que solo declaran «< 200» o «> 40».
+ */
+export interface ReferenciaDeclarada {
+  minimo: number | null
+  maximo: number | null
+}
+
 export interface PrevisualizacionCsv {
-  reconocidos: { codigo: string; nombre: string; unidad: string; valor: number }[]
+  reconocidos: {
+    codigo: string
+    nombre: string
+    unidad: string
+    valor: number
+    /** Solo presente en la previsualización de PDF. */
+    referencia?: ReferenciaDeclarada | null
+  }[]
   noReconocidos: { etiqueta: string; valor: string }[]
   avisos: string[]
 }
@@ -255,7 +272,18 @@ export interface DatosEstudioEnvio {
   notas: string | null
   archivoId: string | null
   snapshotId: string | null
-  resultados: { codigo: string; valor: number }[]
+  resultados: {
+    codigo: string
+    valor: number
+    /**
+     * Rango de referencia declarado por el laboratorio (del PDF) — R44.
+     *
+     * Ausente o null = el informe no lo traía; el expediente cae entonces al
+     * catálogo de rangos de la clínica.
+     */
+    refMinimo?: number | null
+    refMaximo?: number | null
+  }[]
 }
 
 /* ------------------------------------------------------------------ */

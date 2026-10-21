@@ -5444,3 +5444,100 @@ Tres bloques, 24 casos, todos pasando:
 
 - **`curl -F "archivo=@/c/Users/…"` no encuentra el archivo** en el bash de Windows: hay que darle la ruta con letra de unidad (`C:/Users/…`). Falla con `curl: (26) Failed to open/read local data from file`, que parece un problema de permisos y no lo es.
 - Un script suelto en `.ts` fuera de un paquete con `"type": "module"` lo compila `tsx` como CJS y rechaza el `await` de nivel superior. Extensión `.mts`, y ejecutarlo **desde `apps/api`** para que resuelva `puppeteer`.
+
+---
+
+# R44 — El rango de referencia que trae el informe, guardado con cada resultado
+
+## Qué cambia
+
+Del PDF del laboratorio ya no salen solo los valores: salen también **los rangos de referencia que el propio informe imprime al lado**, y se guardan junto a cada resultado (`lab_resultado.ref_minimo` / `ref_maximo`, migración **051**). Al listar, esas referencias **mandan sobre el catálogo** de la clínica.
+
+| Origen del rango | Cuándo |
+|---|---|
+| `por_resultado` | El informe declaraba un rango para ese analito |
+| `por_sexo` | No lo declaraba, y la clínica tiene un rango para ese sexo |
+| `general` | No lo declaraba, y la clínica tiene un rango general |
+| `ninguno` | Nadie lo declaró → el resultado sale como **sin referencia**, que es la verdad |
+
+### Por qué junto al resultado y no en el catálogo
+
+El rango que imprime un informe es **el del laboratorio que hizo esa medición**, con su método y en su fecha. Cambia entre laboratorios y con el tiempo. Metido en el catálogo global se aplicaría hacia atrás a estudios de otros laboratorios —afirmando algo que nadie dijo— y reinterpretaría un laboratorio de hace dos años con el criterio de hoy. Guardado con el resultado, cada medición conserva el criterio con el que se emitió.
+
+### La prioridad se decide con los dos lados juntos
+
+`ref_minimo` y `ref_maximo` se miran **como un par**, no uno por uno. Un informe que solo declara «< 200» deja el mínimo en null, y eso **es** su referencia. Mirando cada lado por separado, el mínimo caería al del catálogo y saldría un rango mitad de un sitio y mitad de otro, que no es el criterio de nadie.
+
+### Lo que no se inventa
+
+- Al modelo se le dice explícitamente que **no complete un rango que el informe no muestre**. Un rango inventado decide si un valor sale marcado como alterado.
+- Un lado que no se entiende queda en **null, nunca en cero**: un cero como límite inferior volvería «normal» cualquier valor; como límite superior, volvería «alterado» todos.
+- Un **rango invertido** (mínimo mayor que máximo) se descarta **entero**, en el extractor y otra vez en la ruta. No es un rango: es una lectura mal hecha.
+- Un rango ilegible **no invalida la medición**: el valor entra igual y el resultado cae al catálogo. Rechazar el estudio entero por un rango mal leído perdería el dato.
+
+## Comprobación
+
+Migración 051 aplicada (`npm run migrate -w @nutrismart/api` → `+ 051 … aplicando…`). API local en el 4001, token de `ana@vida.cr`, el mismo informe de 16 analitos de R43.
+
+### 1 · El extractor saca los 14 rangos, incluidos los de un solo lado
+
+| Analito | En el informe | `referencia` devuelta |
+|---|---|---|
+| Glicemia en ayunas | `70 - 100` | `{minimo: 70, maximo: 100}` |
+| Hemoglobina glicosilada A1c | `< 5.7` | `{minimo: null, maximo: 5.7}` |
+| Colesterol HDL | `> 50` | `{minimo: 50, maximo: null}` |
+| Creatinina sérica | `0.6 - 1.1` | `{minimo: 0.6, maximo: 1.1}` |
+| …los 14 del catálogo | | los 14 con su rango |
+
+### 2 · El expediente deja de decir «Sin referencia»
+
+Guardado el estudio con esas referencias y leído el listado:
+
+```
+  glucosa_ayunas   112     70 - 100       alterado
+  hba1c            6.2     null - 5.7     alterado
+  colesterol_total 228     null - 200     alterado
+  hdl              41      50 - null      alterado
+  ldl              152     null - 130     alterado
+  trigliceridos    186     null - 150     alterado
+  hemoglobina      11.8    12 - 15.5      alterado
+  hierro_serico    58      60 - 170       alterado
+  ferritina        18.5    15 - 150       normal
+  tsh              2.41    0.4 - 4        normal
+  vitamina_d       22      30 - 100       alterado
+  creatinina       0.82    0.6 - 1.1      normal
+  alt              34      null - 41      normal
+  ast              28      null - 40      normal
+```
+
+**9 alterados, 5 normales, cero `sin_referencia`.** Los dos casos de un solo lado salen bien: HDL 41 contra «> 50» es **alterado**, y ALT 34 contra «< 41» es **normal**.
+
+### 3 · La captura a mano sigue cayendo al catálogo, y el rango invertido se descarta
+
+Estudio capturado sin referencias y con uno invertido a propósito:
+
+| Enviado | Guardado en `lab_resultado` | En el listado |
+|---|---|---|
+| `glucosa_ayunas: 99` (sin refs) | `ref_minimo` y `ref_maximo` en null | rango `70 - 100` del catálogo, `normal` |
+| `hba1c: 5.1, refMinimo: 10, refMaximo: 4` | **los dos en null** — invertido, descartado entero | rango `4 - 5.6` del catálogo, `normal` |
+| `tsh: 3.0, refMaximo: 4.0` (solo un lado) | `ref_maximo = 4` | rango `null - 4` — el del cuerpo, **no** mezclado con el del catálogo |
+
+## Una desviación respecto al prompt: el catálogo NO estaba vacío
+
+El prompt parte de que «la tabla `biomarcador_rango` está vacía». **En esta base de desarrollo no lo está**: tiene 38 filas, 19 por clínica, con rangos generales y por sexo. Se comprobó antes y después del cambio.
+
+Así que el «Sin referencia» que se veía en el expediente **no venía de un catálogo vacío**, sino de lo que arregló R43: los estudios subidos como PDF se guardaban con **cero resultados**, y sin resultados no hay nada que comparar — de ahí los tres mensajes juntos («Sin valores capturados», «Sin referencia», «Todavía no hay interpretación»).
+
+Eso **no invalida este cambio**, y conviene decir por qué: que el rango del laboratorio emisor mande sobre un catálogo genérico es correcto clínicamente, y lo es más todavía en una instalación donde el catálogo sí esté vacío o incompleto, que es lo que pasará en una clínica recién dada de alta. Lo que cambia es la expectativa: **esto no era la causa de los tres mensajes, es una mejora del criterio.**
+
+## Lo que hay que decir en capacitación
+
+1. **El rango que se ve junto a un resultado puede venir de dos sitios.** Si el informe lo traía, es el del laboratorio que hizo la medición. Si no, es el que la clínica tiene configurado. Lo primero es más fiable, y por eso gana.
+2. **Un estudio viejo no se reinterpreta.** El rango se guarda con el resultado, así que cambiar los rangos de la clínica hoy no mueve el «alterado» de un laboratorio del año pasado.
+3. **Si no hay rango por ningún lado, el sistema dice «sin referencia» y no «normal».** Un valor sin criterio no se puede declarar bueno.
+
+## Tropiezo de entorno: un proceso viejo en el 4001
+
+La primera corrida devolvió `referencia: null` en los 14 analitos, como si el modelo no supiera extraerlos. No era eso: la API nueva **nunca llegó a levantar** —`EADDRINUSE: address already in use 0.0.0.0:4001`, en el log y en ningún otro sitio— y las peticiones las contestaba el proceso de la sesión anterior, con el código viejo.
+
+Vale la pena recordarlo porque el síntoma apunta justo al sitio equivocado: parece un problema del prompt o del modelo, y es un puerto ocupado. Antes de dudar de la IA, mirar el log de arranque y `netstat -ano | grep :4001`.

@@ -69,6 +69,43 @@ const SQL_RANGO_EFECTIVO = `
   end as origen_rango
 `
 
+/**
+ * El rango efectivo de un RESULTADO, con la referencia del informe primero — R44.
+ *
+ * Aparte de `SQL_RANGO_EFECTIVO` porque alli no hay resultado: el catalogo
+ * describe el criterio de la clinica, y esta describe el de una medicion
+ * concreta.
+ *
+ * **La prioridad es el informe.** `ref_minimo`/`ref_maximo` los declaro el
+ * laboratorio que hizo ESA medicion, con su metodo y en su fecha; el catalogo
+ * de la clinica es el criterio de quien no estaba ahi. Y hasta R44 el catalogo
+ * estaba ademas vacio, asi que el expediente decia «Sin referencia» en todo.
+ *
+ * El `is not null` se comprueba sobre los DOS lados juntos, no uno por uno: un
+ * informe que solo declara «< 200» da `ref_minimo` null y `ref_maximo` 200, y
+ * eso ES su referencia. Mirando cada lado por separado, el minimo caeria al
+ * del catalogo y saldria un rango mitad de un sitio y mitad de otro, que no es
+ * el criterio de nadie.
+ */
+const SQL_RANGO_EFECTIVO_RESULTADO = `
+  case
+    when cd.ref_minimo is not null or cd.ref_maximo is not null then cd.ref_minimo
+    when r_sexo.id is not null then r_sexo.minimo
+    else r_gen.minimo
+  end as minimo,
+  case
+    when cd.ref_minimo is not null or cd.ref_maximo is not null then cd.ref_maximo
+    when r_sexo.id is not null then r_sexo.maximo
+    else r_gen.maximo
+  end as maximo,
+  case
+    when cd.ref_minimo is not null or cd.ref_maximo is not null then 'por_resultado'
+    when r_sexo.id is not null then 'por_sexo'
+    when r_gen.id  is not null then 'general'
+    else 'ninguno'
+  end as origen_rango
+`
+
 const JOIN_RANGOS = `
   left join biomarcador_rango r_sexo
     on r_sexo.clinica_id = $CLINICA
@@ -216,7 +253,9 @@ export async function listarEstudios(
   // fecha de muestra. Un estudio anulado no debe servir de comparacion.
   const { rows: resultados } = await pool.query<FilaResultado>(
     `with valores as (
-       select e.id as estudio_id, e.fecha, e.created_at, r.biomarcador_codigo as codigo, r.valor
+       select e.id as estudio_id, e.fecha, e.created_at,
+              r.biomarcador_codigo as codigo, r.valor,
+              r.ref_minimo, r.ref_maximo
        from lab_estudio e
        join lab_resultado r on r.estudio_id = e.id
        where e.paciente_id = $1 and e.clinica_id = $2 and e.estado = 'vigente'
@@ -227,7 +266,7 @@ export async function listarEstudios(
        from valores
      )
      select cd.estudio_id, cd.codigo, b.nombre, b.unidad, cd.valor, cd.anterior,
-            ${SQL_RANGO_EFECTIVO}
+            ${SQL_RANGO_EFECTIVO_RESULTADO}
      from con_delta cd
      join biomarcador b on b.codigo = cd.codigo
      ${JOIN_RANGOS.replace(/\$CLINICA/g, '$2').replace(/\$SEXO/g, '$3::sexo_biologico')}
@@ -284,7 +323,16 @@ export interface DatosEstudio {
   notas: string | null
   archivoId: string | null
   snapshotId: string | null
-  resultados: { codigo: string; valor: number }[]
+  /**
+   * Las referencias son OPCIONALES: solo llegan cuando el informe las traia
+   * (R44). Una captura a mano no las tiene, y ahi manda el catalogo.
+   */
+  resultados: {
+    codigo: string
+    valor: number
+    refMinimo?: number | null
+    refMaximo?: number | null
+  }[]
 }
 
 export async function crearEstudio(
@@ -343,15 +391,22 @@ export async function crearEstudio(
     if (!id) throw new Error('El insert de lab_estudio no devolvio id')
 
     if (datos.resultados.length > 0) {
+      // R44: las referencias que declaraba el informe viajan con cada
+      // resultado. `?? null` y no `?? 0`: un informe que no declara rango
+      // deja los dos lados en null, y eso es lo que hace que el listado
+      // caiga al catalogo en vez de inventar un intervalo que empieza en 0.
       await cliente.query(
-        `insert into lab_resultado (clinica_id, estudio_id, biomarcador_codigo, valor)
-         select $2, $1, c, v
-         from unnest($3::text[], $4::numeric[]) as t(c, v)`,
+        `insert into lab_resultado
+           (clinica_id, estudio_id, biomarcador_codigo, valor, ref_minimo, ref_maximo)
+         select $2, $1, c, v, rmin, rmax
+         from unnest($3::text[], $4::numeric[], $5::numeric[], $6::numeric[]) as t(c, v, rmin, rmax)`,
         [
           id,
           tenantId,
           datos.resultados.map((r) => r.codigo),
           datos.resultados.map((r) => r.valor),
+          datos.resultados.map((r) => r.refMinimo ?? null),
+          datos.resultados.map((r) => r.refMaximo ?? null),
         ],
       )
     }
