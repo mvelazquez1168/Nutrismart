@@ -5447,97 +5447,61 @@ Tres bloques, 24 casos, todos pasando:
 
 ---
 
-# R44 — El rango de referencia que trae el informe, guardado con cada resultado
+# R46 — Pestaña «Dashboards»: la evolución de los laboratorios
 
-## Qué cambia
+## Qué resuelve
 
-Del PDF del laboratorio ya no salen solo los valores: salen también **los rangos de referencia que el propio informe imprime al lado**, y se guardan junto a cada resultado (`lab_resultado.ref_minimo` / `ref_maximo`, migración **051**). Al listar, esas referencias **mandan sobre el catálogo** de la clínica.
+La pestaña de Laboratorios enseña **un estudio**. La pregunta clínica que no podía responder es **hacia dónde va**: una glucosa de 112 no significa lo mismo viniendo de 140 que viniendo de 95, y hasta ahora eso había que reconstruirlo abriendo estudio por estudio.
 
-| Origen del rango | Cuándo |
-|---|---|
-| `por_resultado` | El informe declaraba un rango para ese analito |
-| `por_sexo` | No lo declaraba, y la clínica tiene un rango para ese sexo |
-| `general` | No lo declaraba, y la clínica tiene un rango general |
-| `ninguno` | Nadie lo declaró → el resultado sale como **sin referencia**, que es la verdad |
+Nueva pestaña **Dashboards**, entre Laboratorios y Clínico, con una gráfica de línea por biomarcador y todo su histórico. **No hay endpoint nuevo**: los datos salen de `GET /api/pacientes/:id/laboratorios`, que ya existía. Como el componente los pide al montarse, la gráfica se actualiza sola en cuanto se registra un estudio y se vuelve a la pestaña.
 
-### Por qué junto al resultado y no en el catálogo
+## Decisiones que importan
 
-El rango que imprime un informe es **el del laboratorio que hizo esa medición**, con su método y en su fecha. Cambia entre laboratorios y con el tiempo. Metido en el catálogo global se aplicaría hacia atrás a estudios de otros laboratorios —afirmando algo que nadie dijo— y reinterpretaría un laboratorio de hace dos años con el criterio de hoy. Guardado con el resultado, cada medición conserva el criterio con el que se emitió.
+### Sin librería de gráficas
 
-### La prioridad se decide con los dos lados juntos
+SVG a mano, siguiendo `GraficaComposicion.tsx`. Series cortas sobre un eje de tiempo no justifican una dependencia, y así **los colores salen de los tokens** como el resto de la aplicación.
 
-`ref_minimo` y `ref_maximo` se miran **como un par**, no uno por uno. Un informe que solo declara «< 200» deja el mínimo en null, y eso **es** su referencia. Mirando cada lado por separado, el mínimo caería al del catálogo y saldría un rango mitad de un sitio y mitad de otro, que no es el criterio de nadie.
+### El color del punto es el estado clínico, no decoración
 
-### Lo que no se inventa
+Cada punto se pinta con el color de su estado —`normal` verde, `alterado` rojo, `sin_referencia` gris—, que son los colores clínicos **fijos** del design system y los mismos que usa la tabla de laboratorios. Un punto rojo en la gráfica y una fila roja en la tabla significan lo mismo.
 
-- Al modelo se le dice explícitamente que **no complete un rango que el informe no muestre**. Un rango inventado decide si un valor sale marcado como alterado.
-- Un lado que no se entiende queda en **null, nunca en cero**: un cero como límite inferior volvería «normal» cualquier valor; como límite superior, volvería «alterado» todos.
-- Un **rango invertido** (mínimo mayor que máximo) se descarta **entero**, en el extractor y otra vez en la ruta. No es un rango: es una lectura mal hecha.
-- Un rango ilegible **no invalida la medición**: el valor entra igual y el resultado cae al catálogo. Rechazar el estudio entero por un rango mal leído perdería el dato.
+**El color nunca va solo:** cada punto lleva su `<title>` con fecha, valor y estado en palabras, la tarjeta repite el estado en texto, y la gráfica tiene un `aria-label` que resume el recorrido («Evolución de Glucosa en ayunas en 3 estudios, de 142 a 98 mg/dL»).
+
+### La banda de referencia entra siempre en el encuadre
+
+El eje vertical se calcula con los valores medidos **y los límites del rango**. Si se ajustara solo a los valores, un paciente con todo fuera de rango vería una línea cómodamente centrada con el límite fuera de la imagen: **la gráfica diría «normal» con los datos de «alterado»**.
+
+Un rango abierto por un lado —«< 100»— se dibuja hasta el borde del encuadre. Cerrarlo en un número inventado sería decir otra cosa.
+
+### Un solo punto no es una tendencia
+
+Un biomarcador con un único resultado muestra su tarjeta y su valor, y en lugar de gráfica dice «Un solo estudio registrado. La evolución aparece a partir del segundo». Trazar una línea con un punto sugiere una tendencia que nadie ha medido.
+
+### La pestaña no se puede «completar», y no lo finge
+
+Las otras cinco secciones son formularios con estado en `consulta_seccion`; esta solo lee. Se marcó como `informativa: true` y **no lleva el círculo de completitud**: sin eso enseñaría un «pendiente» para siempre, prometiendo un trabajo que no existe. Su `aria-label` dice «Dashboards, solo consulta». Tampoco entra en `SECCIONES_EXIGIDAS` ni viaja al servidor —la lista de secciones válidas de `routes/consultas.ts` no la conoce, y no hace falta que la conozca.
 
 ## Comprobación
 
-Migración 051 aplicada (`npm run migrate -w @nutrismart/api` → `+ 051 … aplicando…`). API local en el 4001, token de `ana@vida.cr`, el mismo informe de 16 analitos de R43.
+Tres estudios sembrados para Ana Castro (abril, julio y octubre) con un biomarcador bajando, otro subiendo, uno estable y uno con un solo punto. Con la API en el 4001 y la aplicación en el navegador:
 
-### 1 · El extractor saca los 14 rangos, incluidos los de un solo lado
+| Qué se miró | Resultado |
+|---|---|
+| Pestañas | `Antropometría · Laboratorios · **Dashboards** · Clínico · Dietético · Prescripción` — en su sitio, y la nueva **sin** círculo de completitud |
+| Gráficas dibujadas | **4** (glucosa, HbA1c, LDL, TSH). Ferritina, con un solo estudio, sin gráfica y con su explicación |
+| Agrupación | Perfil glucémico · Perfil lipídico · Hematología · Tiroides, en el orden del catálogo |
+| `aria-label` de las gráficas | «Evolución de Glucosa en ayunas en 3 estudios, de 142 a 98 mg/dL», y equivalentes |
+| Color de los 12 puntos | glucosa `critical, critical, normal` (142 y 121 fuera, 98 dentro) · LDL los tres `critical` · TSH los tres `normal` |
+| Valor actual y delta | «98 mg/dL · 15/10 · **-23 vs. anterior** · dentro de referencia» |
 
-| Analito | En el informe | `referencia` devuelta |
+El caso que más dice es la **glucosa**: tres puntos descendiendo desde fuera de la banda hasta dentro de ella, con el último punto verde. Esa es la lectura que antes había que hacer de memoria abriendo tres estudios.
+
+## Desviaciones respecto al prompt
+
+| El prompt decía | Qué se hizo | Por qué |
 |---|---|---|
-| Glicemia en ayunas | `70 - 100` | `{minimo: 70, maximo: 100}` |
-| Hemoglobina glicosilada A1c | `< 5.7` | `{minimo: null, maximo: 5.7}` |
-| Colesterol HDL | `> 50` | `{minimo: 50, maximo: null}` |
-| Creatinina sérica | `0.6 - 1.1` | `{minimo: 0.6, maximo: 1.1}` |
-| …los 14 del catálogo | | los 14 con su rango |
+| `viewBox="0 0 320 80"` | `0 0 320 90` | Con 80 px las tres etiquetas del eje Y y las fechas se pisan. Diez píxeles más y caben sin tocarse |
+| «si obtener el grupo requiere un segundo fetch complejo, mostrar sin agrupar» | **Sí se agrupa** | No era complejo: `getBiomarcadores()` ya existe y trae `grupo` y `decimales`. Se piden los dos en paralelo, y si el catálogo falla las series caen a «Otros» con un decimal en vez de tumbar el panel |
+| Solo añadir la sección y el panel | Además, `informativa` en `SECCIONES` y en `TabsValoracion` | Sin eso la pestaña nueva enseñaría un «pendiente» permanente. Es un efecto del cambio pedido, no una función aparte |
 
-### 2 · El expediente deja de decir «Sin referencia»
-
-Guardado el estudio con esas referencias y leído el listado:
-
-```
-  glucosa_ayunas   112     70 - 100       alterado
-  hba1c            6.2     null - 5.7     alterado
-  colesterol_total 228     null - 200     alterado
-  hdl              41      50 - null      alterado
-  ldl              152     null - 130     alterado
-  trigliceridos    186     null - 150     alterado
-  hemoglobina      11.8    12 - 15.5      alterado
-  hierro_serico    58      60 - 170       alterado
-  ferritina        18.5    15 - 150       normal
-  tsh              2.41    0.4 - 4        normal
-  vitamina_d       22      30 - 100       alterado
-  creatinina       0.82    0.6 - 1.1      normal
-  alt              34      null - 41      normal
-  ast              28      null - 40      normal
-```
-
-**9 alterados, 5 normales, cero `sin_referencia`.** Los dos casos de un solo lado salen bien: HDL 41 contra «> 50» es **alterado**, y ALT 34 contra «< 41» es **normal**.
-
-### 3 · La captura a mano sigue cayendo al catálogo, y el rango invertido se descarta
-
-Estudio capturado sin referencias y con uno invertido a propósito:
-
-| Enviado | Guardado en `lab_resultado` | En el listado |
-|---|---|---|
-| `glucosa_ayunas: 99` (sin refs) | `ref_minimo` y `ref_maximo` en null | rango `70 - 100` del catálogo, `normal` |
-| `hba1c: 5.1, refMinimo: 10, refMaximo: 4` | **los dos en null** — invertido, descartado entero | rango `4 - 5.6` del catálogo, `normal` |
-| `tsh: 3.0, refMaximo: 4.0` (solo un lado) | `ref_maximo = 4` | rango `null - 4` — el del cuerpo, **no** mezclado con el del catálogo |
-
-## Una desviación respecto al prompt: el catálogo NO estaba vacío
-
-El prompt parte de que «la tabla `biomarcador_rango` está vacía». **En esta base de desarrollo no lo está**: tiene 38 filas, 19 por clínica, con rangos generales y por sexo. Se comprobó antes y después del cambio.
-
-Así que el «Sin referencia» que se veía en el expediente **no venía de un catálogo vacío**, sino de lo que arregló R43: los estudios subidos como PDF se guardaban con **cero resultados**, y sin resultados no hay nada que comparar — de ahí los tres mensajes juntos («Sin valores capturados», «Sin referencia», «Todavía no hay interpretación»).
-
-Eso **no invalida este cambio**, y conviene decir por qué: que el rango del laboratorio emisor mande sobre un catálogo genérico es correcto clínicamente, y lo es más todavía en una instalación donde el catálogo sí esté vacío o incompleto, que es lo que pasará en una clínica recién dada de alta. Lo que cambia es la expectativa: **esto no era la causa de los tres mensajes, es una mejora del criterio.**
-
-## Lo que hay que decir en capacitación
-
-1. **El rango que se ve junto a un resultado puede venir de dos sitios.** Si el informe lo traía, es el del laboratorio que hizo la medición. Si no, es el que la clínica tiene configurado. Lo primero es más fiable, y por eso gana.
-2. **Un estudio viejo no se reinterpreta.** El rango se guarda con el resultado, así que cambiar los rangos de la clínica hoy no mueve el «alterado» de un laboratorio del año pasado.
-3. **Si no hay rango por ningún lado, el sistema dice «sin referencia» y no «normal».** Un valor sin criterio no se puede declarar bueno.
-
-## Tropiezo de entorno: un proceso viejo en el 4001
-
-La primera corrida devolvió `referencia: null` en los 14 analitos, como si el modelo no supiera extraerlos. No era eso: la API nueva **nunca llegó a levantar** —`EADDRINUSE: address already in use 0.0.0.0:4001`, en el log y en ningún otro sitio— y las peticiones las contestaba el proceso de la sesión anterior, con el código viejo.
-
-Vale la pena recordarlo porque el síntoma apunta justo al sitio equivocado: parece un problema del prompt o del modelo, y es un puerto ocupado. Antes de dudar de la IA, mirar el log de arranque y `netstat -ano | grep :4001`.
+Los decimales de cada biomarcador salen del catálogo (`decimales`), no de un redondeo fijo: un TSH de 2,30 y uno de 2,35 no deben verse iguales.
