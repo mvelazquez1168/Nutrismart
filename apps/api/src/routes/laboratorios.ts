@@ -12,6 +12,8 @@ import { resolverAlcance } from '../pacientes/acceso.js'
 import { almacen } from '../almacen/index.js'
 import { obtenerArchivo } from '../archivos/repositorio.js'
 import { parsearCsv } from '../laboratorios/csv.js'
+import { leerPdfDeLaboratorio } from '../laboratorios/pdf.js'
+import { llamarClaude } from '../ia/cliente.js'
 import {
   obtenerCatalogo,
   obtenerCatalogoSimple,
@@ -89,7 +91,8 @@ export async function registerLaboratoriosRoutes(app: FastifyInstance): Promise<
       if (meta.mime !== 'text/csv') {
         return reply.code(400).send({
           error: 'no_es_csv',
-          message: 'Solo se pueden previsualizar archivos CSV. Un PDF se adjunta y se captura a mano.',
+          message:
+            'Esta previsualización solo acepta CSV. Un PDF se lee por `previsualizar-pdf`; una imagen se captura a mano.',
           mime: meta.mime,
         })
       }
@@ -100,6 +103,66 @@ export async function registerLaboratoriosRoutes(app: FastifyInstance): Promise<
       // NO persiste nada. Lo que el parser dedujo pasa por una pantalla
       // de revisión antes de convertirse en un dato clínico.
       return parsearCsv(contenido, catalogo)
+    },
+  )
+
+  /* ---------------------------------------------------------------- */
+  /* POST /api/archivos/:id/previsualizar-pdf                          */
+  /* ---------------------------------------------------------------- */
+  /**
+   * Lee el PDF del informe con IA — R43.
+   *
+   * Hermano de `previsualizar-csv`: misma forma de respuesta, misma regla de
+   * que NO persiste nada y que lo devuelto pasa por la pantalla de revisión.
+   * Lo que cambia es de dónde salen las filas —un modelo leyendo texto, no un
+   * parser leyendo columnas—, y por eso la respuesta llega siempre con sus
+   * avisos: aquí el profesional tiene más que revisar, no menos.
+   *
+   * **Un fallo de lectura no es un error de la petición.** El informe ya está
+   * adjunto y la captura manual sigue disponible; responder 503 dejaría al
+   * modal sin saber si continuar. Los fallos viajan como avisos (ver
+   * `laboratorios/pdf.ts`).
+   */
+  app.post<{ Params: ParamsId }>(
+    '/api/archivos/:id/previsualizar-pdf',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { tenantId, sub, roles } = request.auth
+      const { id } = request.params
+
+      const noEncontrado = { error: 'archivo_no_encontrado', message: 'No se encontró el archivo' }
+      if (!esUuid(id)) return reply.code(404).send(noEncontrado)
+
+      const alcance = await resolverAlcance(tenantId, sub, roles)
+      if (!alcance) return reply.code(403).send(sinProfesional())
+
+      const meta = await obtenerArchivo(tenantId, alcance.restringirA, id)
+      if (!meta) return reply.code(404).send(noEncontrado)
+
+      if (meta.mime !== 'application/pdf') {
+        return reply.code(400).send({
+          error: 'no_es_pdf',
+          message: 'Esta lectura solo acepta archivos PDF.',
+          mime: meta.mime,
+        })
+      }
+
+      const contenido = await almacen.leer(meta.rutaRelativa)
+      const catalogo = await obtenerCatalogoSimple()
+
+      return leerPdfDeLaboratorio(
+        contenido,
+        catalogo,
+        async (prompt) =>
+          (
+            await llamarClaude(prompt, {
+              clinicaId: tenantId,
+              profesionalId: alcance.profesionalId,
+              funcion: 'lectura_pdf_lab',
+            })
+          ).texto,
+        request.log,
+      )
     },
   )
 

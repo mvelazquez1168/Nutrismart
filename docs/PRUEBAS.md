@@ -5285,3 +5285,162 @@ El tercero es el que importa: el modelo **no** empareja «pizza con piña» con 
 ## Lo que queda fuera de este cambio
 
 `/analizar-ia` **sigue existiendo y no se tocó**: mismo camino de trigramas, misma verificación (`verificar:intercambios`). Ninguna pantalla lo llama ya. Borrarlo es una decisión aparte — mientras esté, un cliente viejo sigue funcionando.
+
+---
+
+# R43 — Los paréntesis del Consumo Usual y la lectura del PDF de laboratorio
+
+Dos cosas que el profesional hacía y el sistema no acompañaba: escribir el Consumo Usual **como un relato** y adjuntar el informe de laboratorio **en PDF**.
+
+## Parte 1 — En Consumo Usual solo cuenta lo que va entre paréntesis
+
+### El problema
+
+En Consumo Usual nadie escribe una lista. Se escribe lo que el paciente cuenta: *«Desayuna tarde porque entra a las 6 de la mañana, casi siempre leche descremada y arroz cocido»*. De esa frase, lo único que tiene equivalencia en la lista de intercambios son dos alimentos; el resto es contexto clínico que hay que conservar escrito y que al modelo **le estorba** — se le ha visto convertir un horario en una ración.
+
+### La convención
+
+El profesional marca entre paréntesis lo que quiere que se busque:
+
+> Desayuna tarde porque entra a las 6 de la mañana, casi siempre **(250 ml de leche descremada)** y **(1 taza de arroz cocido)**
+
+El servidor manda a la fase 1 **solo** `250 ml de leche descremada, 1 taza de arroz cocido`. El recorte lo hace el código (`apps/api/src/dietetico/parentesis.ts`), **no** una instrucción en el prompt: pedirle al modelo que ignore algo es pedirle que cumpla una regla; recortar el texto antes de mandárselo es garantizar que la cumple.
+
+> **Esto NO aplica al Recordatorio de 24 horas.** Ahí se escribe ya una lista, y un paréntesis es una aclaración —«2 tazas de café (sin azúcar)»— que no debe convertirse en el único alimento de la fila.
+
+### La regla de compatibilidad que hay que explicar en capacitación
+
+**Un texto sin ningún paréntesis se analiza completo, como siempre.** Sin esa salvedad, todos los registros ya escritos —y los de quien no conozca la convención— pasarían de tener valores a no tener ninguno, en silencio. El aviso de la pantalla lo dice con esas palabras.
+
+### Dónde se ve
+
+Encima de la tabla de Consumo Usual, en color de alerta suave, y **solo ahí**:
+
+> ⓘ Para la búsqueda de equivalencias en la lista de intercambios solo se consideran los alimentos que escribas **entre paréntesis ( )**. El resto del texto se conserva, pero se ignora en el análisis. Si no escribes ningún paréntesis, se analiza todo el texto.
+
+El placeholder enseña el mismo ejemplo: *«Ej: Generalmente desayuna tarde, (1 taza de café con leche) y (2 rebanadas de pan)…»*. El aviso explica la regla; el ejemplo es lo que se copia al escribir.
+
+### Comprobación
+
+API local en el 4001, token de `ana@vida.cr`, consulta #20 de Ana Castro. Se escribe el texto con un PUT —como hace la pantalla— y se llama a `/calcular`:
+
+| Tipo | Texto de la fila | La fase 1 vio | Resultado |
+|---|---|---|---|
+| Consumo Usual | `Desayuna tarde porque entra a las 6 de la mañana, casi siempre (250 ml de leche descremada) y (1 taza de arroz cocido)` | `250 ml de leche descremada`, `1 taza de arroz cocido` | kcal **264**, CHO **42,48**, prot 14,32, grasas 3,56 |
+| Consumo Usual | el mismo texto **sin paréntesis** | `leche descremada`, `arroz cocido` | kcal **180**, CHO 27 — sigue calculando (porciones estándar, no hay cantidades) |
+| Recordatorio 24 h | `250 ml de leche descremada (sin azúcar), 1 taza de arroz cocido` | `250 ml de leche descremada (sin azúcar)`, `1 taza de arroz cocido` | kcal **264** — **no recortó**, que es lo correcto |
+
+El primero cuadra con los números ya comprobados a mano en la sección del cálculo en dos fases (12,48 + 30 = 42,48 de CHO; 104 + 160 = 264 kcal). Lo que demuestra es que **el relato no entró**: la fase 1 recibió dos alimentos, no la frase entera.
+
+En pantalla, con el navegador: el aviso aparece en Consumo Usual y **no** aparece en Recordatorio 24 h.
+
+---
+
+## Parte 2 — El PDF del laboratorio se lee
+
+### Los tres mensajes del expediente, y su causa única
+
+Subir un PDF adjuntaba el archivo y abría el paso de revisión con **las cuarenta casillas vacías, sin decirlo**. El profesional guardaba así, y el expediente quedaba con los tres mensajes que se venían reportando:
+
+| Mensaje | Qué significaba de verdad |
+|---|---|
+| «Sin valores capturados; solo el informe adjunto.» | El estudio tiene archivo y **cero** resultados |
+| «Sin referencia» | Sin valores no hay nada contra qué comparar |
+| «Todavía no hay una interpretación de este estudio.» | Sin valores la IA no tiene qué interpretar |
+
+Los tres son el mismo defecto: **los valores estaban en el PDF, en el servidor, y nadie los sacaba.**
+
+### Lo que hace ahora
+
+`POST /api/archivos/:id/previsualizar-pdf` extrae el texto del PDF y le pide al modelo que mapee cada analito al **código** del catálogo de biomarcadores. Devuelve la misma forma que `previsualizar-csv` —`reconocidos`, `noReconocidos`, `avisos`— y **no persiste nada**: lo leído entra como borrador en el paso de revisión y lo confirma el profesional.
+
+Tres cosas que no hace, a propósito:
+
+- **No acepta un código que no esté en el catálogo.** Si el modelo devuelve `FERRITINA_X`, eso no entra como valor: cae en «no reconocidos», a la vista. Un nombre inventado se parecería lo bastante a uno real para colarse; un código que no resuelve, no.
+- **No convierte unidades.** Si el informe mide en otra unidad, el valor se deja como está y lo corrige el profesional.
+- **No llama a la IA con un PDF escaneado.** Por debajo de 50 caracteres de texto extraído no hay informe que leer, así que no se paga la llamada.
+
+### Comprobación con un informe de verdad
+
+PDF de 16 analitos generado con los nombres **como los escribe un laboratorio**, no como están en el catálogo: «Glicemia en ayunas», «TGP (ALT)», «Creatinina sérica», «Vitamina D 25-OH», y los decimales con coma (`6,2` · `0,82` · `11,8`).
+
+**14 de 14** biomarcadores del catálogo leídos y mapeados bien:
+
+| En el informe | Código que le puso | Valor |
+|---|---|---|
+| Glicemia en ayunas | `glucosa_ayunas` | 112 |
+| Hemoglobina glicosilada A1c | `hba1c` | 6.2 |
+| Colesterol total / HDL / LDL | `colesterol_total` / `hdl` / `ldl` | 228 / 41 / 152 |
+| Triglicéridos | `trigliceridos` | 186 |
+| Creatinina sérica | `creatinina` | 0.82 |
+| Hemoglobina · Hierro sérico · Ferritina | `hemoglobina` / `hierro_serico` / `ferritina` | 11.8 / 58 / 18.5 |
+| TSH · Vitamina D 25-OH | `tsh` / `vitamina_d` | 2.41 / 22 |
+| TGP (ALT) · TGO (AST) | `alt` / `ast` | 34 / 28 |
+
+Y los dos que **no** están en el catálogo salieron donde tienen que salir, en «no reconocidos»: `Ácido úrico: 5.4` y `VDRL: No reactivo` (este último además no es un número medido).
+
+| Caso | Respuesta | ¿Llamó a la IA? |
+|---|---|---|
+| PDF con texto | 14 reconocidos, 2 no reconocidos, sin avisos de fallo | Sí — una fila `lectura_pdf_lab`, 1 172 entrada / 318 salida |
+| PDF **escaneado** (solo imagen) | `{reconocidos: [], noReconocidos: [], avisos: ["Este PDF no contiene texto seleccionable (parece un informe escaneado). Captura los valores manualmente."]}` | **No** — ninguna fila nueva en `uso_ia` |
+| `previsualizar-csv` sobre un PDF | 400 `no_es_csv`, apuntando a `previsualizar-pdf` | No |
+
+En pantalla, subiendo el mismo PDF por el modal: **14 casillas pobladas** (`112 6.2 228 41 152 186 11.8 58 18.5 2.41 22 0.82 34 28`), el botón pasa a decir **«Guardar (14 valores)»**, y arriba el aviso:
+
+> · Se leyeron 14 valores del PDF. Revísalos contra el informe antes de guardar: los puso un modelo, no el laboratorio.
+
+### Lo que hay que decir en capacitación
+
+1. **Los valores del PDF los puso un modelo, no el laboratorio.** Entran como borrador y el paso de revisión no es un trámite: se comparan contra el informe antes de guardar. Un decimal mal leído en un laboratorio no es un error cosmético.
+2. **Un informe escaneado o fotografiado no se lee.** No tiene texto seleccionable: no hay nada que extraer. El sistema lo dice y la captura es manual. Si el laboratorio ofrece el PDF «digital» en vez del escaneado, ese es el que conviene adjuntar.
+3. **Una imagen (PNG/JPEG) tampoco se lee**, y ahora lo dice en vez de dejar las casillas vacías sin explicación.
+4. **Lo que el sistema no reconoció se enseña igual**, en «No reconocidos en el archivo», para que no se pierda.
+
+### Ningún fallo de lectura tumba la subida
+
+El informe ya está adjunto y la captura manual sigue abierta, así que un PDF ilegible, una respuesta que no se puede interpretar o la IA caída **no** devuelven error: devuelven 200 con el aviso que lo explica. Responder 503 dejaría al modal sin saber si continuar.
+
+---
+
+## Parte 3 — El modal de laboratorio ya no se cierra por un clic al lado
+
+`Modal.tsx` admite `sinCierreAlFondo`, y `LaboratorioModal` la usa. Cuarenta casillas y dos pasos de trabajo no se descartan sin preguntar.
+
+**Escape sigue cerrando**, y es deliberado: es una acción intencionada, no un clic de más, y el aviso de cambios sin guardar (R46) la cubre.
+
+Comprobado con el navegador: clic en el fondo con el modal recién abierto → **sigue abierto**; clic en el fondo con los 14 valores ya leídos → **sigue abierto**; Escape → **cierra**.
+
+---
+
+## Parte 4 — El ordenamiento de los estudios: no había bug
+
+La consulta que lista los estudios ya ordena por `e.fecha desc, e.created_at desc`, y `crearEstudio` (`apps/api/src/laboratorios/repositorio.ts`) inserta en `fecha` **el valor que llega en el cuerpo** —la fecha de la muestra que escribe el profesional—, no `now()` ni `current_date`. Los estudios se ordenan por la fecha de la toma, que es lo correcto. No se tocó nada.
+
+---
+
+## La comprobación automática
+
+```
+npm run verificar:labs-pdf -w @nutrismart/api
+```
+
+**No llama a la IA**: la respuesta del modelo se simula, igual que en `verificar:calculo`. Una comprobación que cuesta dinero se deja de correr, y una que depende de lo que el modelo conteste hoy no dice nada sobre el código. Lo que comprueba es el **trato** que se le da a esa respuesta.
+
+Tres bloques, 24 casos, todos pasando:
+
+1. **Los paréntesis** — sin marcas se analiza todo; una marca; varias unidas por comas; un paréntesis sin cerrar vale hasta el final (es lo que queda al guardar a medio escribir); `()` vacío se ignora; y el Recordatorio 24 h no recorta.
+2. **La extracción del texto** — genera un PDF con Chromium y comprueba que los analitos y sus números salen. Si Chromium no está disponible el bloque se **salta con aviso**, para que un entorno sin navegador no parezca un error de este código.
+3. **La lectura de la respuesta** — contra el catálogo real de la base: código inventado → «no reconocidos»; `"< 5"` no entra como número; coma decimal sí (`5,8` → `5.8`); repetido se queda el primero y avisa; valor absurdo fuera; cercas de markdown toleradas; y un JSON ilegible **lanza** en vez de devolver un resultado vacío — un vacío silencioso se leería como «el informe no traía valores».
+
+## Tropiezos de entorno que esto destapó
+
+- **El contenedor `nutrismart-db` estaba parado** (`docker start nutrismart-db`). Los dos contenedores `keycloak` y `postgres17` que sí corrían son de **otra** pila: `postgres17` no tiene base `nutrismart`, y el `DATABASE_URL` del `.env` apunta al **5434**, que es el de `nutrismart-db`. Con la base caída, `verificar:labs-pdf` cae a un catálogo mínimo y lo avisa; la API no levanta.
+- **La contraseña de `ana@vida.cr` no era `nutrismart-dev`.** El realm `nutrismart` y los usuarios estaban, con sus UUID correctos, pero la credencial no. Se repone con la API de administración de Keycloak (el admin de esa instancia es `admin` / `Admin2026!`, no `admin`/`admin` como asume `restaurar-realm-dev.py`):
+
+  ```
+  PUT /admin/realms/nutrismart/users/<id>/reset-password
+  {"type":"password","value":"nutrismart-dev","temporary":false}
+  ```
+
+- **`curl -F "archivo=@/c/Users/…"` no encuentra el archivo** en el bash de Windows: hay que darle la ruta con letra de unidad (`C:/Users/…`). Falla con `curl: (26) Failed to open/read local data from file`, que parece un problema de permisos y no lo es.
+- Un script suelto en `.ts` fuera de un paquete con `"type": "module"` lo compila `tsx` como CJS y rechaza el `await` de nivel superior. Extensión `.mts`, y ejecutarlo **desde `apps/api`** para que resuelva `puppeteer`.

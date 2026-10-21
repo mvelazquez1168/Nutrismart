@@ -62,6 +62,13 @@ interface Contexto {
      */
     | 'identificacion_dietetica'
     | 'resumen_clinico_plan'
+    /**
+     * La lectura del PDF de laboratorio (R43): el modelo mapea los analitos
+     * del informe a los codigos del catalogo de biomarcadores. Entrada grande
+     * —el informe entero mas el catalogo— y salida pequena, asi que se anota
+     * aparte de `interpretacion_labs`, que es justo lo contrario.
+     */
+    | 'lectura_pdf_lab'
 }
 
 /**

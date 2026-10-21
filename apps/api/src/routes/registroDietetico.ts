@@ -38,6 +38,7 @@ import {
   MENSAJE_INCALCULABLE,
   type Calculo,
 } from '../dietetico/calculo.js'
+import { textoAAnalizar } from '../dietetico/parentesis.js'
 
 /** Los seis tiempos fijos, en orden, con su etiqueta para el prompt. */
 const TIEMPOS = [
@@ -689,6 +690,17 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
         if (fila.ai_calculado_en !== null && fila.ai_kcal !== null) {
           return reply.send(respuesta(reg))
         }
+        /*
+         * **Consumo Usual: solo lo que va entre parentesis** (R43).
+         *
+         * Lo escrito fuera es contexto clinico —horarios, quien cocina, con
+         * que frecuencia— que el profesional necesita conservar y que la fase 1
+         * no debe intentar emparejar con la lista de intercambios. El recorte
+         * se hace aqui, antes del prompt, y no pidiendoselo al modelo: ver
+         * `dietetico/parentesis.ts`. Un texto sin parentesis se analiza
+         * completo, como siempre.
+         */
+        texto = textoAAnalizar(texto, ctx.tipo)
       } else {
         /*
          * `texto` es la forma libre: una frase con cantidad y alimento juntos,
@@ -899,7 +911,9 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
       }
 
       const etiqueta = TIEMPOS.find((t) => t.clave === tc)?.etiqueta ?? tc
-      const prompt = construirPrompt(etiqueta, texto)
+      // Misma convencion que `/calcular` (R43): en Consumo Usual solo se
+      // analizan los alimentos entre parentesis.
+      const prompt = construirPrompt(etiqueta, textoAAnalizar(texto, ctx.tipo))
 
       let partidos: { alimento: string; cantidad: string | null }[]
       try {

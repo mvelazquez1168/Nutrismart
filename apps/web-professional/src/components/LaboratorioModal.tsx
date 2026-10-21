@@ -1,15 +1,20 @@
 /**
  * Alta de un estudio de laboratorio, en dos pasos.
  *
- *   1. Archivo  → se sube y, si es CSV, se parsea.
+ *   1. Archivo  → se sube y, si es CSV o PDF, se le leen los valores.
  *   2. Revisión → el profesional confirma o corrige ANTES de guardar.
  *
  * El segundo paso no es un trámite: lo que un parser dedujo de un CSV
  * no es un dato clínico hasta que alguien lo mira. Un decimal mal leído
  * en un laboratorio no es un error cosmético.
  *
- * Con PDF no hay nada que parsear —esa es la frontera de la v1— así que
- * se pasa directamente a captura manual con el informe adjunto.
+ * El PDF también se lee — R43. Antes se pasaba directo a captura manual
+ * con las cuarenta casillas en blanco y sin decirlo, así que el estudio se
+ * guardaba vacío y el expediente acababa con «Sin valores capturados; solo
+ * el informe adjunto». Ahora el servidor le saca el texto y lo mapea al
+ * catálogo con IA; lo leído entra en las casillas COMO BORRADOR, con su
+ * aviso, y sigue siendo el profesional quien lo confirma. Una imagen no se
+ * lee: ahí la captura manual es la única vía, y se dice.
  */
 import { useEffect, useState, type ChangeEvent, type DragEvent } from 'react'
 import { Modal } from './Modal'
@@ -20,6 +25,7 @@ import {
   getBiomarcadores,
   subirArchivo,
   previsualizarCsv,
+  previsualizarPdf,
   crearEstudio,
 } from '../api/laboratorios'
 import type { ArchivoSubido, Biomarcador, SexoBiologico } from '../api/tipos'
@@ -100,10 +106,37 @@ export function LaboratorioModal({
         setValores(iniciales)
         setNoReconocidos(prev.noReconocidos)
         setAvisos(prev.avisos)
+      } else if (subido.mime === 'application/pdf') {
+        /*
+         * El PDF se intenta leer con IA (R43).
+         *
+         * El aviso de cuántos valores se encontraron NO es decoración: es lo
+         * que distingue «el informe trae estos diez» de «esto lo escribí yo»,
+         * y es lo que hace que el profesional los revise. Si no se leyó nada,
+         * el servidor ya manda el aviso que lo explica —escaneado, ilegible,
+         * IA caída— y las casillas quedan en blanco, como antes.
+         */
+        const prev = await previsualizarPdf(subido.id)
+        const iniciales: Record<string, string> = {}
+        for (const r of prev.reconocidos) iniciales[r.codigo] = String(r.valor)
+        setValores(iniciales)
+        setNoReconocidos(prev.noReconocidos)
+        setAvisos(
+          prev.reconocidos.length > 0
+            ? [
+                `Se leyeron ${prev.reconocidos.length} valores del PDF. Revísalos contra el informe antes de guardar: los puso un modelo, no el laboratorio.`,
+                ...prev.avisos,
+              ]
+            : prev.avisos,
+        )
       } else {
+        // Imagen: no hay texto que extraer. Se dice, en vez de dejar cuarenta
+        // casillas vacías sin explicación.
         setValores({})
         setNoReconocidos([])
-        setAvisos([])
+        setAvisos([
+          'Este archivo es una imagen y no se puede leer automáticamente. Captura los valores a mano en los campos de abajo.',
+        ])
       }
       setPaso('revision')
     } catch (e) {
@@ -177,10 +210,16 @@ export function LaboratorioModal({
       abierto={abierto}
       onCerrar={onCerrar}
       bloqueado={ocupado}
+      /*
+        Un clic fuera no tira el estudio a medio capturar — R43. Cuarenta
+        casillas y dos pasos de trabajo no se descartan sin preguntar; para
+        salir están Cancelar, Escape y el aviso de cambios sin guardar.
+      */
+      sinCierreAlFondo
       titulo="Registrar laboratorio"
       descripcion={
         paso === 'archivo'
-          ? 'Adjunta el informe. Un CSV se lee automáticamente; un PDF se captura a mano.'
+          ? 'Adjunta el informe. Un CSV o un PDF con texto se leen automáticamente; una imagen se captura a mano.'
           : 'Revisa los valores antes de guardarlos.'
       }
       pie={
@@ -238,7 +277,7 @@ export function LaboratorioModal({
             }`}
           >
             <p className="text-sm font-medium text-ink">
-              {ocupado ? 'Procesando…' : 'Arrastra el informe aquí'}
+              {ocupado ? 'Procesando el informe…' : 'Arrastra el informe aquí'}
             </p>
             <p className="mt-1 text-xs text-muted">PDF, CSV, PNG o JPEG · máximo 10 MB</p>
             <label className="mt-4 inline-block cursor-pointer rounded-md border border-border bg-surface px-4 py-2 text-sm font-medium text-ink hover:bg-surface-2">

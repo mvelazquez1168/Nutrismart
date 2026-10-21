@@ -12,6 +12,14 @@
  * cambie; el análisis lee el texto YA guardado en el servidor, así que
  * «Analizar» guarda primero y analiza después.
  *
+ * ── Consumo Usual: los paréntesis mandan ───────────────────────────
+ *
+ * En Consumo Usual el texto es un relato, no una lista, así que solo lo
+ * que se escriba entre paréntesis se busca en la lista de intercambios
+ * (R43). La tabla lo avisa arriba y lo enseña en el placeholder; el
+ * recorte lo hace el servidor. En el Recordatorio de 24 horas no aplica:
+ * ahí ya se escribe una lista.
+ *
  * ── Las cuatro casillas son del profesional ─────────────────────────
  *
  * CHO, proteínas, grasas y kcal se calculan y se pueden CORREGIR, las
@@ -54,7 +62,9 @@ const TEXTOS: Record<TipoRegistro, { titulo: string; subtitulo: string; placehol
   consumo_usual: {
     titulo: 'Consumo Usual',
     subtitulo: '¿Qué consume el paciente habitualmente?',
-    placeholder: 'Ej: Generalmente consume 1 taza de café, pan…',
+    // El placeholder enseña la convención de los paréntesis (R43): el aviso
+    // de arriba la explica, pero el ejemplo es lo que se copia al escribir.
+    placeholder: 'Ej: Generalmente desayuna tarde, (1 taza de café con leche) y (2 rebanadas de pan)…',
   },
 }
 
@@ -398,6 +408,29 @@ export function TablaDietetica({
         <h3 className="font-semibold text-ink">{t.titulo}</h3>
         <p className="text-sm text-muted">{t.subtitulo}</p>
       </div>
+
+      {/*
+        La convención de los paréntesis, dicha donde se escribe — R43.
+
+        En Consumo Usual lo que se escribe es un relato («desayuna tarde
+        porque entra a las 6, casi siempre café con leche»), y de ahí solo
+        unas palabras son alimentos. El profesional marca cuáles entre
+        paréntesis y el servidor manda SOLO eso a la lista de intercambios
+        (ver `dietetico/parentesis.ts`). Una regla que cambia el resultado y
+        no está escrita en la pantalla es una regla que nadie cumple.
+      */}
+      {tipo === 'consumo_usual' && (
+        <div className="rounded-md border border-[color:var(--status-alert)] bg-surface-2 px-4 py-2 text-sm text-ink">
+          <span className="font-semibold text-[color:var(--status-alert)]" aria-hidden="true">
+            ⓘ{' '}
+          </span>
+          Para la búsqueda de equivalencias en la lista de intercambios solo se
+          consideran los alimentos que escribas{' '}
+          <strong className="font-semibold">entre paréntesis ( )</strong>. El resto del texto se
+          conserva, pero se ignora en el análisis. Si no escribes ningún paréntesis, se analiza
+          todo el texto.
+        </div>
+      )}
 
       <div className="overflow-x-auto rounded-lg border border-border">
         <table className="min-w-full border-collapse text-sm">

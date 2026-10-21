@@ -31,6 +31,18 @@ export function previsualizarCsv(archivoId: string): Promise<PrevisualizacionCsv
   return apiPost<PrevisualizacionCsv>(`/api/archivos/${archivoId}/previsualizar-csv`, {})
 }
 
+/**
+ * Lectura con IA del PDF del informe — R43.
+ *
+ * Misma forma que la del CSV a propósito: lo que devuelve alimenta la misma
+ * pantalla de revisión, y el profesional confirma antes de que nada se guarde.
+ * Los fallos de lectura llegan como `avisos`, no como error: el informe ya
+ * está adjunto y la captura manual sigue abierta.
+ */
+export function previsualizarPdf(archivoId: string): Promise<PrevisualizacionCsv> {
+  return apiPost<PrevisualizacionCsv>(`/api/archivos/${archivoId}/previsualizar-pdf`, {})
+}
+
 export function crearEstudio(
   pacienteId: string,
   datos: DatosEstudioEnvio,
