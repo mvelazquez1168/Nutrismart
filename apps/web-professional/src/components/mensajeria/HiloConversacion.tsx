@@ -4,6 +4,26 @@
  * Sondea cada 5 segundos pidiendo solo lo posterior al último mensaje
  * que ya tiene. Es lo bastante vivo para una conversación y no obliga a
  * montar WebSockets, que traerían su propia infraestructura.
+ *
+ * ── El mensaje que se repetía solo (R48) ────────────────────────────
+ *
+ * El profesional escribía una vez y veía su texto multiplicarse cada
+ * cinco segundos; el paciente lo recibía una sola vez. Eran tres cosas
+ * a la vez, y las tres están arregladas:
+ *
+ *  1. **La marca del sondeo perdía precisión.** El servidor devolvía
+ *     `createdAt` con milisegundos y la columna guarda microsegundos,
+ *     así que `created_at > desde` volvía a ser cierto para el último
+ *     mensaje en cada vuelta. Arreglado en `routes/mensajeria.ts`.
+ *  2. **El efecto de carga se re-ejecutaba** en cada render del padre,
+ *     porque `onCambio` era una función nueva cada vez. Arreglado en
+ *     `BandejaMensajes`.
+ *  3. **Nada impedía insertar dos veces el mismo id.** Ahora la mezcla
+ *     deduplica, abajo.
+ *
+ * El tercero es el cinturón: aunque el servidor vuelva a mandar algo ya
+ * visto —un reintento, dos pestañas abiertas, una carrera entre la carga
+ * inicial y el primer sondeo—, en pantalla no se duplica.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -36,6 +56,19 @@ export function HiloConversacion({
   const [error, setError] = useState<string | null>(null)
 
   const finRef = useRef<HTMLDivElement>(null)
+
+  /**
+   * Mezcla sin duplicar, por id.
+   *
+   * Devuelve `prev` TAL CUAL cuando no hay nada nuevo: un array nuevo con el
+   * mismo contenido haría re-renderizar la lista entera cada cinco segundos
+   * sin que haya cambiado nada.
+   */
+  function mezclar(prev: Mensaje[], llegados: Mensaje[]): Mensaje[] {
+    const vistos = new Set(prev.map((m) => m.id))
+    const nuevos = llegados.filter((m) => !vistos.has(m.id))
+    return nuevos.length === 0 ? prev : [...prev, ...nuevos]
+  }
   // En una ref y no en el estado: el temporizador del sondeo captura el
   // valor del render en que se creó, y con estado leería siempre el
   // primero.
@@ -44,6 +77,16 @@ export function HiloConversacion({
   function alFinal(suave = true) {
     finRef.current?.scrollIntoView({ behavior: suave ? 'smooth' : 'auto', block: 'end' })
   }
+
+  /*
+   * Lo no leído, en una ref.
+   *
+   * Estaba en las dependencias del efecto de abajo, y `marcarLeida` lo pone a
+   * cero: el propio efecto provocaba el cambio que lo volvía a disparar. Lo
+   * que decide recargar el hilo es cambiar de conversación, y nada más.
+   */
+  const noLeidosRef = useRef(conversacion.noLeidos)
+  noLeidosRef.current = conversacion.noLeidos
 
   /* ---- Carga inicial al cambiar de hilo ---- */
   useEffect(() => {
@@ -59,7 +102,7 @@ export function HiloConversacion({
         setMensajes(lista)
         ultimaMarcaRef.current = lista.at(-1)?.createdAt ?? null
         // Abrir el hilo ES leerlo: se marca aquí y no con un botón.
-        if (conversacion.noLeidos > 0) {
+        if (noLeidosRef.current > 0) {
           await marcarLeida(conversacion.id).catch(() => {})
           onCambio()
         }
@@ -79,7 +122,11 @@ export function HiloConversacion({
     return () => {
       cancelado = true
     }
-  }, [conversacion.id, conversacion.noLeidos, onCambio])
+    // `onCambio` queda fuera a propósito: lo que debe recargar el hilo es
+    // cambiar de conversación. Se lee de la prop vigente en el momento de
+    // llamarlo, que es lo que hace falta. Ver el encabezado del archivo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversacion.id])
 
   /* ---- Sondeo ---- */
   const sondear = useCallback(async () => {
@@ -88,7 +135,7 @@ export function HiloConversacion({
       const nuevos = await getMensajes(conversacion.id, ultimaMarcaRef.current)
       if (nuevos.length === 0) return
       ultimaMarcaRef.current = nuevos.at(-1)?.createdAt ?? ultimaMarcaRef.current
-      setMensajes((prev) => [...prev, ...nuevos])
+      setMensajes((prev) => mezclar(prev, nuevos))
       if (nuevos.some((m) => m.autorTipo === 'paciente')) {
         await marcarLeida(conversacion.id).catch(() => {})
         onCambio()
@@ -112,7 +159,9 @@ export function HiloConversacion({
     setError(null)
     try {
       const creado = await enviarMensaje(conversacion.id, contenido)
-      setMensajes((prev) => [...prev, creado])
+      // Se pinta al momento, y el sondeo lo devolverá también: `mezclar` lo
+      // reconoce por id y no lo repite.
+      setMensajes((prev) => mezclar(prev, [creado]))
       ultimaMarcaRef.current = creado.createdAt
       setTexto('')
       onCambio()

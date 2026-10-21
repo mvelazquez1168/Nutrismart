@@ -5505,3 +5505,114 @@ El caso que más dice es la **glucosa**: tres puntos descendiendo desde fuera de
 | Solo añadir la sección y el panel | Además, `informativa` en `SECCIONES` y en `TabsValoracion` | Sin eso la pestaña nueva enseñaría un «pendiente» permanente. Es un efecto del cambio pedido, no una función aparte |
 
 Los decimales de cada biomarcador salen del catálogo (`decimales`), no de un redondeo fijo: un TSH de 2,30 y uno de 2,35 no deben verse iguales.
+
+---
+
+# R48 — Cuatro defectos de la app del profesional
+
+## 1 · El mensaje que se multiplicaba solo
+
+**El síntoma:** el profesional escribía una vez y veía su propio texto repetido cada pocos segundos. El paciente lo recibía una sola vez.
+
+### La causa: microsegundos contra milisegundos
+
+El hilo sondea cada cinco segundos y reenvía el `createdAt` del último mensaje que tiene como `?desde=`. La ruta del profesional devolvía ese campo como un objeto `Date`, y Fastify lo serializa con `toISOString()`, que da **milisegundos**. La columna `created_at` guarda **microsegundos**.
+
+Un mensaje creado a `22:38:07.892374Z` salía al cliente como `22:38:07.892Z`. Al volver como `desde`, la comparación del servidor:
+
+```
+created_at > '2026-10-21T22:38:07.892Z'   →   22:38:07.892374 > 22:38:07.892000   →   CIERTO
+```
+
+El mismo mensaje volvía en cada sondeo, para siempre, y la marca nunca avanzaba. Por eso el paciente lo veía una vez —se guardó una vez— y el profesional lo veía crecer en pantalla.
+
+**La prueba, con el mismo mensaje y las dos marcas:**
+
+| `?desde=` | Mensajes devueltos |
+|---|---|
+| `2026-10-21T22:38:07.892374Z` (microsegundos, lo de ahora) | **0** |
+| `2026-10-21T22:38:07.892Z` (milisegundos, lo de antes) | **1** ← el eco |
+
+> **El lado del paciente ya estaba arreglado.** `paciente-mensajeria.ts` usa `to_char(... .US)` y compara con `$2::timestamptz`, con un comentario que explica exactamente esto. La ruta del profesional se quedó sin ese arreglo.
+
+### Los otros dos defectos que lo acompañaban
+
+**El efecto de carga se re-ejecutaba en cada render del padre.** `BandejaMensajes` pasaba `onCambio={() => void cargar()}`, una función **nueva en cada render**, y `HiloConversacion` la tenía en las dependencias del efecto que carga el hilo. Cada render del padre recargaba la conversación entera y reiniciaba la marca del sondeo. Ahora es un `useCallback`.
+
+**`conversacion.noLeidos` también estaba en esas dependencias**, y el propio efecto lo pone a cero al marcar como leído: se disparaba a sí mismo. Pasó a una `ref`; lo que recarga el hilo es cambiar de conversación, y nada más.
+
+### Y un cinturón: la mezcla deduplica por id
+
+`mezclar(prev, llegados)` descarta lo que ya está por `id` y **devuelve `prev` tal cual** cuando no hay nada nuevo —un array nuevo con el mismo contenido re-renderizaría la lista cada cinco segundos sin motivo—. Cubre lo que el arreglo del servidor no puede: un reintento, dos pestañas abiertas, o la carrera entre la carga inicial y el primer sondeo.
+
+### Comprobación en el navegador
+
+Se envía **un** mensaje y se esperan 21 segundos (más de cuatro ciclos de sondeo):
+
+```
+  enviado UNA vez: PruebaR48nav1792623195
+  +7s  -> aparece 2 vez/veces
+  +7s  -> aparece 2 vez/veces
+  +7s  -> aparece 2 vez/veces
+```
+
+Las dos apariciones son **la burbuja del hilo y la vista previa de la lista lateral** («Tú: PruebaR48nav…»), confirmado en la captura: una sola burbuja. Lo que importa es que **no crece**: con el defecto, el número subía en cada vuelta.
+
+---
+
+## 2 · Monitoreo no mostraba presión arterial ni glucosa
+
+**No era un problema de datos ni del endpoint.** `/api/rpm/pacientes/:id` devuelve `metricas` con los cuatro tipos desde siempre; la pantalla **solo filtraba `peso`**:
+
+```ts
+const pesos = datos.metricas.filter((m) => m.tipo === 'peso' && m.valor !== null)
+```
+
+Lo que el paciente apuntaba de su presión o su glucosa viajaba hasta el navegador y no se pintaba en ningún sitio. No había que tocar la API: había que enseñarlo.
+
+Dos secciones nuevas, con el mismo aviso que las demás —es lo que reporta el paciente, no una medición de consulta—:
+
+| Sección | Qué enseña |
+|---|---|
+| **Presión arterial en casa** | La última y las seis anteriores. Las dos cifras siempre juntas: separadas dejan de ser una presión |
+| **Glucosa en casa** | Minigráfica de evolución y el último valor con su fecha |
+
+Comprobado con registros sembrados: presión **138/88 mmHg (19/10)** con su histórico `126/80` y `120/80`, y glucosa **104 mg/dL (20/10)**.
+
+---
+
+## 3 y 4 · El detalle de comidas y «Qué comí»: **son el mismo dato**
+
+El requerimiento los planteaba como dos bloques y advertía que podían ser el mismo flujo. **Lo son.** La pestaña «Qué comí» de la app del paciente escribe en `registro_comida` (y sus alimentos en `registro_comida_item`), que es la misma tabla de la que el monitoreo ya sacaba el resumen por día. Una sola solución.
+
+Lo que faltaba era el **detalle**. El endpoint solo devolvía el agregado diario —kcal totales y cuántas comidas—, así que el profesional veía que el paciente había apuntado tres comidas pero no **qué** comió, que es el dato por el que se abre esta pantalla en un seguimiento.
+
+### En el servidor
+
+Un `comidas` nuevo en la respuesta, con los alimentos agregados en el mismo SELECT (`json_agg`) en vez de una consulta por comida, que serían decenas de viajes a la base para pintar una lista. Dos detalles:
+
+- `filter (where i.id is not null)` evita que una comida escrita como texto libre —sin alimentos desglosados— traiga `[null]` en vez de una lista vacía.
+- **Tope de 60 comidas, las más recientes.** A doce meses serían cientos de filas con sus alimentos dentro, y lo que se mira en consulta es lo último. La pantalla lo dice cuando se alcanza el tope: una lista recortada en silencio se lee como «esto es todo».
+
+### En la pantalla
+
+Sección **«Qué ha comido»** a ancho completo —es una lista de texto, y partida en media columna se lee en tiras de cuatro palabras—, agrupada por día y con lo más reciente primero: en consulta se repasa «el jueves», no la comida número once.
+
+Cada comida muestra la franja, las kcal (o **«sin estimar»**), la descripción tal como la escribió el paciente y, si los hay, los alimentos desglosados con su cantidad.
+
+Comprobado con dos comidas sembradas:
+
+```
+  MARTES, 20 DE OCTUBRE
+    Desayuno · sin estimar · Café con leche y dos tostadas con aguacate
+    Almuerzo · 418 kcal    · Arroz blanco cocido, Ensalada mixta, Pechuga de pollo
+                             [Pechuga de pollo · 120 g] [Ensalada mixta · 80 g] [Arroz blanco cocido · 150 g]
+```
+
+El caso del desayuno es el que importa: una comida escrita a mano **sin** alimentos desglosados se enseña igual, con su descripción y su «sin estimar». Decir «0 kcal» ahí sería afirmar que no aportó nada.
+
+---
+
+## Tropiezo de entorno
+
+El arnés de pruebas con Puppeteer resultó **frágil contra el formulario de Keycloak**: el campo de usuario es `input[name="username"]` y no siempre lleva `id="username"`, y la pantalla tarda entre dos y seis segundos en aparecer según lo caliente que esté Vite. Varias corridas que parecían fallos de la aplicación eran el arnés esperando un selector que no existía. Lo que funciona es reintentar el clic de acceso hasta que el campo aparezca, y esperar a que aparezca **contenido**, no un número fijo de segundos.

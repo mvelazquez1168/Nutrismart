@@ -56,13 +56,35 @@ function aConversacion(f: FilaConversacion) {
   }
 }
 
+/**
+ * `createdAt` viaja como TEXTO con microsegundos — R48.
+ *
+ * ## El bucle que esto cierra
+ *
+ * El cliente sondea cada cinco segundos y reenvia el `createdAt` del ultimo
+ * mensaje que tiene como `?desde=`. Devolviendo un `Date`, Fastify lo
+ * serializaba con `toISOString()`, que tiene **milisegundos**; la columna
+ * guarda **microsegundos**. Un mensaje creado a `…21.015547Z` salia como
+ * `…21.015Z`, y al volver como `desde` la comparacion
+ * `created_at > '…21.015Z'` seguia siendo cierta: **el mismo mensaje volvia
+ * en cada sondeo, para siempre**, y la marca nunca avanzaba.
+ *
+ * Por eso el paciente lo recibia una vez —se guardo una vez— y el
+ * profesional veia su propio mensaje multiplicarse en pantalla cada cinco
+ * segundos.
+ *
+ * El lado del paciente (`paciente-mensajeria.ts`) ya lo tenia resuelto asi;
+ * esta ruta se quedo sin el arreglo.
+ */
+const CREATED_AT_UTC = `to_char(created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as created_at`
+
 function aMensaje(m: Record<string, unknown>) {
   return {
     id: m['id'] as string,
     autorTipo: m['autor_tipo'] as 'profesional' | 'paciente',
     contenido: m['contenido'] as string,
     leido: m['leido'] as boolean,
-    createdAt: m['created_at'] as Date,
+    createdAt: m['created_at'] as string,
   }
 }
 
@@ -173,24 +195,34 @@ export async function registerMensajeriaRoutes(app: FastifyInstance): Promise<vo
       const conv = await cargarConversacion(request.params.convId, tenantId, alcance.profesionalId)
       if (!conv) return reply.code(404).send(noEncontradaConversacion())
 
-      // `desde` sirve al sondeo: pide solo lo posterior al último
-      // mensaje que ya tiene, en vez de traerse el hilo entero cada
-      // cinco segundos.
+      /*
+       * `desde` sirve al sondeo: pide solo lo posterior al último mensaje que
+       * ya tiene, en vez de traerse el hilo entero cada cinco segundos.
+       *
+       * **La cadena se pasa a Postgres tal cual, sin `new Date()`** — R48. Un
+       * `Date` de JavaScript solo guarda milisegundos, así que convertir aquí
+       * tiraba los microsegundos y el último mensaje volvía a cumplir el
+       * `>` en cada sondeo. Ver `CREATED_AT_UTC`.
+       *
+       * Si la cadena no es una fecha, Postgres responde con un error de
+       * conversión; se valida antes para contestar 400 y no 500.
+       */
       const desde = request.query.desde
-      const fechaDesde = desde ? new Date(desde) : null
-      const valida = fechaDesde !== null && !Number.isNaN(fechaDesde.getTime())
+      const hayDesde = typeof desde === 'string' && desde.trim() !== ''
+      if (hayDesde && Number.isNaN(new Date(desde).getTime())) {
+        return reply.code(400).send({
+          error: 'desde_invalido',
+          message: 'El parámetro `desde` no es una fecha válida',
+        })
+      }
 
       const { rows } = await pool.query(
-        valida
-          ? `select id, autor_tipo::text as autor_tipo, contenido, leido, created_at
-               from mensaje
-              where conversacion_id = $1 and created_at > $2
-              order by created_at asc limit 100`
-          : `select id, autor_tipo::text as autor_tipo, contenido, leido, created_at
-               from mensaje
-              where conversacion_id = $1
-              order by created_at asc limit 100`,
-        valida ? [conv.id, fechaDesde] : [conv.id],
+        `select id, autor_tipo::text as autor_tipo, contenido, leido, ${CREATED_AT_UTC}
+           from mensaje
+          where conversacion_id = $1
+            and ($2::timestamptz is null or created_at > $2::timestamptz)
+          order by created_at asc limit 100`,
+        [conv.id, hayDesde ? desde : null],
       )
 
       return reply.send(rows.map(aMensaje))
@@ -236,7 +268,7 @@ export async function registerMensajeriaRoutes(app: FastifyInstance): Promise<vo
         const { rows } = await cliente.query(
           `insert into mensaje (clinica_id, conversacion_id, autor_tipo, autor_id, contenido)
                 values ($1, $2, 'profesional', $3, $4)
-             returning id, autor_tipo::text as autor_tipo, contenido, leido, created_at`,
+             returning id, autor_tipo::text as autor_tipo, contenido, leido, ${CREATED_AT_UTC}`,
           [tenantId, conv.id, alcance.profesionalId, contenido],
         )
 
