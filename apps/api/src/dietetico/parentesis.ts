@@ -24,11 +24,19 @@
  * la cumple. Ademas el prompt de la fase 1 ya es largo y lleva el catalogo
  * entero: una instruccion mas es una instruccion mas que puede perderse.
  *
- * ## La compatibilidad
+ * ## Sin parentesis no se analiza nada — R45
  *
- * Un texto SIN parentesis se analiza completo, como siempre. Si no, los
- * registros ya escritos —y los de quien no conozca la convencion— pasarian de
- * tener valores a no tener ninguno, en silencio y sin que nada lo explique.
+ * R43 hacia lo contrario: un texto sin parentesis se analizaba entero, por no
+ * dejar sin valores a los registros ya escritos. **Se revirtio a proposito.**
+ *
+ * Analizar el relato completo es justo lo que esta seccion vino a evitar: el
+ * modelo recibe «entra a las 6 de la mañana» y devuelve raciones, y el
+ * profesional no tiene como saber que la cifra salio de ahi. Un total que nadie
+ * pidio es peor que un total ausente — el ausente se ve.
+ *
+ * Asi que sin parentesis no hay analisis: no se llama a la IA, los `ai_*` se
+ * limpian y la pantalla lo dice. El profesional marca lo que quiere que se
+ * busque y vuelve a pulsar.
  */
 
 /**
@@ -76,14 +84,19 @@ export function alimentosEntreParentesis(texto: string): string | null {
 }
 
 /**
- * El texto que se manda a identificar, segun el tipo de registro.
+ * El texto que se manda a identificar, o **null para no analizar** — R45.
  *
  * Solo Consumo Usual aplica la convencion de los parentesis: el Recordatorio
  * de 24 horas es una lista de lo que se comio ayer, se escribe ya como lista,
  * y ahi un parentesis es una aclaracion («2 tazas de cafe (sin azucar)») que
- * no debe convertirse en el unico alimento de la fila.
+ * no debe convertirse en el unico alimento de la fila. Por eso el 24 h devuelve
+ * siempre su texto entero y nunca null.
+ *
+ * En Consumo Usual, `null` significa «el profesional no marco nada»: quien
+ * llama no debe llamar a la IA, y debe dejar la fila sin valores. No es un
+ * fallo —no hay nada roto— es que no hay nada que buscar.
  */
-export function textoAAnalizar(texto: string, tipo: string): string {
+export function textoAAnalizar(texto: string, tipo: string): string | null {
   if (tipo !== 'consumo_usual') return texto
-  return alimentosEntreParentesis(texto) ?? texto
+  return alimentosEntreParentesis(texto)
 }

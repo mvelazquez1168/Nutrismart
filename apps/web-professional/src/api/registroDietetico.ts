@@ -31,6 +31,14 @@ export interface FilaDietetica {
    * lista y hay que escribirlos a mano.
    */
   ai_no_encontrado: string[] | null
+  /**
+   * Los alimentos que SÍ entraron en el total — R45.
+   *
+   * El simétrico de `ai_no_encontrado`. Enseñar solo lo que falló dejaba el
+   * total sin explicación: «si no encontró nada, de dónde salen estos
+   * valores». Con los dos, la fila dice cuántos de cuántos.
+   */
+  ai_reconocidos: string[] | null
 }
 
 export interface RegistroDietetico {
@@ -109,6 +117,14 @@ export interface RegistroCalculado extends RegistroDietetico {
   error?: string | null
   no_encontrado?: boolean
   alimentos_no_encontrados?: string[]
+  /**
+   * Consumo Usual sin un solo paréntesis — R45.
+   *
+   * No es un error: es que no había nada marcado para buscar. El servidor no
+   * llama a la IA, deja la fila sin valores y lo dice en `message`.
+   */
+  sin_parentesis?: boolean
+  message?: string
 }
 
 /**

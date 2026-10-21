@@ -52,19 +52,24 @@ interface CasoParentesis {
   titulo: string
   texto: string
   tipo: string
-  /** null = se analiza el texto completo, tal cual. */
-  esperado: string | null
+  /**
+   * Lo que se manda a identificar.
+   *
+   * `'TEXTO'` = el texto entero, tal cual (Recordatorio 24 h).
+   * `null` = **no se analiza** (Consumo Usual sin parentesis, R45).
+   */
+  esperado: string | null | 'TEXTO'
   porque: string
 }
 
 const CASOS_PARENTESIS: CasoParentesis[] = [
   {
-    titulo: 'sin parentesis: se analiza todo',
+    titulo: 'CONSUMO USUAL sin parentesis: NO se analiza (R45)',
     texto: '250 ml de leche descremada y 1 taza de arroz cocido',
     tipo: 'consumo_usual',
     esperado: null,
     porque:
-      'los registros ya escritos pasarian de tener valores a no tener ninguno, en silencio',
+      'R43 analizaba el texto entero; se revirtio porque el relato entraba al modelo y salian raciones que nadie escribio',
   },
   {
     titulo: 'un alimento marcado: solo ese',
@@ -88,19 +93,26 @@ const CASOS_PARENTESIS: CasoParentesis[] = [
     porque: 'es lo que queda al guardar a medio escribir; descartarlo perderia el alimento',
   },
   {
-    titulo: 'parentesis vacio: se ignora',
+    titulo: 'parentesis vacio: tampoco se analiza',
     texto: 'no recuerda () bien',
     tipo: 'consumo_usual',
     esperado: null,
-    porque: 'un grupo vacio no es una marca: el texto se analiza completo',
+    porque: 'un grupo vacio no marca ningun alimento, asi que no hay nada que buscar',
   },
   {
     titulo: 'RECORDATORIO 24 H: no recorta aunque haya parentesis',
     texto: '2 tazas de cafe (sin azucar), 2 tostadas con mantequilla',
     tipo: 'recordatorio_24h',
-    esperado: null,
+    esperado: 'TEXTO',
     porque:
       'ahi un parentesis es una aclaracion; recortar dejaria «sin azucar» como el unico alimento',
+  },
+  {
+    titulo: 'RECORDATORIO 24 H sin parentesis: se analiza entero',
+    texto: '2 tazas de cafe con leche, 2 tostadas',
+    tipo: 'recordatorio_24h',
+    esperado: 'TEXTO',
+    porque: 'la regla de los parentesis es solo de Consumo Usual',
   },
 ]
 
@@ -110,11 +122,12 @@ console.log('')
 
 for (const c of CASOS_PARENTESIS) {
   const obtenido = textoAAnalizar(c.texto, c.tipo)
-  const esperado = c.esperado ?? c.texto
+  const esperado = c.esperado === 'TEXTO' ? c.texto : c.esperado
+  const muestra = obtenido === null ? 'NO SE ANALIZA' : `«${obtenido}»`
   comprobar(
     obtenido === esperado,
-    `${c.titulo} — «${obtenido}»`,
-    `esperado «${esperado}» — ${c.porque}`,
+    `${c.titulo} — ${muestra}`,
+    `esperado ${esperado === null ? 'null (no analizar)' : `«${esperado}»`} — ${c.porque}`,
   )
 }
 

@@ -20,6 +20,17 @@
  * recorte lo hace el servidor. En el Recordatorio de 24 horas no aplica:
  * ahí ya se escribe una lista.
  *
+ * **Sin paréntesis no se analiza nada** (R45): el servidor deja la fila
+ * sin valores y lo dice, en vez de mandar el relato entero al modelo y
+ * devolver raciones que nadie escribió.
+ *
+ * ── Cuántos entraron, no solo cuántos fallaron ──────────────────────
+ *
+ * La fila enseña los dos lados: «3 clasificados · 2 sin equivalencia».
+ * Enseñando solo lo que falló, el total quedaba sin explicación y la
+ * pregunta era «si dice que no encontró nada, de dónde salen estos
+ * valores» (R45).
+ *
  * ── Las cuatro casillas son del profesional ─────────────────────────
  *
  * CHO, proteínas, grasas y kcal se calculan y se pueden CORREGIR, las
@@ -148,6 +159,7 @@ function aLocal(filas: FilaDietetica[]): FilaLocal[] {
       prot_g_manual: f?.prot_g_manual ?? null,
       grasas_g_manual: f?.grasas_g_manual ?? null,
       ai_no_encontrado: f?.ai_no_encontrado ?? null,
+      ai_reconocidos: f?.ai_reconocidos ?? null,
     }
     // La casilla arranca con lo que VALE: la corrección si la hay, y si no
     // lo calculado. Es el número que el profesional va a corregir.
@@ -387,6 +399,22 @@ export function TablaDietetica({
       })
       const r = await analizarFilaDietetica(pacienteId, consultaId, tipo, fila.tiempo_comida)
       hidratar(r)
+      /*
+       * «No había nada que analizar» no es un fallo, pero hay que decirlo — R45.
+       *
+       * El servidor responde 200 y deja la fila sin valores: sin el aviso, el
+       * botón dejaría de girar y no pasaría nada visible, que es la peor
+       * respuesta posible a una pulsación. Se pinta en el mismo sitio que el
+       * fallo de IA, debajo del botón, porque es donde el profesional mira.
+       */
+      if (r.sin_parentesis) {
+        setErrorIa({
+          tiempo: fila.tiempo_comida,
+          mensaje:
+            r.message ??
+            'No se analizó: marca entre paréntesis ( ) los alimentos que quieres buscar en la lista de intercambios.',
+        })
+      }
     } catch (e) {
       setFilas((prev) => prev.map((f, j) => (i === j ? { ...f, analizando: false } : f)))
       // El mensaje de la API ya nombra el motivo y dice si esperar sirve
@@ -424,11 +452,11 @@ export function TablaDietetica({
           <span className="font-semibold text-[color:var(--status-alert)]" aria-hidden="true">
             ⓘ{' '}
           </span>
-          Para la búsqueda de equivalencias en la lista de intercambios solo se
-          consideran los alimentos que escribas{' '}
+          Para la búsqueda de equivalencias en la lista de intercambios solo se consideran los
+          alimentos que escribas{' '}
           <strong className="font-semibold">entre paréntesis ( )</strong>. El resto del texto se
-          conserva, pero se ignora en el análisis. Si no escribes ningún paréntesis, se analiza
-          todo el texto.
+          conserva, pero se ignora en el análisis. Si no incluyes ningún paréntesis,{' '}
+          <strong className="font-semibold">no se realiza el análisis ADA</strong>.
         </div>
       )}
 
@@ -452,6 +480,7 @@ export function TablaDietetica({
               const tieneTexto = (f.alimentos_consumidos ?? '').trim() !== ''
               const analizado = f.ai_kcal !== null
               const noEncontrados = f.ai_no_encontrado ?? []
+              const reconocidos = f.ai_reconocidos ?? []
               return (
                 <tr key={f.tiempo_comida} className="border-b border-border align-top">
                   <td className="w-36 bg-surface-2 px-3 py-2 font-medium text-ink">
@@ -486,6 +515,23 @@ export function TablaDietetica({
                         recargar es un aviso que solo ve quien estaba
                         mirando (R48).
                       */}
+                      {/*
+                        Cuántos SÍ entraron en el total — R45.
+
+                        Va primero y en color normal: es la respuesta a «de
+                        dónde salen estos valores». El ⚠ de al lado dice lo
+                        que faltó, y los dos juntos describen la fila entera.
+                      */}
+                      {reconocidos.length > 0 && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-md bg-primary-tint px-1.5 py-0.5 text-xs font-medium text-primary"
+                          title={`Clasificados en la lista de intercambios: ${reconocidos.join(', ')}`}
+                        >
+                          {reconocidos.length === 1
+                            ? '1 alimento clasificado'
+                            : `${reconocidos.length} alimentos clasificados`}
+                        </span>
+                      )}
                       {noEncontrados.length > 0 && (
                         <span
                           className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium"

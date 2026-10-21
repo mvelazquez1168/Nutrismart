@@ -19,6 +19,7 @@ import { resolverAlcance } from '../pacientes/acceso.js'
 import { llamarClaude, IaNoDisponibleError } from '../ia/cliente.js'
 import {
   leerGrupos,
+  macrosDePorciones,
   resolverAlimento,
   sumarMacros,
   type AlimentoResuelto,
@@ -95,6 +96,19 @@ interface Fila {
    * null = nunca se analizo. Lista vacia = se analizo y se encontro todo.
    */
   ai_no_encontrado: string[] | null
+  /**
+   * Los alimentos que SI entraron en el total — R45.
+   *
+   * Es el simetrico de `ai_no_encontrado`, y existe por una pregunta que el
+   * profesional hacia mirando la pantalla: «si dice que no encontro nada, de
+   * donde salen estos valores». Enseñar solo lo que fallo deja el total sin
+   * explicacion; con los dos lados, la fila dice «3 clasificados · 2 sin
+   * equivalencia» y el numero tiene de donde venir.
+   *
+   * Se persiste por lo mismo que el otro: un dato que se pierde al recargar
+   * solo lo ve quien estaba mirando.
+   */
+  ai_reconocidos: string[] | null
 }
 
 const HORA_RE = /^\d{2}:\d{2}$/
@@ -135,6 +149,7 @@ function filaVacia(clave: string): Fila {
     prot_g_manual: null,
     grasas_g_manual: null,
     ai_no_encontrado: null,
+    ai_reconocidos: null,
   }
 }
 
@@ -305,6 +320,14 @@ interface Resuelto {
   identificado: AlimentoIdentificado
   entrada: EntradaCatalogo | null
   calculo: Calculo | null
+  /**
+   * Los intercambios que el profesional escribio ya contados — R45.
+   *
+   * Presente solo en ese camino, y es lo que distingue «se calculo sin fila
+   * del catalogo» de «no se encontro»: sin el, `entrada === null` haria pasar
+   * por no encontrado un alimento que SI dio numeros.
+   */
+  directos?: { grupo: string; porciones: number }[]
 }
 
 /**
@@ -321,6 +344,55 @@ function resolver(
   grupos: Map<string, GrupoIntercambio>,
   request: { log?: { warn?: (...a: unknown[]) => void } },
 ): Resuelto {
+  /*
+   * **«2 harinas» no se busca en el catalogo: ya es la cuenta** — R45.
+   *
+   * El profesional escribio intercambios, no un alimento. Los valores salen de
+   * `grupo_intercambio` y la multiplicacion la hace `macrosDePorciones`, el
+   * mismo codigo que usa un alimento del catalogo: lo unico que cambia es de
+   * donde vienen las porciones —del texto en vez de la fila—, no quien
+   * calcula.
+   *
+   * Un grupo que la tabla no tiene se descarta y se registra. No se aproxima
+   * al mas parecido: «proteina» y «proteina alta grasa» se diferencian en 55
+   * kcal por intercambio, y elegir por parecido de letras es inventar.
+   */
+  const directos = (identificado.intercambios_directos ?? []).filter((d) => {
+    const existe = grupos.has(d.grupo.toLowerCase())
+    if (!existe) {
+      request.log?.warn?.(
+        { grupo: d.grupo, texto: identificado.descripcion_usuario },
+        '[calculo-dietetico] el modelo nombro un grupo de intercambio que no existe',
+      )
+    }
+    return existe
+  })
+
+  if (directos.length > 0) {
+    const macros = macrosDePorciones(
+      directos.map((d) => ({ grupo_id: d.grupo, cantidad_decimal: d.porciones })),
+      1,
+      grupos,
+    )
+    const porciones = directos.reduce((suma, d) => suma + d.porciones, 0)
+    return {
+      identificado,
+      entrada: null,
+      calculo: {
+        estado: 'ok',
+        porciones,
+        // No hay suposicion: el numero lo escribio el profesional.
+        porcionesSupuestas: false,
+        usuario: null,
+        // Un intercambio es una cuenta, no un volumen ni una masa: el sistema
+        // 'unidades' es justo eso, y `base: 1` dice «una unidad de referencia».
+        referencia: { sistema: 'unidades', base: 1, unidad: 'intercambio' },
+        macros,
+      },
+      directos,
+    }
+  }
+
   if (!identificado.encontrado || identificado.equivalencia_id === null) {
     return { identificado, entrada: null, calculo: null }
   }
@@ -355,7 +427,10 @@ function resolver(
  * construye una pantalla que miente sin que nadie mienta.
  */
 function aRespuesta(r: Resuelto) {
-  const { identificado: i, entrada, calculo } = r
+  const { identificado: i, entrada, calculo, directos } = r
+  // R45: los intercambios escritos a mano cuentan como encontrados aunque no
+  // tengan fila del catalogo. Dieron numeros, y eso es lo que significa aqui.
+  const porIntercambios = (directos ?? []).length > 0
   const ok = calculo?.estado === 'ok' ? calculo : null
   const fallo =
     calculo !== null && (calculo.estado === 'unidades_incompatibles' || calculo.estado === 'porciones_absurdas' || calculo.estado === 'cantidad_invalida')
@@ -376,17 +451,22 @@ function aRespuesta(r: Resuelto) {
     descripcion_usuario: i.descripcion_usuario,
     cantidad_usuario: i.cantidad_usuario,
     unidad_usuario: i.unidad_usuario,
-    encontrado: entrada !== null,
-    no_encontrado: entrada === null,
-    alimento_encontrado: entrada?.alimento ?? null,
+    encontrado: entrada !== null || porIntercambios,
+    no_encontrado: entrada === null && !porIntercambios,
+    alimento_encontrado:
+      entrada?.alimento ??
+      (porIntercambios
+        ? directos!.map((d) => `${d.porciones} × ${d.grupo}`).join(' + ')
+        : null),
     equivalencia_id: entrada?.indice ?? null,
-    porcion_referencia: entrada?.cantidadDescripcion ?? null,
+    porcion_referencia: entrada?.cantidadDescripcion ?? (porIntercambios ? 'intercambio' : null),
     grupo: entrada?.subtipo ?? null,
     grupos:
       entrada?.porciones.map((p) => ({
         grupo: p.grupo_id,
         porciones_por_referencia: Number(p.cantidad_decimal),
-      })) ?? [],
+      })) ??
+      (directos ?? []).map((d) => ({ grupo: d.grupo, porciones_por_referencia: d.porciones })),
     porciones: ok?.porciones ?? null,
     porciones_supuestas: ok?.porcionesSupuestas ?? false,
     nota: i.nota,
@@ -558,6 +638,9 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
           // de valer. Conservarlo mostraria un aviso sobre un alimento que ya
           // no esta escrito.
           ai_no_encontrado: conservaIa ? (previa!.ai_no_encontrado ?? null) : null,
+          // Mismo criterio que su simetrico: si el texto cambio, lo que se
+          // clasifico describia otro texto y no vale (R45).
+          ai_reconocidos: conservaIa ? (previa!.ai_reconocidos ?? null) : null,
           /*
            * **Lo que manda el cliente vale, incluso si el texto cambió.**
            *
@@ -691,16 +774,47 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
           return reply.send(respuesta(reg))
         }
         /*
-         * **Consumo Usual: solo lo que va entre parentesis** (R43).
+         * **Consumo Usual: solo lo que va entre parentesis** (R43), y **sin
+         * parentesis no se analiza nada** (R45).
          *
          * Lo escrito fuera es contexto clinico —horarios, quien cocina, con
          * que frecuencia— que el profesional necesita conservar y que la fase 1
          * no debe intentar emparejar con la lista de intercambios. El recorte
          * se hace aqui, antes del prompt, y no pidiendoselo al modelo: ver
-         * `dietetico/parentesis.ts`. Un texto sin parentesis se analiza
-         * completo, como siempre.
+         * `dietetico/parentesis.ts`.
+         *
+         * Si no hay ni un parentesis no se llama a la IA: se limpian los
+         * `ai_*` de la fila y se responde diciendolo. R43 analizaba el texto
+         * entero en ese caso, y era justo el defecto que la convencion vino a
+         * cerrar — el relato entraba al modelo y salian raciones que nadie
+         * escribio. No cobrar la llamada es el efecto secundario agradable; el
+         * motivo es no inventar un total.
          */
-        texto = textoAAnalizar(texto, ctx.tipo)
+        const recorte = textoAAnalizar(texto, ctx.tipo)
+        if (recorte === null) {
+          const limpias = reg.filas.map((f) =>
+            f.tiempo_comida === tc
+              ? {
+                  ...f,
+                  ai_kcal: null,
+                  ai_cho_g: null,
+                  ai_prot_g: null,
+                  ai_grasas_g: null,
+                  ai_calculado_en: null,
+                  ai_no_encontrado: null,
+                  ai_reconocidos: null,
+                }
+              : f,
+          )
+          await guardar(ctx.consultaId, ctx.tenantId, ctx.tipo, reg.observaciones, limpias)
+          return reply.send({
+            ...respuesta(await leerRegistro(ctx.consultaId, ctx.tenantId, ctx.tipo)),
+            sin_parentesis: true,
+            message:
+              'No se analizó: en Consumo Usual solo se buscan en la lista de intercambios los alimentos escritos entre paréntesis ( ). Marca los alimentos y vuelve a pulsar.',
+          })
+        }
+        texto = recorte
       } else {
         /*
          * `texto` es la forma libre: una frase con cantidad y alimento juntos,
@@ -738,7 +852,7 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
       let identificados: AlimentoIdentificado[]
       try {
         identificados = parsearIdentificacion(
-          await analizarConReintento(construirPromptIdentificacion(texto, catalogo), ia),
+          await analizarConReintento(construirPromptIdentificacion(texto, catalogo, [], [...grupos.values()].map((g) => g.nombre)), ia),
         )
       } catch (e) {
         return responderFalloIa(e, request, reply, 'identificacion-dietetica')
@@ -762,7 +876,12 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
         try {
           const segundos = parsearIdentificacion(
             await analizarConReintento(
-              construirPromptIdentificacion(textoReintento, catalogo, excluidos),
+              construirPromptIdentificacion(
+                textoReintento,
+                catalogo,
+                excluidos,
+                [...grupos.values()].map((g) => g.nombre),
+              ),
               ia,
             ),
           )
@@ -826,6 +945,18 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
         .filter((a) => a.no_encontrado || a.error !== null)
         .map((a) => a.descripcion_usuario)
 
+      /*
+       * Y lo que SI entro en el total — R45.
+       *
+       * Son los que dieron numeros, que es exactamente el criterio con el que
+       * se sumo `total`. Enseñar «3 clasificados» al lado de «2 sin
+       * equivalencia» es lo que convierte un total sin explicacion en un total
+       * que se puede revisar.
+       */
+      const conEquivalencia = alimentos
+        .filter((a) => !a.no_encontrado && a.error === null)
+        .map((a) => a.descripcion_usuario)
+
       if (!modoFila) {
         return reply.send({
           texto,
@@ -851,7 +982,12 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
         f.tiempo_comida !== tc
           ? f
           : conNumeros.length === 0
-            ? { ...f, ai_calculado_en: calculado, ai_no_encontrado: sinNumeros }
+            ? {
+                ...f,
+                ai_calculado_en: calculado,
+                ai_no_encontrado: sinNumeros,
+                ai_reconocidos: conEquivalencia,
+              }
             : {
                 ...f,
                 ai_kcal: total.kcal,
@@ -860,6 +996,7 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
                 ai_grasas_g: total.grasa_g,
                 ai_calculado_en: calculado,
                 ai_no_encontrado: sinNumeros,
+                ai_reconocidos: conEquivalencia,
               },
       )
 
@@ -911,9 +1048,33 @@ export async function registerRegistroDieteticoRoutes(app: FastifyInstance): Pro
       }
 
       const etiqueta = TIEMPOS.find((t) => t.clave === tc)?.etiqueta ?? tc
-      // Misma convencion que `/calcular` (R43): en Consumo Usual solo se
-      // analizan los alimentos entre parentesis.
-      const prompt = construirPrompt(etiqueta, textoAAnalizar(texto, ctx.tipo))
+      // Misma convencion que `/calcular` (R43, R45): en Consumo Usual solo se
+      // analizan los alimentos entre parentesis, y sin parentesis no se analiza.
+      const recorte = textoAAnalizar(texto, ctx.tipo)
+      if (recorte === null) {
+        const limpias = reg.filas.map((f) =>
+          f.tiempo_comida === tc
+            ? {
+                ...f,
+                ai_kcal: null,
+                ai_cho_g: null,
+                ai_prot_g: null,
+                ai_grasas_g: null,
+                ai_calculado_en: null,
+                ai_no_encontrado: null,
+                ai_reconocidos: null,
+              }
+            : f,
+        )
+        await guardar(ctx.consultaId, ctx.tenantId, ctx.tipo, reg.observaciones, limpias)
+        return reply.send({
+          ...respuesta(await leerRegistro(ctx.consultaId, ctx.tenantId, ctx.tipo)),
+          sin_parentesis: true,
+          message:
+            'No se analizó: en Consumo Usual solo se buscan en la lista de intercambios los alimentos escritos entre paréntesis ( ). Marca los alimentos y vuelve a pulsar.',
+        })
+      }
+      const prompt = construirPrompt(etiqueta, recorte)
 
       let partidos: { alimento: string; cantidad: string | null }[]
       try {
