@@ -5447,98 +5447,97 @@ Tres bloques, 24 casos, todos pasando:
 
 ---
 
-# R45 — Consumo Usual: sin paréntesis no se analiza, abreviaturas clínicas y cuántos SÍ entraron
+# R44 — El rango de referencia que trae el informe, guardado con cada resultado
 
-Tres arreglos de la misma pantalla, los tres sobre lo mismo: que el profesional sepa qué va a pasar y de dónde salió el número.
+## Qué cambia
 
-## 1 · Sin paréntesis no se analiza nada (revierte R43)
+Del PDF del laboratorio ya no salen solo los valores: salen también **los rangos de referencia que el propio informe imprime al lado**, y se guardan junto a cada resultado (`lab_resultado.ref_minimo` / `ref_maximo`, migración **051**). Al listar, esas referencias **mandan sobre el catálogo** de la clínica.
 
-**Antes (R43):** un Consumo Usual sin paréntesis se analizaba entero. Se hizo por compatibilidad, para no dejar sin valores los registros ya escritos.
+| Origen del rango | Cuándo |
+|---|---|
+| `por_resultado` | El informe declaraba un rango para ese analito |
+| `por_sexo` | No lo declaraba, y la clínica tiene un rango para ese sexo |
+| `general` | No lo declaraba, y la clínica tiene un rango general |
+| `ninguno` | Nadie lo declaró → el resultado sale como **sin referencia**, que es la verdad |
 
-**Ahora (R45):** sin un solo paréntesis **no se llama a la IA**, los `ai_*` de la fila se limpian y la pantalla lo dice.
+### Por qué junto al resultado y no en el catálogo
 
-### Por qué se revirtió
+El rango que imprime un informe es **el del laboratorio que hizo esa medición**, con su método y en su fecha. Cambia entre laboratorios y con el tiempo. Metido en el catálogo global se aplicaría hacia atrás a estudios de otros laboratorios —afirmando algo que nadie dijo— y reinterpretaría un laboratorio de hace dos años con el criterio de hoy. Guardado con el resultado, cada medición conserva el criterio con el que se emitió.
 
-Analizar el relato completo es exactamente lo que la convención vino a evitar. El modelo recibe «desayuna tarde porque entra a las 6» y devuelve raciones; el profesional ve unas kcal y no tiene cómo saber que salieron de ahí. **Un total que nadie pidió es peor que un total ausente: el ausente se ve.**
+### La prioridad se decide con los dos lados juntos
 
-No cobrar la llamada es un efecto secundario agradable, no el motivo.
+`ref_minimo` y `ref_maximo` se miran **como un par**, no uno por uno. Un informe que solo declara «< 200» deja el mínimo en null, y eso **es** su referencia. Mirando cada lado por separado, el mínimo caería al del catálogo y saldría un rango mitad de un sitio y mitad de otro, que no es el criterio de nadie.
 
-### Lo que ve el profesional
+### Lo que no se inventa
 
-El banner ahora dice:
-
-> ⓘ Para la búsqueda de equivalencias en la lista de intercambios solo se consideran los alimentos que escribas **entre paréntesis ( )**. El resto del texto se conserva, pero se ignora en el análisis. Si no incluyes ningún paréntesis, **no se realiza el análisis ADA**.
-
-Y al pulsar «Analizar IA» sin paréntesis aparece, **debajo del botón**, el aviso de que no había nada marcado. Sin eso el botón dejaría de girar y no pasaría nada visible, que es la peor respuesta posible a una pulsación.
-
-> El Recordatorio de 24 horas **no cambia**: ahí se escribe una lista, se analiza entera, y un paréntesis es una aclaración («2 tazas de café (sin azúcar)») que no debe convertirse en el único alimento de la fila.
-
-## 2 · «2 harinas», «3 protes»: los intercambios que el profesional ya contó
-
-Un nutricionista no siempre escribe alimentos: escribe **la cuenta ya hecha**. «2 harinas» no es un alimento que buscar —no existe una fila «harinas» en el catálogo de equivalencias—, así que caía en «sin equivalencia» con las casillas vacías, que es justo lo contrario de lo que el profesional acababa de decir.
-
-Ahora la fase 1 puede devolver **grupo + número de intercambios** en vez de una fila del catálogo, y **el servidor multiplica contra `grupo_intercambio`**, igual que con cualquier alimento. El modelo nombra; el código calcula; la tabla manda. Vocabulario reconocido: harinas/cereales/granos, protes/proteínas/carnes, lácteos/leche, fruta, verdura/vegetal, grasa, azúcar.
-
-Tres decisiones que importan:
-
-- **Los nombres de grupo salen de `grupo_intercambio`, no escritos en el prompt.** Una clínica puede tener grupos propios, y un nombre a mano se desincroniza de la tabla sin que nada avise.
-- **Un grupo que la tabla no tiene se descarta y se registra.** No se aproxima al más parecido: «proteína magra» y «proteína alta en grasa» se diferencian en 55 kcal por intercambio, y elegir por parecido de letras es inventar.
-- **Tope de 20 intercambios por grupo.** Un «200 protes» es una lectura mal hecha; doce ya es mucho para un tiempo de comida.
-
-## 3 · Cuántos SÍ entraron, no solo cuántos fallaron
-
-La fila decía «2 alimentos sin equivalencia» y nada más, y la pregunta era inevitable: **«si dice que no encontró nada, ¿de dónde salen estos valores?»**.
-
-Ahora se persiste también `ai_reconocidos` —el simétrico de `ai_no_encontrado`— y la fila enseña los dos lados:
-
-> **1 alimento clasificado**  ⚠ **1 alimento sin equivalencia**
-
-El `title` de cada badge lista cuáles. Se persiste por lo mismo que el otro: un dato que se pierde al recargar solo lo ve quien estaba mirando. No hizo falta migración — las filas viven en la columna `jsonb` de `registro_dietetico`.
+- Al modelo se le dice explícitamente que **no complete un rango que el informe no muestre**. Un rango inventado decide si un valor sale marcado como alterado.
+- Un lado que no se entiende queda en **null, nunca en cero**: un cero como límite inferior volvería «normal» cualquier valor; como límite superior, volvería «alterado» todos.
+- Un **rango invertido** (mínimo mayor que máximo) se descarta **entero**, en el extractor y otra vez en la ruta. No es un rango: es una lectura mal hecha.
+- Un rango ilegible **no invalida la medición**: el valor entra igual y el resultado cae al catálogo. Rechazar el estudio entero por un rango mal leído perdería el dato.
 
 ## Comprobación
 
-API local en el 4001, token de `ana@vida.cr`, consulta #20 de Ana Castro. Se escribe el texto con un PUT y se llama a `/calcular`.
+Migración 051 aplicada (`npm run migrate -w @nutrismart/api` → `+ 051 … aplicando…`). API local en el 4001, token de `ana@vida.cr`, el mismo informe de 16 analitos de R43.
 
-| Caso | Texto | Resultado |
+### 1 · El extractor saca los 14 rangos, incluidos los de un solo lado
+
+| Analito | En el informe | `referencia` devuelta |
 |---|---|---|
-| **A · sin paréntesis** | `Desayuna tarde porque entra a las 6, casi siempre cafe con leche y pan` | `sin_parentesis: true`, los cuatro `ai_*` en **null**, mensaje en pantalla |
-| **B · con paréntesis** | `Desayuna tarde, casi siempre (250 ml de leche descremada) y (1 taza de arroz cocido)` | **264 kcal**, CHO 42,48 · reconocidos: los dos · sin equivalencia: ninguno |
-| **C · abreviaturas** | `Lo tipico: (2 harinas), (3 protes) y (1 fruta)` | **355 kcal**, CHO 45, prot 27, grasas 8 · reconocidos: los tres |
-| **D · mezcla** | `Come (2 harinas) y (pizza con pina)` | **160 kcal** · **1 clasificado** y **1 sin equivalencia**, los dos a la vista |
+| Glicemia en ayunas | `70 - 100` | `{minimo: 70, maximo: 100}` |
+| Hemoglobina glicosilada A1c | `< 5.7` | `{minimo: null, maximo: 5.7}` |
+| Colesterol HDL | `> 50` | `{minimo: 50, maximo: null}` |
+| Creatinina sérica | `0.6 - 1.1` | `{minimo: 0.6, maximo: 1.1}` |
+| …los 14 del catálogo | | los 14 con su rango |
 
-### El caso A no consumió IA
+### 2 · El expediente deja de decir «Sin referencia»
 
-`select count(*) from uso_ia where funcion='identificacion_dietetica'` pasó de **17 a 20** con los cuatro casos corridos: tres llamadas para B, C y D, **cero para A**.
+Guardado el estudio con esas referencias y leído el listado:
 
-### La aritmética de C cuadra a mano
+```
+  glucosa_ayunas   112     70 - 100       alterado
+  hba1c            6.2     null - 5.7     alterado
+  colesterol_total 228     null - 200     alterado
+  hdl              41      50 - null      alterado
+  ldl              152     null - 130     alterado
+  trigliceridos    186     null - 150     alterado
+  hemoglobina      11.8    12 - 15.5      alterado
+  hierro_serico    58      60 - 170       alterado
+  ferritina        18.5    15 - 150       normal
+  tsh              2.41    0.4 - 4        normal
+  vitamina_d       22      30 - 100       alterado
+  creatinina       0.82    0.6 - 1.1      normal
+  alt              34      null - 41      normal
+  ast              28      null - 40      normal
+```
 
-Contra `grupo_intercambio`: harina 15/3/1/80, proteína magra 0/7/2/45, fruta 15/0/0/60.
+**9 alterados, 5 normales, cero `sin_referencia`.** Los dos casos de un solo lado salen bien: HDL 41 contra «> 50» es **alterado**, y ALT 34 contra «< 41» es **normal**.
 
-| | CHO | Prot | Grasas | kcal |
-|---|---|---|---|---|
-| 2 × harina | 30 | 6 | 2 | 160 |
-| 3 × proteína magra | 0 | 21 | 6 | 135 |
-| 1 × fruta | 15 | 0 | 0 | 60 |
-| **Total** | **45** | **27** | **8** | **355** |
+### 3 · La captura a mano sigue cayendo al catálogo, y el rango invertido se descarta
 
-Es exactamente lo que devolvió el endpoint. El detalle por alimento muestra `2 × harina`, `3 × proteina_magra`, `1 × fruta` — el profesional puede seguir cada número hasta su grupo.
+Estudio capturado sin referencias y con uno invertido a propósito:
 
-### En pantalla
-
-Banner con el texto nuevo, y la fila del caso D mostrando **«1 alimento clasificado»** junto a **«⚠ 1 alimento sin equivalencia»**.
-
-### Comprobación automática
-
-`npm run verificar:labs-pdf -w @nutrismart/api` incluye los casos de la convención y **se actualizó con la regla nueva**: Consumo Usual sin paréntesis ahora espera `null` (no analizar) donde antes esperaba el texto entero, y se añadió el caso de que el Recordatorio 24 h sin paréntesis sí se analiza entero. Los 26 casos pasan.
-
-## Desviaciones respecto al prompt
-
-El prompt R45 describe código anterior a R46 (el cálculo en dos fases). Tres cosas no existían:
-
-| El prompt decía | Realidad | Qué se hizo |
+| Enviado | Guardado en `lab_resultado` | En el listado |
 |---|---|---|
-| Editar la constante `SISTEMA_ADA` con la lista de abreviaturas | No existe desde R46: la tabla ADA vive en `grupo_intercambio` y el modelo ya no calcula | Las abreviaturas se enseñan en el prompt de la **fase 1**, que devuelve grupo + número; **la multiplicación la sigue haciendo el servidor**. Meter valores ADA en un prompt desharía R46 |
-| `update registro_dietetico_fila set ... where id = $1` | No existe esa tabla: las seis filas viven en una columna `jsonb` de `registro_dietetico` | Se limpian las claves `ai_*` de la fila y se reescribe el `jsonb` con el `guardar()` que ya usa el handler |
-| El estado `sinEquivalencia` y `_sinEquivalencia` en el endpoint `/analizar-ia` | La pantalla usa `/calcular` y lee `ai_no_encontrado`, que se **persiste** | La guardia se puso en **los dos** endpoints, y el contador nuevo usa `ai_reconocidos`, persistido igual |
+| `glucosa_ayunas: 99` (sin refs) | `ref_minimo` y `ref_maximo` en null | rango `70 - 100` del catálogo, `normal` |
+| `hba1c: 5.1, refMinimo: 10, refMaximo: 4` | **los dos en null** — invertido, descartado entero | rango `4 - 5.6` del catálogo, `normal` |
+| `tsh: 3.0, refMaximo: 4.0` (solo un lado) | `ref_maximo = 4` | rango `null - 4` — el del cuerpo, **no** mezclado con el del catálogo |
 
-El prompt también pedía el contador «· N sin equivalencia ADA» junto a los macros. Lo que había que resolver —según su propio contexto— era que no se veía **cuántos SÍ se clasificaron**; el badge de los que fallan ya existía desde R48. Así que se añadió el que faltaba, el de los clasificados, y se dejó el otro como estaba.
+## Una desviación respecto al prompt: el catálogo NO estaba vacío
+
+El prompt parte de que «la tabla `biomarcador_rango` está vacía». **En esta base de desarrollo no lo está**: tiene 38 filas, 19 por clínica, con rangos generales y por sexo. Se comprobó antes y después del cambio.
+
+Así que el «Sin referencia» que se veía en el expediente **no venía de un catálogo vacío**, sino de lo que arregló R43: los estudios subidos como PDF se guardaban con **cero resultados**, y sin resultados no hay nada que comparar — de ahí los tres mensajes juntos («Sin valores capturados», «Sin referencia», «Todavía no hay interpretación»).
+
+Eso **no invalida este cambio**, y conviene decir por qué: que el rango del laboratorio emisor mande sobre un catálogo genérico es correcto clínicamente, y lo es más todavía en una instalación donde el catálogo sí esté vacío o incompleto, que es lo que pasará en una clínica recién dada de alta. Lo que cambia es la expectativa: **esto no era la causa de los tres mensajes, es una mejora del criterio.**
+
+## Lo que hay que decir en capacitación
+
+1. **El rango que se ve junto a un resultado puede venir de dos sitios.** Si el informe lo traía, es el del laboratorio que hizo la medición. Si no, es el que la clínica tiene configurado. Lo primero es más fiable, y por eso gana.
+2. **Un estudio viejo no se reinterpreta.** El rango se guarda con el resultado, así que cambiar los rangos de la clínica hoy no mueve el «alterado» de un laboratorio del año pasado.
+3. **Si no hay rango por ningún lado, el sistema dice «sin referencia» y no «normal».** Un valor sin criterio no se puede declarar bueno.
+
+## Tropiezo de entorno: un proceso viejo en el 4001
+
+La primera corrida devolvió `referencia: null` en los 14 analitos, como si el modelo no supiera extraerlos. No era eso: la API nueva **nunca llegó a levantar** —`EADDRINUSE: address already in use 0.0.0.0:4001`, en el log y en ningún otro sitio— y las peticiones las contestaba el proceso de la sesión anterior, con el código viejo.
+
+Vale la pena recordarlo porque el síntoma apunta justo al sitio equivocado: parece un problema del prompt o del modelo, y es un puerto ocupado. Antes de dudar de la IA, mirar el log de arranque y `netstat -ano | grep :4001`.

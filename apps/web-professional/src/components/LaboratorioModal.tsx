@@ -28,7 +28,12 @@ import {
   previsualizarPdf,
   crearEstudio,
 } from '../api/laboratorios'
-import type { ArchivoSubido, Biomarcador, SexoBiologico } from '../api/tipos'
+import type {
+  ArchivoSubido,
+  Biomarcador,
+  ReferenciaDeclarada,
+  SexoBiologico,
+} from '../api/tipos'
 
 type Paso = 'archivo' | 'revision'
 
@@ -59,6 +64,14 @@ export function LaboratorioModal({
 
   const [archivo, setArchivo] = useState<ArchivoSubido | null>(null)
   const [valores, setValores] = useState<Record<string, string>>({})
+  /**
+   * Los rangos que el PDF declaraba, por código — R44.
+   *
+   * No se editan ni se enseñan como campo: son lo que decía el informe, y
+   * viajan con el resultado al guardar. Si se pudieran teclear dejarían de
+   * ser «lo que declaró el laboratorio», que es justo su valor.
+   */
+  const [referencias, setReferencias] = useState<Record<string, ReferenciaDeclarada>>({})
   const [noReconocidos, setNoReconocidos] = useState<{ etiqueta: string; valor: string }[]>([])
   const [avisos, setAvisos] = useState<string[]>([])
 
@@ -75,6 +88,7 @@ export function LaboratorioModal({
     setPaso('archivo')
     setArchivo(null)
     setValores({})
+    setReferencias({})
     setNoReconocidos([])
     setAvisos([])
     setFecha(hoyISO())
@@ -104,6 +118,8 @@ export function LaboratorioModal({
         const iniciales: Record<string, string> = {}
         for (const r of prev.reconocidos) iniciales[r.codigo] = String(r.valor)
         setValores(iniciales)
+        // Un CSV de dos columnas no trae rangos: manda el catálogo.
+        setReferencias({})
         setNoReconocidos(prev.noReconocidos)
         setAvisos(prev.avisos)
       } else if (subido.mime === 'application/pdf') {
@@ -118,8 +134,14 @@ export function LaboratorioModal({
          */
         const prev = await previsualizarPdf(subido.id)
         const iniciales: Record<string, string> = {}
-        for (const r of prev.reconocidos) iniciales[r.codigo] = String(r.valor)
+        const refInicial: Record<string, ReferenciaDeclarada> = {}
+        for (const r of prev.reconocidos) {
+          iniciales[r.codigo] = String(r.valor)
+          // R44: el rango que el informe traía impreso. Solo si lo traía.
+          if (r.referencia) refInicial[r.codigo] = r.referencia
+        }
         setValores(iniciales)
+        setReferencias(refInicial)
         setNoReconocidos(prev.noReconocidos)
         setAvisos(
           prev.reconocidos.length > 0
@@ -133,6 +155,7 @@ export function LaboratorioModal({
         // Imagen: no hay texto que extraer. Se dice, en vez de dejar cuarenta
         // casillas vacías sin explicación.
         setValores({})
+        setReferencias({})
         setNoReconocidos([])
         setAvisos([
           'Este archivo es una imagen y no se puede leer automáticamente. Captura los valores a mano en los campos de abajo.',
@@ -166,7 +189,16 @@ export function LaboratorioModal({
   const { marcarGuardado } = useCambiosSinGuardar({
     nombre: 'Laboratorio',
     activo: abierto,
-    valores: { paso, archivoId: archivo?.id ?? null, valores, noReconocidos, fecha, laboratorio, notas },
+    valores: {
+      paso,
+      archivoId: archivo?.id ?? null,
+      valores,
+      referencias,
+      noReconocidos,
+      fecha,
+      laboratorio,
+      notas,
+    },
     guardar: () => guardar(),
   })
 
@@ -177,7 +209,21 @@ export function LaboratorioModal({
 
     try {
       const resultados = Object.entries(valores)
-        .map(([codigo, bruto]) => ({ codigo, valor: Number(String(bruto).replace(',', '.')) }))
+        .map(([codigo, bruto]) => ({
+          codigo,
+          valor: Number(String(bruto).replace(',', '.')),
+          /*
+           * El rango del informe viaja con su resultado — R44.
+           *
+           * Se busca por código, no por posición: si el profesional corrigió
+           * un valor leído del PDF, el rango sigue siendo el que ese informe
+           * declaraba para ese analito. Un código escrito a mano no tiene
+           * entrada aquí y sale con null, que es lo correcto — ahí manda el
+           * catálogo.
+           */
+          refMinimo: referencias[codigo]?.minimo ?? null,
+          refMaximo: referencias[codigo]?.maximo ?? null,
+        }))
         // Un campo vacío significa "no se midió", no cero.
         .filter((r) => Number.isFinite(r.valor) && String(valores[r.codigo]).trim() !== '')
 

@@ -218,7 +218,12 @@ export async function registerLaboratoriosRoutes(app: FastifyInstance): Promise<
       // --- resultados ---
       const catalogo = await obtenerCatalogoSimple()
       const codigosValidos = new Set(catalogo.map((c) => c.codigo))
-      const resultados: { codigo: string; valor: number }[] = []
+      const resultados: {
+        codigo: string
+        valor: number
+        refMinimo: number | null
+        refMaximo: number | null
+      }[] = []
       const vistos = new Set<string>()
 
       const crudos = Array.isArray(b['resultados']) ? (b['resultados'] as unknown[]) : []
@@ -240,8 +245,34 @@ export async function registerLaboratoriosRoutes(app: FastifyInstance): Promise<
           errores.push({ campo: `resultados.${i}.codigo`, mensaje: 'Biomarcador repetido' })
           continue
         }
+        /*
+         * Las referencias que venian en el informe — R44.
+         *
+         * Opcionales y saneadas aparte del valor: un rango ilegible NO
+         * invalida la medicion, solo deja el resultado sin referencia propia
+         * —y entonces manda el catalogo de la clinica—. Rechazar el estudio
+         * entero por un rango mal leido perderia el valor, que es el dato.
+         *
+         * Un rango invertido se descarta COMPLETO, no a medias: medio rango
+         * del informe y medio del catalogo no es el criterio de nadie.
+         */
+        const refMinimo =
+          typeof fila['refMinimo'] === 'number' && Number.isFinite(fila['refMinimo'])
+            ? (fila['refMinimo'] as number)
+            : null
+        const refMaximo =
+          typeof fila['refMaximo'] === 'number' && Number.isFinite(fila['refMaximo'])
+            ? (fila['refMaximo'] as number)
+            : null
+        const invertido = refMinimo !== null && refMaximo !== null && refMinimo > refMaximo
+
         vistos.add(codigo)
-        resultados.push({ codigo, valor })
+        resultados.push({
+          codigo,
+          valor,
+          refMinimo: invertido ? null : refMinimo,
+          refMaximo: invertido ? null : refMaximo,
+        })
       }
 
       const archivoId = typeof b['archivoId'] === 'string' ? b['archivoId'].trim() : null
