@@ -33,6 +33,9 @@ export function TabsValoracion({
     <div className="overflow-x-auto border-b border-border">
       <nav className="flex min-w-max gap-1" aria-label="Secciones de la valoración">
         {SECCIONES.map((s) => {
+          // Una sección informativa no se completa: no lleva marca ni promete
+          // que falte algo por hacer (R46).
+          const informativa = 'informativa' in s && s.informativa === true
           const completa = completas[s.clave] === true
           const esActiva = s.clave === activa
           return (
@@ -41,23 +44,29 @@ export function TabsValoracion({
               type="button"
               onClick={() => salidaSegura(() => onCambiar(s.clave))}
               aria-current={esActiva ? 'page' : undefined}
-              aria-label={`${s.etiqueta}${completa ? ', completada' : ', pendiente'}`}
+              aria-label={
+                informativa
+                  ? `${s.etiqueta}, solo consulta`
+                  : `${s.etiqueta}${completa ? ', completada' : ', pendiente'}`
+              }
               className={`-mb-px flex items-center gap-2 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm transition-colors ${
                 esActiva
                   ? 'border-primary font-semibold text-primary'
                   : 'border-transparent text-muted hover:text-ink'
               }`}
             >
-              <span
-                aria-hidden="true"
-                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-pill text-[10px] font-bold ${
-                  completa
-                    ? 'bg-[color:var(--status-normal)] text-white'
-                    : 'border border-border text-transparent'
-                }`}
-              >
-                ✓
-              </span>
+              {!informativa && (
+                <span
+                  aria-hidden="true"
+                  className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-pill text-[10px] font-bold ${
+                    completa
+                      ? 'bg-[color:var(--status-normal)] text-white'
+                      : 'border border-border text-transparent'
+                  }`}
+                >
+                  ✓
+                </span>
+              )}
               {s.etiqueta}
             </button>
           )

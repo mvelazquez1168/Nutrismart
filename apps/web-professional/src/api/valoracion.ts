@@ -11,6 +11,18 @@ export const SECCIONES = [
   // para renombrar una etiqueta. Lo que ve el profesional es
   // «Laboratorios», que es lo que la sección enseña de verdad.
   { clave: 'bioquim', etiqueta: 'Laboratorios' },
+  /**
+   * Solo lee y dibuja: la evolución de los laboratorios ya cargados — R46.
+   *
+   * `informativa` la distingue de las otras cinco, que son formularios con un
+   * estado de completitud en `consulta_seccion`. Esta no se completa nunca
+   * —no hay nada que rellenar— y sin la marca la pestaña enseñaría un círculo
+   * «pendiente» para siempre, prometiendo un trabajo que no existe.
+   *
+   * Tampoco viaja al servidor: su lista de secciones válidas
+   * (`routes/consultas.ts`) no la conoce, y no hace falta que la conozca.
+   */
+  { clave: 'dashboards', etiqueta: 'Dashboards', informativa: true },
   { clave: 'clinico', etiqueta: 'Clínico' },
   { clave: 'dietetico', etiqueta: 'Dietético' },
   // La clave sigue siendo 'conclusion' —la valida el servidor y está

@@ -5444,3 +5444,64 @@ Tres bloques, 24 casos, todos pasando:
 
 - **`curl -F "archivo=@/c/Users/…"` no encuentra el archivo** en el bash de Windows: hay que darle la ruta con letra de unidad (`C:/Users/…`). Falla con `curl: (26) Failed to open/read local data from file`, que parece un problema de permisos y no lo es.
 - Un script suelto en `.ts` fuera de un paquete con `"type": "module"` lo compila `tsx` como CJS y rechaza el `await` de nivel superior. Extensión `.mts`, y ejecutarlo **desde `apps/api`** para que resuelva `puppeteer`.
+
+---
+
+# R46 — Pestaña «Dashboards»: la evolución de los laboratorios
+
+## Qué resuelve
+
+La pestaña de Laboratorios enseña **un estudio**. La pregunta clínica que no podía responder es **hacia dónde va**: una glucosa de 112 no significa lo mismo viniendo de 140 que viniendo de 95, y hasta ahora eso había que reconstruirlo abriendo estudio por estudio.
+
+Nueva pestaña **Dashboards**, entre Laboratorios y Clínico, con una gráfica de línea por biomarcador y todo su histórico. **No hay endpoint nuevo**: los datos salen de `GET /api/pacientes/:id/laboratorios`, que ya existía. Como el componente los pide al montarse, la gráfica se actualiza sola en cuanto se registra un estudio y se vuelve a la pestaña.
+
+## Decisiones que importan
+
+### Sin librería de gráficas
+
+SVG a mano, siguiendo `GraficaComposicion.tsx`. Series cortas sobre un eje de tiempo no justifican una dependencia, y así **los colores salen de los tokens** como el resto de la aplicación.
+
+### El color del punto es el estado clínico, no decoración
+
+Cada punto se pinta con el color de su estado —`normal` verde, `alterado` rojo, `sin_referencia` gris—, que son los colores clínicos **fijos** del design system y los mismos que usa la tabla de laboratorios. Un punto rojo en la gráfica y una fila roja en la tabla significan lo mismo.
+
+**El color nunca va solo:** cada punto lleva su `<title>` con fecha, valor y estado en palabras, la tarjeta repite el estado en texto, y la gráfica tiene un `aria-label` que resume el recorrido («Evolución de Glucosa en ayunas en 3 estudios, de 142 a 98 mg/dL»).
+
+### La banda de referencia entra siempre en el encuadre
+
+El eje vertical se calcula con los valores medidos **y los límites del rango**. Si se ajustara solo a los valores, un paciente con todo fuera de rango vería una línea cómodamente centrada con el límite fuera de la imagen: **la gráfica diría «normal» con los datos de «alterado»**.
+
+Un rango abierto por un lado —«< 100»— se dibuja hasta el borde del encuadre. Cerrarlo en un número inventado sería decir otra cosa.
+
+### Un solo punto no es una tendencia
+
+Un biomarcador con un único resultado muestra su tarjeta y su valor, y en lugar de gráfica dice «Un solo estudio registrado. La evolución aparece a partir del segundo». Trazar una línea con un punto sugiere una tendencia que nadie ha medido.
+
+### La pestaña no se puede «completar», y no lo finge
+
+Las otras cinco secciones son formularios con estado en `consulta_seccion`; esta solo lee. Se marcó como `informativa: true` y **no lleva el círculo de completitud**: sin eso enseñaría un «pendiente» para siempre, prometiendo un trabajo que no existe. Su `aria-label` dice «Dashboards, solo consulta». Tampoco entra en `SECCIONES_EXIGIDAS` ni viaja al servidor —la lista de secciones válidas de `routes/consultas.ts` no la conoce, y no hace falta que la conozca.
+
+## Comprobación
+
+Tres estudios sembrados para Ana Castro (abril, julio y octubre) con un biomarcador bajando, otro subiendo, uno estable y uno con un solo punto. Con la API en el 4001 y la aplicación en el navegador:
+
+| Qué se miró | Resultado |
+|---|---|
+| Pestañas | `Antropometría · Laboratorios · **Dashboards** · Clínico · Dietético · Prescripción` — en su sitio, y la nueva **sin** círculo de completitud |
+| Gráficas dibujadas | **4** (glucosa, HbA1c, LDL, TSH). Ferritina, con un solo estudio, sin gráfica y con su explicación |
+| Agrupación | Perfil glucémico · Perfil lipídico · Hematología · Tiroides, en el orden del catálogo |
+| `aria-label` de las gráficas | «Evolución de Glucosa en ayunas en 3 estudios, de 142 a 98 mg/dL», y equivalentes |
+| Color de los 12 puntos | glucosa `critical, critical, normal` (142 y 121 fuera, 98 dentro) · LDL los tres `critical` · TSH los tres `normal` |
+| Valor actual y delta | «98 mg/dL · 15/10 · **-23 vs. anterior** · dentro de referencia» |
+
+El caso que más dice es la **glucosa**: tres puntos descendiendo desde fuera de la banda hasta dentro de ella, con el último punto verde. Esa es la lectura que antes había que hacer de memoria abriendo tres estudios.
+
+## Desviaciones respecto al prompt
+
+| El prompt decía | Qué se hizo | Por qué |
+|---|---|---|
+| `viewBox="0 0 320 80"` | `0 0 320 90` | Con 80 px las tres etiquetas del eje Y y las fechas se pisan. Diez píxeles más y caben sin tocarse |
+| «si obtener el grupo requiere un segundo fetch complejo, mostrar sin agrupar» | **Sí se agrupa** | No era complejo: `getBiomarcadores()` ya existe y trae `grupo` y `decimales`. Se piden los dos en paralelo, y si el catálogo falla las series caen a «Otros» con un decimal en vez de tumbar el panel |
+| Solo añadir la sección y el panel | Además, `informativa` en `SECCIONES` y en `TabsValoracion` | Sin eso la pestaña nueva enseñaría un «pendiente» permanente. Es un efecto del cambio pedido, no una función aparte |
+
+Los decimales de cada biomarcador salen del catálogo (`decimales`), no de un redondeo fijo: un TSH de 2,30 y uno de 2,35 no deben verse iguales.
