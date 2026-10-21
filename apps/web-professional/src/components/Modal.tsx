@@ -17,6 +17,15 @@ interface Props {
   onCerrar: () => void
   /** Mientras es true, Escape y el clic en el fondo no cierran. */
   bloqueado?: boolean
+  /**
+   * Cuando es true, clicar en el fondo NO cierra — R43.
+   *
+   * Para los modales donde cerrar tira trabajo escrito: el de laboratorio
+   * tiene cuarenta casillas y un paso de revisión, y un clic de más al lado
+   * del diálogo las borraba todas sin preguntar. Escape sigue cerrando: es
+   * deliberado, no accidental, y el aviso de cambios sin guardar lo cubre.
+   */
+  sinCierreAlFondo?: boolean
   ancho?: 'md' | 'lg'
   children: ReactNode
   pie?: ReactNode
@@ -28,6 +37,7 @@ export function Modal({
   abierto,
   onCerrar,
   bloqueado = false,
+  sinCierreAlFondo = false,
   ancho = 'lg',
   children,
   pie,
@@ -68,7 +78,7 @@ export function Modal({
       onMouseDown={(e) => {
         // Solo cierra si el clic empieza Y termina en el fondo: si no,
         // arrastrar para seleccionar texto dentro del modal lo cerraría.
-        if (e.target === e.currentTarget && !bloqueado) onCerrar()
+        if (e.target === e.currentTarget && !bloqueado && !sinCierreAlFondo) onCerrar()
       }}
     >
       <div

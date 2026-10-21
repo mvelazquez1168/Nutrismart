@@ -15,6 +15,7 @@
     "verificar:resumen": "tsx src/plan/verificar-resumen.ts",
     "verificar:resumen-ia": "tsx src/plan/verificar-resumen-ia.ts",
     "verificar:habitos": "tsx src/dietetico/verificar-habitos.ts",
+    "verificar:labs-pdf": "tsx src/laboratorios/verificar-pdf.ts",
     "seed": "tsx src/seed.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -26,6 +27,7 @@
     "fastify": "^5.2.1",
     "jose": "^5.9.6",
     "node-cron": "^4.6.0",
+    "pdf-parse": "^2.4.5",
     "pg": "^8.13.1",
     "puppeteer": "^25.7.0",
     "resend": "^6.20.0"
