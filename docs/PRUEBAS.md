@@ -5508,113 +5508,111 @@ Los decimales de cada biomarcador salen del catálogo (`decimales`), no de un re
 
 ---
 
-# R47 — Siete mejoras en la app del paciente
+# R48 — Cuatro defectos de la app del profesional
 
-## 1 · Cancelar una cita confirmada
+## 1 · El mensaje que se multiplicaba solo
 
-`PATCH /api/paciente/citas/:id/cancelar`, simétrico del de confirmar. **PATCH y no DELETE**: la cita no se borra, cambia de estado y sigue en la agenda del profesional, que necesita ver que ese hueco se liberó y cuándo.
+**El síntoma:** el profesional escribía una vez y veía su propio texto repetido cada pocos segundos. El paciente lo recibía una sola vez.
 
-Las condiciones van en el `WHERE`, no en un SELECT previo: entre la comprobación y el UPDATE la cita puede cambiar. **Solo `confirmada` y solo futura** — cancelar algo que ya ocurrió no es cancelar, es reescribir lo que pasó.
+### La causa: microsegundos contra milisegundos
 
-En pantalla, **dos toques**: el primero abre la pregunta, el segundo cancela. Cancelar no se deshace desde la app, y un botón que lo hace al primer toque —en un móvil, al lado de otros botones— cancela citas sin querer. Y al revés que confirmar, **espera la respuesta del servidor antes de pintar**: confirmar y equivocarse no cuesta nada; ver «cancelada» y que no lo esté manda al paciente a una cita a la que cree que no va.
+El hilo sondea cada cinco segundos y reenvía el `createdAt` del último mensaje que tiene como `?desde=`. La ruta del profesional devolvía ese campo como un objeto `Date`, y Fastify lo serializa con `toISOString()`, que da **milisegundos**. La columna `created_at` guarda **microsegundos**.
 
-| Caso | Resultado |
+Un mensaje creado a `22:38:07.892374Z` salía al cliente como `22:38:07.892Z`. Al volver como `desde`, la comparación del servidor:
+
+```
+created_at > '2026-10-21T22:38:07.892Z'   →   22:38:07.892374 > 22:38:07.892000   →   CIERTO
+```
+
+El mismo mensaje volvía en cada sondeo, para siempre, y la marca nunca avanzaba. Por eso el paciente lo veía una vez —se guardó una vez— y el profesional lo veía crecer en pantalla.
+
+**La prueba, con el mismo mensaje y las dos marcas:**
+
+| `?desde=` | Mensajes devueltos |
 |---|---|
-| Cita **confirmada** futura | **200** `{estado: "cancelada"}` |
-| La misma otra vez | **200** — idempotente, no un error: el paciente pidió que quedara cancelada y lo está |
-| Cita **programada** | **409** «Esta cita aún no está confirmada. Escríbele a tu nutricionista para cambiarla.» |
-| Cita de **otro paciente** | **404**, sin filtrar que existe |
-| En pantalla | Diálogo de confirmación → tras cancelar, sube la siguiente cita y desaparece «Asistencia confirmada» |
+| `2026-10-21T22:38:07.892374Z` (microsegundos, lo de ahora) | **0** |
+| `2026-10-21T22:38:07.892Z` (milisegundos, lo de antes) | **1** ← el eco |
 
-## 2 y 7 · La meta de peso y el plan prescrito
+> **El lado del paciente ya estaba arreglado.** `paciente-mensajeria.ts` usa `to_char(... .US)` y compara con `$2::timestamptz`, con un comentario que explica exactamente esto. La ruta del profesional se quedó sin ese arreglo.
 
-El endpoint `/api/paciente/plan` no devolvía ni la meta de peso ni lo prescrito; la pantalla solo tenía «Lo que acordaste». Ahora viajan `pesoObjetivo`, `fechaObjetivoPeso`, `objetivos` y `recomendaciones`, y la pantalla tiene dos secciones nuevas:
+### Los otros dos defectos que lo acompañaban
 
-- **Meta de peso** — «72 kg · Para el 15 de diciembre de 2026 · La fijó Dra. Ana Rodríguez contigo en consulta». Lo último importa: una meta sin autor se lee como una exigencia de la aplicación.
-- **Tu plan prescrito** — objetivos y recomendaciones, con viñetas y **no** con casillas: estas no se marcan, y una casilla invitaría a tocarlas sin que pasara nada.
+**El efecto de carga se re-ejecutaba en cada render del padre.** `BandejaMensajes` pasaba `onCambio={() => void cargar()}`, una función **nueva en cada render**, y `HiloConversacion` la tenía en las dependencias del efecto que carga el hilo. Cada render del padre recargaba la conversación entera y reiniciaba la marca del sondeo. Ahora es un `useCallback`.
 
-### Lo que NO viaja al paciente, a propósito
+**`conversacion.noLeidos` también estaba en esas dependencias**, y el propio efecto lo pone a cero al marcar como leído: se disparaba a sí mismo. Pasó a una `ref`; lo que recarga el hilo es cambiar de conversación, y nada más.
 
-`diagnostico_principal`, `diagnostico_cie10`, `observaciones_clinicas` y `justificacion` se quedan en el servidor. Son documentación dirigida a otro profesional, y **un diagnóstico que el nutricionista todavía no ha comunicado no debe conocerse por una pantalla**. Si algún día hay que enseñarlo será una decisión explícita, no el efecto de haber añadido un campo al `select`.
+### Y un cinturón: la mezcla deduplica por id
 
-Comprobado: la respuesta trae `pesoObjetivo: 72`, `fechaObjetivoPeso: 2026-12-15` y tres recomendaciones; ninguno de los cuatro campos clínicos aparece.
+`mezclar(prev, llegados)` descarta lo que ya está por `id` y **devuelve `prev` tal cual** cuando no hay nada nuevo —un array nuevo con el mismo contenido re-renderizaría la lista cada cinco segundos sin motivo—. Cubre lo que el arreglo del servidor no puede: un reintento, dos pestañas abiertas, o la carrera entre la carga inicial y el primer sondeo.
 
-## 3 · «Mis temas»: la biblioteca filtrada por categorías
+### Comprobación en el navegador
 
-Tabla `paciente_preferencia_biblioteca` (migración **052**), una fila por categoría elegida —no un array— para que la clave primaria impida duplicados y para poder contar suscriptores con un `group by`.
+Se envía **un** mensaje y se esperan 21 segundos (más de cuatro ciclos de sondeo):
 
-**Sin preferencias guardadas se ve todo.** La ausencia de filas significa «no ha elegido», no «no quiere nada»: leerlo como lista vacía dejaría la biblioteca en blanco a todos los pacientes existentes el día del despliegue.
+```
+  enviado UNA vez: PruebaR48nav1792623195
+  +7s  -> aparece 2 vez/veces
+  +7s  -> aparece 2 vez/veces
+  +7s  -> aparece 2 vez/veces
+```
 
-| Preferencias guardadas | Recursos visibles |
+Las dos apariciones son **la burbuja del hilo y la vista previa de la lista lateral** («Tú: PruebaR48nav…»), confirmado en la captura: una sola burbuja. Lo que importa es que **no crece**: con el defecto, el número subía en cada vuelta.
+
+---
+
+## 2 · Monitoreo no mostraba presión arterial ni glucosa
+
+**No era un problema de datos ni del endpoint.** `/api/rpm/pacientes/:id` devuelve `metricas` con los cuatro tipos desde siempre; la pantalla **solo filtraba `peso`**:
+
+```ts
+const pesos = datos.metricas.filter((m) => m.tipo === 'peso' && m.valor !== null)
+```
+
+Lo que el paciente apuntaba de su presión o su glucosa viajaba hasta el navegador y no se pintaba en ningún sitio. No había que tocar la API: había que enseñarlo.
+
+Dos secciones nuevas, con el mismo aviso que las demás —es lo que reporta el paciente, no una medición de consulta—:
+
+| Sección | Qué enseña |
 |---|---|
-| ninguna | **3** (todos) |
-| `["nutricion"]` | **3** — las tres publicaciones son de esa categoría |
-| `["ejercicio"]` | **0** |
-| vaciar otra vez | **3** |
-| `["recetas","inventada"]` | **400** `categoria_invalida` — se rechaza, no se ignora en silencio |
-| `["recetas","recetas","habitos"]` | **200**, deduplicado: sin el `Set` reventaría la clave primaria con un 500 que no explica nada |
+| **Presión arterial en casa** | La última y las seis anteriores. Las dos cifras siempre juntas: separadas dejan de ser una presión |
+| **Glucosa en casa** | Minigráfica de evolución y el último valor con su fecha |
 
-El `PUT` reemplaza la lista entera dentro de una transacción. Sin ella, un fallo entre el `delete` y el `insert` dejaría al paciente sin ninguna preferencia —y viendo todo— cuando lo que hizo fue intentar cambiarlas.
+Comprobado con registros sembrados: presión **138/88 mmHg (19/10)** con su histórico `126/80` y `120/80`, y glucosa **104 mg/dL (20/10)**.
 
-El panel «Mis temas» vive dentro de la biblioteca y no en el perfil: se decide mirando la lista que se quiere filtrar.
+---
 
-## 4 · Los documentos se ven, no se bajan
+## 3 y 4 · El detalle de comidas y «Qué comí»: **son el mismo dato**
 
-El botón «Descargar guia.pdf» se sustituyó por **«Ver documento»** y un visor a pantalla completa dentro de la app. En la lista, la etiqueta pasó de «archivo para descargar» a «documento para ver». No queda ningún `<a download>` en la pantalla (comprobado: 0).
+El requerimiento los planteaba como dos bloques y advertía que podían ser el mismo flujo. **Lo son.** La pestaña «Qué comí» de la app del paciente escribe en `registro_comida` (y sus alimentos en `registro_comida_item`), que es la misma tabla de la que el monitoreo ya sacaba el resumen por día. Una sola solución.
 
-### El `sandbox` del iframe no se puede usar, y es un hallazgo
+Lo que faltaba era el **detalle**. El endpoint solo devolvía el agregado diario —kcal totales y cuántas comidas—, así que el profesional veía que el paciente había apuntado tres comidas pero no **qué** comió, que es el dato por el que se abre esta pantalla en un seguimiento.
 
-El requerimiento proponía un `sandbox` sin `allow-downloads`. Se implementó así y **el PDF no se veía**: Chrome desactiva su visor de PDF en cuanto el iframe lleva el atributo `sandbox`, **con cualquier valor**. Comprobado con el mismo PDF y el mismo blob:
+### En el servidor
 
-| `sandbox` | ¿Se ve el PDF? |
-|---|---|
-| sin el atributo | **Sí**, completo |
-| `sandbox=""` | No — icono de documento roto |
-| `allow-scripts` | No |
-| `allow-scripts allow-same-origin` | No |
+Un `comidas` nuevo en la respuesta, con los alimentos agregados en el mismo SELECT (`json_agg`) en vez de una consulta por comida, que serían decenas de viajes a la base para pintar una lista. Dos detalles:
 
-Así que el iframe va **sin `sandbox`**, con `#toolbar=0&navpanes=0` para quitar la barra del visor de PDF, que es donde vive su botón de guardar. Las imágenes van en un `<img>` con `pointer-events-none`, que quita el menú contextual «guardar imagen» del móvil.
+- `filter (where i.id is not null)` evita que una comida escrita como texto libre —sin alimentos desglosados— traiga `[null]` en vez de una lista vacía.
+- **Tope de 60 comidas, las más recientes.** A doce meses serían cientos de filas con sus alimentos dentro, y lo que se mira en consulta es lo último. La pantalla lo dice cuando se alcanza el tope: una lista recortada en silencio se lee como «esto es todo».
 
-### Lo que esto cubre y lo que no
+### En la pantalla
 
-**No impide guardar el archivo a quien se lo proponga.** Los bytes están en el navegador porque tienen que estar para poder pintarse. Lo que se retira es la invitación: ni botón de descargar, ni de compartir, ni barra del visor. **Es una regla de uso, no un candado**, y el código lo dice con esas palabras. El pie del visor se lo dice también al paciente: «Este material es para que lo consultes aquí. No se descarga ni se comparte.»
+Sección **«Qué ha comido»** a ancho completo —es una lista de texto, y partida en media columna se lee en tiras de cuatro palabras—, agrupada por día y con lo más reciente primero: en consulta se repasa «el jueves», no la comida número once.
 
-El riesgo que el sandbox cubriría —un PDF con JavaScript— lo acota lo de siempre: el archivo lo subió el profesional de la clínica a su propia biblioteca, y el tipo se valida por CONTENIDO al subirlo (solo PDF/CSV/PNG/JPEG).
+Cada comida muestra la franja, las kcal (o **«sin estimar»**), la descripción tal como la escribió el paciente y, si los hay, los alimentos desglosados con su cantidad.
 
-## 5 · El ícono de perfil giraba para siempre — y la causa no era la que parecía
+Comprobado con dos comidas sembradas:
 
-El requerimiento suponía un `.finally()` que faltaba. **No era eso.**
+```
+  MARTES, 20 DE OCTUBRE
+    Desayuno · sin estimar · Café con leche y dos tostadas con aguacate
+    Almuerzo · 418 kcal    · Arroz blanco cocido, Ensalada mixta, Pechuga de pollo
+                             [Pechuga de pollo · 120 g] [Ensalada mixta · 80 g] [Arroz blanco cocido · 150 g]
+```
 
-`usePerfil` vive en `NavBar`, que monta en TODAS las pantallas. Cada pantalla, por su parte, inicializa Keycloak en su propio `useEffect`. Las dos cosas arrancaban **a la vez**, así que el perfil salía a pedirse mientras Keycloak todavía no estaba listo: `tokenVigente()` llama a `updateToken()`, que sin inicializar **lanza**, y la petición moría antes de salir.
+El caso del desayuno es el que importa: una comida escrita a mano **sin** alimentos desglosados se enseña igual, con su descripción y su «sin estimar». Decir «0 kcal» ahí sería afirmar que no aportó nada.
 
-Era una carrera, y por eso no fallaba siempre: en una máquina rápida o con la sesión caliente, Keycloak ganaba. Cuando perdía, `perfil` se quedaba en `null` para siempre y la pantalla giraba sin decir nada.
+---
 
-Y había un segundo defecto encima: la promesa fallida **se quedaba cacheada** en el módulo, de modo que cada montaje posterior recibía la misma promesa ya rechazada sin volver a pedir nada. No se arreglaba ni navegando a otra sección y volviendo — solo recargando la aplicación entera.
+## Tropiezo de entorno
 
-Los tres arreglos:
-
-1. `cargar()` **espera a `initKeycloak()`** antes de pedir el perfil.
-2. Si falla, la promesa **se suelta** para que el siguiente intento vuelva a pedir.
-3. La pantalla **enseña el error** con botones de «Reintentar», «Volver a inicio» y «Cerrar sesión y volver a entrar» — una sesión caducada es la causa más común y salir y entrar la arregla.
-
-Comprobado: **5 de 5 recargas completas de `/perfil` cargan en menos de 1,5 s**, contra los fallos intermitentes de antes.
-
-Además, **«Cerrar sesión» ahora está en el perfil**. Estaba solo en la cabecera de Inicio; el ícono de perfil tiene que llevar a las tres cosas que se buscan en él: quién eres, cambiar lo tuyo y salir.
-
-## 6 · Withings fuera de la pantalla de dispositivos
-
-Se filtra en la app del paciente y **no se toca la API**: el proveedor sigue existiendo en el servidor, con sus tokens y sus lecturas ya sincronizadas, y un paciente que lo tenga conectado sigue aportando datos. Lo que se retira es la oferta.
-
-El filtro es por nombre de proveedor y no por posición, porque la lista la arma el servidor. Y si algún día no quedara ninguno, la pantalla dice «Próximamente: conexión con dispositivos» en vez de quedarse con un título y nada debajo, que se lee como un fallo de carga.
-
-Comprobado: no aparece «Withings»; quedan Fitbit y Google Fit.
-
-## Desviación respecto al prompt: las rutas sin `:id`
-
-El requerimiento describía las preferencias como `/api/pacientes/:id/preferencias-biblioteca`. Se implementaron como **`/api/paciente/preferencias-biblioteca`**, sin id, como TODAS las rutas de esta app: el paciente sale del token, no de un parámetro. Un id en la URL es un id que alguien puede cambiar por el de otro, y habría que defenderlo en cada endpoint; no ofrecerlo es la única defensa que no se olvida.
-
-## Tropiezos de entorno
-
-- **El cliente `nutrismart-patient` de Keycloak no permite «direct access grants»**, así que no se pueden pedir tokens de paciente por API para probar. Se habilitó temporalmente desde la API de administración y **se restauró a `false` al terminar** (comprobado: vuelve a responder `unauthorized_client`). Si hay que repetir las pruebas, es ese el interruptor.
-- **El recurso de biblioteca sembrado apunta a un PDF que no existe en disco**, y la ruta del archivo responde **500** (`ArchivoNoEncontradoError`) en vez de 404. Es un defecto anterior a este cambio y no se tocó; para poder probar el visor se colocó un PDF real en esa ruta. Conviene decidir aparte si un archivo que falta debe ser 404.
-- El arnés de pruebas con Puppeteer necesita **esperar a que aparezca el contenido**, no un número fijo de segundos: la app del paciente pasa por el redirect de Keycloak y varias cargas «vacías» que parecían fallos eran, en realidad, la pantalla de acceso.
+El arnés de pruebas con Puppeteer resultó **frágil contra el formulario de Keycloak**: el campo de usuario es `input[name="username"]` y no siempre lleva `id="username"`, y la pantalla tarda entre dos y seis segundos en aparecer según lo caliente que esté Vite. Varias corridas que parecían fallos de la aplicación eran el arnés esperando un selector que no existía. Lo que funciona es reintentar el clic de acceso hasta que el campo aparezca, y esperar a que aparezca **contenido**, no un número fijo de segundos.

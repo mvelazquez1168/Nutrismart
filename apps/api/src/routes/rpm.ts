@@ -203,7 +203,7 @@ export async function registerRpmRoutes(app: FastifyInstance): Promise<void> {
 
       // `make_interval` con parámetro, no interpolación de texto en el
       // SQL: el encargo construía `INTERVAL '${meses} months'` a mano.
-      const [metricas, bienestar, medidas, diario] = await Promise.all([
+      const [metricas, bienestar, medidas, diario, comidas] = await Promise.all([
         pool.query(
           `select tipo::text as tipo, valor, sistolica, diastolica, unidad,
                   to_char(medido_en at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as medido_en
@@ -244,6 +244,53 @@ export async function registerRpmRoutes(app: FastifyInstance): Promise<void> {
               and fecha >= (now() at time zone 'America/Costa_Rica')::date - make_interval(months => $3)
             group by fecha
             order by fecha`,
+          [pac.id, tenantId, meses],
+        ),
+        /*
+         * **El detalle de «Qué comí»** — R48.
+         *
+         * Hasta ahora esta pantalla solo traia el resumen por dia —kcal y
+         * cuantas comidas—, asi que el profesional veia que el paciente habia
+         * apuntado tres comidas pero no QUE comio. Es el dato por el que se
+         * abre esta pantalla en una consulta de seguimiento.
+         *
+         * Los alimentos se agregan en el mismo SELECT con `json_agg` en vez
+         * de una segunda consulta: una por comida serian decenas de viajes a
+         * la base para pintar una lista.
+         *
+         * `filter (where i.id is not null)` evita que una comida escrita como
+         * texto libre —sin alimentos desglosados— traiga `[null]` en vez de
+         * una lista vacia.
+         *
+         * Tope de 60 comidas, las MAS RECIENTES: a doce meses esto serian
+         * cientos de filas con sus alimentos dentro, y lo que se mira en
+         * consulta es lo ultimo. El cliente sabe si se recorto porque
+         * `diario` sigue contando todos los dias del periodo.
+         */
+        pool.query(
+          `select c.id,
+                  to_char(c.fecha,'YYYY-MM-DD') as fecha,
+                  c.tipo_comida::text as tipo_comida,
+                  c.descripcion, c.kcal, c.proteina_g, c.cho_g, c.grasa_g,
+                  coalesce(
+                    json_agg(
+                      json_build_object(
+                        'nombre', i.nombre_alimento,
+                        'cantidadG', i.cantidad_g,
+                        'kcal', i.kcal
+                      )
+                      order by i.created_at
+                    ) filter (where i.id is not null),
+                    '[]'
+                  ) as items
+             from registro_comida c
+             left join registro_comida_item i
+                    on i.registro_comida_id = c.id and i.activo = true
+            where c.paciente_id = $1 and c.clinica_id = $2 and c.activo = true
+              and c.fecha >= (now() at time zone 'America/Costa_Rica')::date - make_interval(months => $3)
+            group by c.id
+            order by c.fecha desc, c.created_at desc
+            limit 60`,
           [pac.id, tenantId, meses],
         ),
       ])
@@ -292,6 +339,20 @@ export async function registerRpmRoutes(app: FastifyInstance): Promise<void> {
           kcal: num(d['kcal_total']),
           comidas: Number(d['comidas']),
           comidasConKcal: Number(d['comidas_con_kcal']),
+        })),
+        // R48: lo que el paciente apunto en «Que comi», con sus alimentos.
+        comidas: comidas.rows.map((c) => ({
+          id: c['id'],
+          fecha: c['fecha'],
+          tipoComida: c['tipo_comida'],
+          descripcion: c['descripcion'],
+          kcal: num(c['kcal']),
+          proteinaG: num(c['proteina_g']),
+          choG: num(c['cho_g']),
+          grasaG: num(c['grasa_g']),
+          items: ((c['items'] ?? []) as { nombre: string; cantidadG: unknown; kcal: unknown }[]).map(
+            (i) => ({ nombre: i.nombre, cantidadG: num(i.cantidadG), kcal: num(i.kcal) }),
+          ),
         })),
       })
     },

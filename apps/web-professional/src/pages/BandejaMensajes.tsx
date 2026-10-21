@@ -52,6 +52,20 @@ export function BandejaMensajes() {
     return () => ctrl.abort()
   }, [cargar])
 
+  /**
+   * Estable entre renders — R48.
+   *
+   * Era `onCambio={() => void cargar()}`, una función NUEVA en cada render de
+   * esta pantalla. `HiloConversacion` la tiene en las dependencias del efecto
+   * que carga el hilo, así que cada render del padre volvía a cargarlo
+   * entero: se vaciaba la lista de mensajes y se reiniciaba la marca del
+   * sondeo. Con `useCallback` la identidad no cambia y el hilo solo se carga
+   * cuando cambia de conversación.
+   */
+  const refrescarLista = useCallback(() => {
+    void cargar()
+  }, [cargar])
+
   // La lista de pacientes solo se pide al abrir el diálogo: en la carga
   // de la bandeja sería una petición que casi nunca se usa.
   useEffect(() => {
@@ -159,7 +173,7 @@ export function BandejaMensajes() {
 
         <div className="min-w-0 flex-1">
           {activa ? (
-            <HiloConversacion conversacion={activa} onCambio={() => void cargar()} />
+            <HiloConversacion conversacion={activa} onCambio={refrescarLista} />
           ) : (
             <p className="rounded-lg border border-border bg-surface p-16 text-center text-sm text-muted">
               Selecciona una conversación o empieza una nueva.

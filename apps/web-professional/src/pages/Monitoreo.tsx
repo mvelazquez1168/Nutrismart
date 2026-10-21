@@ -74,7 +74,30 @@ interface Detalle {
   sintomasFrecuentes: { sintoma: string; veces: number }[]
   medidas: { fecha: string; cinturaCm: number | null; caderaCm: number | null }[]
   diario: { fecha: string; kcal: number | null; comidas: number; comidasConKcal: number }[]
+  /** Lo que el paciente apuntó en «Qué comí», con sus alimentos — R48. */
+  comidas: {
+    id: string
+    fecha: string
+    tipoComida: string
+    descripcion: string
+    kcal: number | null
+    proteinaG: number | null
+    choG: number | null
+    grasaG: number | null
+    items: { nombre: string; cantidadG: number | null; kcal: number | null }[]
+  }[]
 }
+
+/** Las seis franjas, como las escribe la app del paciente. */
+const TIPO_COMIDA: Record<string, string> = {
+  desayuno: 'Desayuno',
+  media_manana: 'Media mañana',
+  almuerzo: 'Almuerzo',
+  merienda: 'Merienda',
+  cena: 'Cena',
+  extra: 'Otro',
+}
+
 
 /**
  * Minigráfica de peso.
@@ -197,6 +220,18 @@ function PanelDetalle({ id, onCerrar }: { id: string; onCerrar: () => void }) {
   if (!datos) return <div className="h-64 animate-pulse rounded-lg bg-surface-2" />
 
   const pesos = datos.metricas.filter((m) => m.tipo === 'peso' && m.valor !== null)
+  /*
+   * **Presión y glucosa llegaban y se tiraban** — R48.
+   *
+   * El endpoint devuelve `metricas` con los cuatro tipos desde siempre, pero
+   * esta pantalla solo filtraba `peso`: lo que el paciente apuntaba de su
+   * presión o su glucosa viajaba hasta el navegador y no se pintaba en ningún
+   * sitio. No había que tocar la API, había que enseñarlo.
+   */
+  const glucosas = datos.metricas.filter((m) => m.tipo === 'glucosa' && m.valor !== null)
+  const presiones = datos.metricas.filter(
+    (m) => m.tipo === 'presion_arterial' && m.sistolica !== null && m.diastolica !== null,
+  )
 
   return (
     <div className="space-y-4">
@@ -302,6 +337,72 @@ function PanelDetalle({ id, onCerrar }: { id: string; onCerrar: () => void }) {
           )}
         </section>
 
+        {/* Presión arterial — R48. Las dos cifras juntas y en ese orden:
+            separadas dejan de ser una presión. */}
+        <section className="rounded-lg border border-border bg-surface p-5 shadow-sm">
+          <h3 className="mb-1 font-semibold text-ink">Presión arterial en casa</h3>
+          <p className="mb-3 text-xs text-muted">
+            Tomada por el paciente con su aparato. No sustituye a la medición de consulta.
+          </p>
+          {presiones.length === 0 ? (
+            <p className="text-sm text-muted">Sin registros en este periodo.</p>
+          ) : (
+            <>
+              <p className="text-sm text-ink">
+                Última:{' '}
+                <strong className="tabular-nums">
+                  {presiones[presiones.length - 1]!.sistolica}/
+                  {presiones[presiones.length - 1]!.diastolica} mmHg
+                </strong>
+                <span className="ml-2 text-xs text-muted">
+                  {new Date(presiones[presiones.length - 1]!.medidoEn).toLocaleDateString('es-CR')}
+                </span>
+              </p>
+              <ul className="mt-2 divide-y divide-border text-sm">
+                {presiones.slice(-6).reverse().map((m) => (
+                  <li key={m.medidoEn} className="flex justify-between gap-2 py-1.5">
+                    <span className="text-muted">
+                      {new Date(m.medidoEn).toLocaleDateString('es-CR', {
+                        day: 'numeric',
+                        month: 'short',
+                      })}
+                    </span>
+                    <span className="tabular-nums text-ink">
+                      {m.sistolica}/{m.diastolica} mmHg
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </section>
+
+        {/* Glucosa — R48. */}
+        <section className="rounded-lg border border-border bg-surface p-5 shadow-sm">
+          <h3 className="mb-1 font-semibold text-ink">Glucosa en casa</h3>
+          <p className="mb-3 text-xs text-muted">
+            Medidor del paciente. No sustituye a un laboratorio.
+          </p>
+          {glucosas.length === 0 ? (
+            <p className="text-sm text-muted">Sin registros en este periodo.</p>
+          ) : (
+            <>
+              <Sparkline
+                puntos={glucosas.map((m) => ({ fecha: m.medidoEn, valor: m.valor as number }))}
+              />
+              <p className="mt-2 text-sm text-ink">
+                Última:{' '}
+                <strong className="tabular-nums">
+                  {glucosas[glucosas.length - 1]!.valor} {glucosas[glucosas.length - 1]!.unidad}
+                </strong>
+                <span className="ml-2 text-xs text-muted">
+                  {new Date(glucosas[glucosas.length - 1]!.medidoEn).toLocaleDateString('es-CR')}
+                </span>
+              </p>
+            </>
+          )}
+        </section>
+
         <section className="rounded-lg border border-border bg-surface p-5 shadow-sm">
           <h3 className="mb-3 font-semibold text-ink">Medidas que se toma en casa</h3>
           {datos.medidas.length === 0 ? (
@@ -358,6 +459,93 @@ function PanelDetalle({ id, onCerrar }: { id: string; onCerrar: () => void }) {
           )}
         </section>
       </div>
+
+      {/*
+        Qué ha comido — R48, bloques 3 y 4 del requerimiento.
+
+        **Son el mismo dato.** «Qué comí» de la app del paciente escribe en
+        `registro_comida` (y sus alimentos en `registro_comida_item`), que es
+        la misma tabla de la que salía el resumen por día de arriba. No hacían
+        falta dos soluciones: faltaba el detalle, y aquí está.
+
+        A ancho completo y fuera de la rejilla: es una lista de texto, y
+        partida en media columna se lee en tiras de cuatro palabras.
+
+        El orden es el de la app del paciente —lo más reciente primero— y las
+        comidas se agrupan por día: en consulta se repasa «el jueves», no la
+        comida número once.
+      */}
+      <section className="rounded-lg border border-border bg-surface p-5 shadow-sm">
+        <h3 className="mb-1 font-semibold text-ink">Qué ha comido</h3>
+        <p className="mb-3 text-xs text-muted">
+          Lo que el paciente apuntó en su aplicación, tal como lo escribió. Las calorías son una
+          estimación suya o de la búsqueda de alimentos, no una medición.
+        </p>
+
+        {datos.comidas.length === 0 ? (
+          <p className="text-sm text-muted">No ha apuntado ninguna comida en este periodo.</p>
+        ) : (
+          <div className="space-y-4">
+            {[...new Set(datos.comidas.map((c) => c.fecha))].map((fecha) => (
+              <div key={fecha}>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">
+                  {new Date(`${fecha}T12:00:00`).toLocaleDateString('es-CR', {
+                    weekday: 'long',
+                    day: 'numeric',
+                    month: 'long',
+                  })}
+                </p>
+                <ul className="divide-y divide-border">
+                  {datos.comidas
+                    .filter((c) => c.fecha === fecha)
+                    .map((c) => (
+                      <li key={c.id} className="py-2">
+                        <div className="flex flex-wrap items-baseline justify-between gap-2">
+                          <span className="text-sm font-medium text-ink">
+                            {TIPO_COMIDA[c.tipoComida] ?? c.tipoComida}
+                          </span>
+                          <span className="text-xs tabular-nums text-muted">
+                            {c.kcal !== null ? `${Math.round(c.kcal)} kcal` : 'sin estimar'}
+                            {c.proteinaG !== null &&
+                              ` · P ${c.proteinaG} g · C ${c.choG ?? '—'} g · G ${c.grasaG ?? '—'} g`}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 whitespace-pre-wrap text-sm text-ink">
+                          {c.descripcion}
+                        </p>
+                        {/* Los alimentos desglosados, si los hay. Una comida
+                            escrita a mano no los tiene, y no pasa nada: la
+                            descripción ya dice qué comió. */}
+                        {c.items.length > 0 && (
+                          <ul className="mt-1 flex flex-wrap gap-1.5">
+                            {c.items.map((i, n) => (
+                              <li
+                                key={`${c.id}-${n}`}
+                                className="rounded-pill border border-border px-2 py-0.5 text-xs text-muted"
+                              >
+                                {i.nombre}
+                                {i.cantidadG !== null && (
+                                  <span className="tabular-nums"> · {i.cantidadG} g</span>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            ))}
+            {/* El tope del servidor se dice, no se esconde: una lista
+                recortada en silencio se lee como «esto es todo». */}
+            {datos.comidas.length >= 60 && (
+              <p className="text-xs text-muted">
+                Se muestran las 60 comidas más recientes del periodo.
+              </p>
+            )}
+          </div>
+        )}
+      </section>
     </div>
   )
 }
