@@ -35,7 +35,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { getBioquimica, marcarSeccion, type Bioquimica, type EstadoMarcador } from '../../api/valoracion'
-import { getLaboratorios } from '../../api/laboratorios'
+import { eliminarEstudio, getLaboratorios } from '../../api/laboratorios'
 import type { EstudioLab, SexoBiologico } from '../../api/tipos'
 import { ListaLaboratorios } from '../ListaLaboratorios'
 import { LaboratorioModal } from '../LaboratorioModal'
@@ -362,7 +362,23 @@ function ContenidoEstudios({
             </button>
           )}
         </div>
-        {estudios.length > 0 && <ListaLaboratorios estudios={estudios} />}
+        {estudios.length > 0 && (
+          <ListaLaboratorios
+            estudios={estudios}
+            /*
+              Se quita del estado local y ADEMÁS se recarga — R51.
+              Lo primero hace que desaparezca al instante; lo segundo pone al
+              día lo que el borrado cambia y esta pantalla no puede deducir:
+              la lectura por marcadores de arriba y las series de Analítica.
+            */
+            onEliminar={async (estudioId) => {
+              await eliminarEstudio(pacienteId, estudioId)
+              setEstudios((prev) => prev.filter((x) => x.id !== estudioId))
+              void cargarEstudios()
+              void onGuardado()
+            }}
+          />
+        )}
       </section>
 
       {!bloqueada && (

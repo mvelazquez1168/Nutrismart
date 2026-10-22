@@ -21,6 +21,7 @@ import {
   serieAnalitica,
   listarEstudios,
   crearEstudio,
+  borrarEstudio,
   PacienteNoVisibleError,
   SnapshotAjenoError,
 } from '../laboratorios/repositorio.js'
@@ -190,6 +191,45 @@ export async function registerLaboratoriosRoutes(app: FastifyInstance): Promise<
   )
 
   /* ---------------------------------------------------------------- */
+  /* DELETE /api/pacientes/:id/laboratorios/:estudioId — R51            */
+  /* ---------------------------------------------------------------- */
+  /**
+   * Borra un estudio cargado por equivocacion.
+   *
+   * **No sustituye a anular.** La tabla tiene `estado`/`anulado_motivo` desde
+   * la 007 para «este estudio no vale clinicamente»: eso ocurrio y queda en el
+   * expediente. Esto es deshacer una carga que no debio existir —el informe
+   * del paciente de al lado, el duplicado de un doble clic—, y eso no es un
+   * hecho clinico que conservar.
+   *
+   * Un estudio de otro paciente responde **404**, igual que uno inexistente:
+   * desde fuera no se puede distinguir un id inventado de uno que existe pero
+   * no te toca. Los resultados caen con el por la cascada de la 054.
+   */
+  app.delete<{ Params: { id: string; estudioId: string } }>(
+    '/api/pacientes/:id/laboratorios/:estudioId',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { tenantId, sub, roles } = request.auth
+      const { id, estudioId } = request.params
+
+      const noEncontrado = {
+        error: 'estudio_no_encontrado',
+        message: 'No se encontró el estudio',
+      }
+      if (!esUuid(id) || !esUuid(estudioId)) return reply.code(404).send(noEncontrado)
+
+      const alcance = await resolverAlcance(tenantId, sub, roles)
+      if (!alcance) return reply.code(403).send(sinProfesional())
+
+      const borrado = await borrarEstudio(tenantId, alcance.restringirA, id, estudioId)
+      if (!borrado) return reply.code(404).send(noEncontrado)
+
+      return reply.code(204).send()
+    },
+  )
+
+  /* ---------------------------------------------------------------- */
   /* GET /api/pacientes/:id/analitica — R49                            */
   /* ---------------------------------------------------------------- */
   /**
@@ -255,6 +295,8 @@ export async function registerLaboratoriosRoutes(app: FastifyInstance): Promise<
         valorTexto: string | null
         refMinimo: number | null
         refMaximo: number | null
+        refMinLibre: number | null
+        refMaxLibre: number | null
       }[] = []
       const vistos = new Set<string>()
       /*
@@ -304,11 +346,33 @@ export async function registerLaboratoriosRoutes(app: FastifyInstance): Promise<
           }
           libresVistos.add(clave)
           /*
-           * **Sin rango de referencia.** Un analito que no esta en ningun
-           * catalogo no tiene con que compararse, y aceptar un min/max suelto
-           * dejaria un intervalo que nadie puede auditar. El valor numerico si
-           * se guarda cuando lo es: sirve para verlo en el estudio.
+           * **El rango lo escribe el profesional, si quiere** — R51.
+           *
+           * R49 los guardaba sin rango: no hay catalogo que diga cual es. Pero
+           * el informe SI lo trae impreso, y no dejarlo escribir obliga a
+           * recordar de memoria contra que se lee un valor que uno mismo acaba
+           * de teclear.
+           *
+           * Van a `ref_min_libre`/`ref_max_libre` y NO a `ref_minimo`/
+           * `ref_maximo`: aquellas son la referencia que declaro el
+           * laboratorio para un analito del catalogo y entran en el calculo
+           * del estado; estas solo se enseñan. Mezclarlas haria que una serie
+           * historica comparase contra un rango que nadie valido.
+           *
+           * Un rango invertido se descarta ENTERO, igual que en R44: no es un
+           * rango, es una equivocacion al teclear, y medio rango no acota nada.
            */
+          const refMinLibre =
+            typeof fila['ref_min_libre'] === 'number' && Number.isFinite(fila['ref_min_libre'])
+              ? (fila['ref_min_libre'] as number)
+              : null
+          const refMaxLibre =
+            typeof fila['ref_max_libre'] === 'number' && Number.isFinite(fila['ref_max_libre'])
+              ? (fila['ref_max_libre'] as number)
+              : null
+          const libreInvertido =
+            refMinLibre !== null && refMaxLibre !== null && refMinLibre > refMaxLibre
+
           resultados.push({
             codigo: null,
             nombreLibre,
@@ -316,6 +380,8 @@ export async function registerLaboratoriosRoutes(app: FastifyInstance): Promise<
             valorTexto: valorTexto === '' ? null : valorTexto,
             refMinimo: null,
             refMaximo: null,
+            refMinLibre: libreInvertido ? null : refMinLibre,
+            refMaxLibre: libreInvertido ? null : refMaxLibre,
           })
           continue
         }
@@ -354,6 +420,8 @@ export async function registerLaboratoriosRoutes(app: FastifyInstance): Promise<
             valorTexto,
             refMinimo: null,
             refMaximo: null,
+            refMinLibre: null,
+            refMaxLibre: null,
           })
           continue
         }
@@ -391,6 +459,10 @@ export async function registerLaboratoriosRoutes(app: FastifyInstance): Promise<
           valorTexto: null,
           refMinimo: invertido ? null : refMinimo,
           refMaximo: invertido ? null : refMaximo,
+          // Los rangos libres son solo de las filas libres: un analito del
+          // catalogo ya tiene el suyo, y aceptar otro seria pisarlo a mano.
+          refMinLibre: null,
+          refMaxLibre: null,
         })
       }
 

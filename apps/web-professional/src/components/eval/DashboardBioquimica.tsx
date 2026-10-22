@@ -1,3 +1,8 @@
+// DEPRECATED — reemplazado por PanelAnalitica (R50). Eliminar cuando se confirme que no hay referencias.
+//
+// Desconectado en R51: ya no hay ninguna ruta ni pestaña que lo monte. Se
+// conserva el archivo a propósito —no se borra todavía— por si la pestaña
+// Analítica necesita rescatar algo de aquí antes de la limpieza.
 /**
  * Evolución de laboratorios — R46.
  *

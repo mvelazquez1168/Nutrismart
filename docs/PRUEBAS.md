@@ -5759,3 +5759,98 @@ A 375 px la pantalla de valoración **ya desbordaba a lo ancho antes de este cam
 ## Tropiezo de entorno
 
 Keycloak respondía en **4,5 s** por tener otra pila de contenedores compitiendo por la máquina, y el formulario de acceso no aparecía dentro del tiempo del arnés. Se resolvió calentando el endpoint de `auth` y reintentando el clic de acceso hasta cuatro veces. Si las pruebas de navegador fallan sin motivo aparente, mirar primero cuánto tarda `curl http://localhost:8080/realms/nutrismart/.well-known/openid-configuration`.
+
+---
+
+# R51 — Tres ajustes del módulo de laboratorio
+
+## 1 · Fuera el tab «Dashboards»
+
+La evolución de los laboratorios la enseña desde R50 la pestaña **Analítica**, dentro de Laboratorios. «Dashboards» mostraba lo mismo en otro sitio, y **dos sitios para el mismo dato obligan a adivinar en cuál mirar**.
+
+Se quitó la entrada de `SECCIONES`, su importación y el bloque que la renderizaba. **El archivo `DashboardBioquimica.tsx` no se borró**: queda desconectado y marcado `DEPRECATED` en su cabecera, por si la pestaña Analítica necesita rescatar algo antes de la limpieza.
+
+Las secciones quedan en cinco: Antropometría · Laboratorios · Clínico · Dietético · Prescripción.
+
+## 2 · Eliminar un estudio
+
+### Qué es y qué no es
+
+**No sustituye a anular.** `lab_estudio` tiene `estado` y `anulado_motivo` desde la 007 para «este estudio no vale clínicamente»: eso ocurrió y queda en el expediente.
+
+Esto es otra cosa: **deshacer una carga que no debió existir** — el informe del paciente de al lado, el duplicado de un doble clic. Eso no es un hecho clínico que conservar, es ruido de hace treinta segundos. Archivarlo dejaría el expediente lleno de estudios anulados que no significan nada. Por eso es borrado físico.
+
+### La migración SÍ hacía falta
+
+El encargo decía «no se necesita migración si ya tiene `ON DELETE CASCADE`». **No lo tenía** — comprobado antes de escribir nada:
+
+```
+lab_resultado_estudio_id_fkey | FOREIGN KEY (estudio_id) REFERENCES lab_estudio(id)
+```
+
+Sin cascada, el `delete` fallaba con una violación de clave ajena. Se rehízo la clave con `on delete cascade` en la **migración 054**. La alternativa —borrar los resultados a mano dentro de una transacción— deja la garantía en el código; con la cascada la da la base, y la da también para cualquier otro camino que mañana borre un estudio.
+
+> El encargo nombraba la tabla `estudio_laboratorio`. Se llama **`lab_estudio`**.
+
+### El endpoint
+
+`DELETE /api/pacientes/:id/laboratorios/:estudioId` → **204** sin cuerpo.
+
+Las condiciones de pertenencia van **en el `WHERE` que borra**, no en un `SELECT` previo: entre la comprobación y el borrado la fila puede cambiar de manos. Y un estudio de otro paciente responde **404**, igual que uno inexistente — desde fuera no se puede distinguir un id inventado de uno que existe pero no te toca.
+
+### En pantalla
+
+Botón discreto por fila —icono gris pequeño que se vuelve rojo al pasar por encima—, junto al de descargar. Al pulsarlo, la pregunta aparece **dentro de la tarjeta del estudio**, no en un diálogo flotante: uno flotante deja de decir **cuál** se va a borrar.
+
+Diálogo propio y no `confirm()` del navegador: el nativo no se puede redactar en el tono del resto de la aplicación, bloquea la pestaña entera y en algunos navegadores se puede silenciar.
+
+Al confirmar, el estudio se quita del estado local **y además** se recarga la lista: lo primero lo hace desaparecer al instante, lo segundo pone al día lo que el borrado cambia y esa pantalla no puede deducir —la lectura por marcadores de arriba y las series de Analítica.
+
+## 3 · Rangos de referencia en las entradas libres
+
+R49 guardaba los analitos sin catalogar con su nombre y su valor, **sin rango**: no hay catálogo que diga cuál es. Pero el informe sí lo trae impreso, y no poder anotarlo obliga a recordar de memoria contra qué se lee un valor que uno mismo acaba de teclear.
+
+### Columnas aparte, a propósito
+
+`ref_min_libre` / `ref_max_libre` son **distintas** de `ref_minimo` / `ref_maximo` (R44):
+
+| | Qué es | Qué hace |
+|---|---|---|
+| `ref_minimo` / `ref_maximo` | La referencia que **declaró el laboratorio** para un analito del catálogo | Entra en el cálculo del estado y en la analítica |
+| `ref_min_libre` / `ref_max_libre` | Lo que **escribió el profesional** al lado de un analito que no está en ninguna lista | **Solo se enseña** |
+
+Mezclarlas en la misma columna haría que una serie histórica comparase contra un rango que nadie validó.
+
+La migración añade un CHECK de coherencia: un rango invertido no acota nada, marcaría **todo** como fuera de rango. Mismo criterio que `rango_coherente` en `biomarcador_rango`.
+
+### Dónde aparecen
+
+Solo en las filas libres del formulario, como dos campos numéricos opcionales (`mín` / `máx`) en la columna Referencia. Las filas del catálogo —cuantitativas y cualitativas— siguen enseñando ahí su rango o un «—», sin campos editables.
+
+## Comprobación
+
+### API — 12 comprobaciones, todas pasan
+
+| Caso | Resultado |
+|---|---|
+| POST con rangos libres | **201** |
+| Libre con rango | devuelve `rangoLibre: {700, 1600}` |
+| Libre sin rango | `rangoLibre: null` |
+| **Rango invertido** (90–10) | se descarta **entero**, `rangoLibre: null` |
+| Analito del catálogo | **no** recibe `rangoLibre` y conserva el suyo |
+| `DELETE` | **204**; el estudio desaparece del listado |
+| Borrarlo otra vez | **404** |
+| Id inexistente | **404** |
+| **Estudio de OTRO paciente** | **404**, y ese estudio **sigue existiendo** |
+
+### En pantalla
+
+- Secciones: `Antropometría · Laboratorios · Clínico · Dietético · Prescripción` — **sin Dashboards**; la pestaña Analítica sigue donde estaba.
+- Fila libre en el detalle: `Inmunoglobulina IgG · sin catalogar | 1240 | 700 – 1600`.
+- Botón de eliminar por fila → diálogo «¿Eliminar este estudio? Esta acción no se puede deshacer.» con Cancelar y Eliminar → el estudio **desaparece sin recargar la página**.
+
+## Una lectura que puede chirriar, y por qué se deja así
+
+Una fila libre con rango escrito muestra **«700 – 1600»** y, al lado, el estado **«Sin referencia»**. Parece una contradicción y no lo es: el rango lo escribió el profesional y **el sistema no evalúa contra él**. El valor de un libre se guarda como texto y ese intervalo no está validado contra ningún catálogo.
+
+Evaluarlo convertiría una nota suelta en un criterio clínico —el mismo valor saldría «ALTERADO» en rojo porque alguien tecleó dos números—, y eso es una decisión de producto, no un detalle de esta tabla. Queda anotado en el código y **pendiente de decidir**: si se quiere que el estado se calcule también para los libres con rango, es un cambio pequeño y localizado.

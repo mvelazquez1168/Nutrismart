@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiUpload, apiDescargar } from './client'
+import { apiGet, apiPost, apiDelete, apiUpload, apiDescargar } from './client'
 import type {
   AnalitoHistorico,
   ArchivoSubido,
@@ -64,6 +64,16 @@ export function crearEstudio(
   datos: DatosEstudioEnvio,
 ): Promise<{ id: string; fecha: string; resultados: number }> {
   return apiPost(`/api/pacientes/${pacienteId}/laboratorios`, datos)
+}
+
+/**
+ * Borra un estudio cargado por equivocación — R51.
+ *
+ * No es «anular»: eso es para un estudio que ocurrió y clínicamente no vale,
+ * y se queda en el expediente. Esto deshace una carga que no debió existir.
+ */
+export function eliminarEstudio(pacienteId: string, estudioId: string): Promise<void> {
+  return apiDelete(`/api/pacientes/${pacienteId}/laboratorios/${estudioId}`)
 }
 
 export function descargarArchivo(archivoId: string, nombre: string): Promise<void> {

@@ -35,6 +35,14 @@ export interface ResultadoLab {
   valor_texto: string | null
   /** El analito que no esta en ningun catalogo — R49. */
   nombre_libre: string | null
+  /**
+   * El rango que el profesional escribio para un analito libre — R51.
+   *
+   * Aparte de `rango`: aquel sale del catalogo o del informe y entra en el
+   * calculo del estado; este es lo que alguien tecleo al lado de un analito
+   * que no esta en ninguna lista, y solo se enseña.
+   */
+  rangoLibre: { minimo: number | null; maximo: number | null } | null
   rango: { minimo: number | null; maximo: number | null } | null
   estado: EstadoResultado
   anterior: number | null
@@ -282,6 +290,8 @@ interface FilaResultado {
   valor: string | null
   valor_texto: string | null
   nombre_libre: string | null
+  ref_min_libre: string | null
+  ref_max_libre: string | null
   es_cualitativo: boolean
   anterior: string | null
   minimo: string | null
@@ -338,7 +348,7 @@ export async function listarEstudios(
     `with valores as (
        select e.id as estudio_id, e.fecha, e.created_at,
               r.biomarcador_codigo as codigo, r.valor, r.valor_texto, r.nombre_libre,
-              r.ref_minimo, r.ref_maximo
+              r.ref_minimo, r.ref_maximo, r.ref_min_libre, r.ref_max_libre
        from lab_estudio e
        join lab_resultado r on r.estudio_id = e.id
        where e.paciente_id = $1 and e.clinica_id = $2 and e.estado = 'vigente'
@@ -354,6 +364,7 @@ export async function listarEstudios(
             coalesce(b.nombre, cd.nombre_libre) as nombre,
             coalesce(b.unidad, '') as unidad,
             cd.valor, cd.valor_texto, cd.nombre_libre,
+            cd.ref_min_libre, cd.ref_max_libre,
             coalesce(b.es_cualitativo, false) as es_cualitativo,
             cd.anterior,
             ${SQL_RANGO_EFECTIVO_RESULTADO}
@@ -391,6 +402,14 @@ export async function listarEstudios(
       valor_texto: r.valor_texto,
       nombre_libre: r.nombre_libre,
       rango: hayRango ? { minimo, maximo } : null,
+      // Solo tiene sentido en los libres, y solo si escribieron algo — R51.
+      rangoLibre:
+        r.ref_min_libre === null && r.ref_max_libre === null
+          ? null
+          : {
+              minimo: r.ref_min_libre === null ? null : Number(r.ref_min_libre),
+              maximo: r.ref_max_libre === null ? null : Number(r.ref_max_libre),
+            },
       estado: valor === null ? 'sin_referencia' : estadoDe(valor, minimo, maximo, hayRango),
       anterior,
       delta,
@@ -437,6 +456,9 @@ export interface DatosEstudio {
     valorTexto: string | null
     refMinimo?: number | null
     refMaximo?: number | null
+    /** Solo para los libres — R51. */
+    refMinLibre?: number | null
+    refMaxLibre?: number | null
   }[]
 }
 
@@ -503,11 +525,12 @@ export async function crearEstudio(
       await cliente.query(
         `insert into lab_resultado
            (clinica_id, estudio_id, biomarcador_codigo, nombre_libre,
-            valor, valor_texto, ref_minimo, ref_maximo)
-         select $2, $1, c, nl, v, vt, rmin, rmax
+            valor, valor_texto, ref_minimo, ref_maximo,
+            ref_min_libre, ref_max_libre)
+         select $2, $1, c, nl, v, vt, rmin, rmax, rminl, rmaxl
          from unnest($3::text[], $4::text[], $5::numeric[], $6::text[],
-                     $7::numeric[], $8::numeric[])
-              as t(c, nl, v, vt, rmin, rmax)`,
+                     $7::numeric[], $8::numeric[], $9::numeric[], $10::numeric[])
+              as t(c, nl, v, vt, rmin, rmax, rminl, rmaxl)`,
         [
           id,
           tenantId,
@@ -517,6 +540,8 @@ export async function crearEstudio(
           datos.resultados.map((r) => r.valorTexto),
           datos.resultados.map((r) => r.refMinimo ?? null),
           datos.resultados.map((r) => r.refMaximo ?? null),
+          datos.resultados.map((r) => r.refMinLibre ?? null),
+          datos.resultados.map((r) => r.refMaxLibre ?? null),
         ],
       )
     }
@@ -636,4 +661,56 @@ export async function serieAnalitica(
   }
 
   return [...porCodigo.values()]
+}
+
+/* ------------------------------------------------------------------ */
+/* Borrado de un estudio — R51                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Borra un estudio del paciente. Devuelve false si no es suyo o no existe.
+ *
+ * ## Borrado fisico, y por que no choca con la trazabilidad
+ *
+ * La regla del proyecto es que nada se borra: «eliminar» es archivar. La
+ * tabla tiene `estado` y `anulado_motivo` desde la 007 justo para eso, y ese
+ * camino sigue siendo el correcto para «este estudio no vale» — el estudio
+ * ocurrio y su anulacion es parte del expediente.
+ *
+ * Esto es otra cosa: **deshacer una carga equivocada**, un informe subido al
+ * paciente que no era o duplicado por un doble clic. Eso no es un hecho
+ * clinico que haya que conservar, es ruido que alguien metio hace treinta
+ * segundos. Archivarlo dejaria el expediente lleno de estudios anulados que
+ * no significan nada.
+ *
+ * ## Las dos condiciones van en el WHERE
+ *
+ * `paciente_id` y `clinica_id` filtran en la misma sentencia que borra, no en
+ * una comprobacion previa: entre un SELECT y el DELETE la fila puede cambiar
+ * de manos, y ademas asi un estudio de otra clinica es indistinguible de uno
+ * que no existe. `restringirA` aplica la misma regla que el resto: un
+ * nutricionista solo toca lo de sus pacientes.
+ *
+ * Los resultados caen con el estudio por la cascada de la migracion 054.
+ */
+export async function borrarEstudio(
+  tenantId: string,
+  restringirA: string | null,
+  pacienteId: string,
+  estudioId: string,
+): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    `delete from lab_estudio e
+      where e.id = $1
+        and e.paciente_id = $2
+        and e.clinica_id = $3
+        and exists (
+          select 1 from paciente p
+           where p.id = e.paciente_id
+             and p.clinica_id = $3
+             and ($4::uuid is null or p.nutricionista_id = $4)
+        )`,
+    [estudioId, pacienteId, tenantId, restringirA],
+  )
+  return (rowCount ?? 0) > 0
 }
