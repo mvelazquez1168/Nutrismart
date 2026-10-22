@@ -56,7 +56,7 @@ COPY apps/api/seed ./apps/api/seed
 # Creándolo aquí con el dueño correcto, Docker respeta ese propietario al
 # montar el volumen encima. Afecta a todo lo que sube archivos: informes
 # de laboratorio (R5) y material de la biblioteca (R30).
-RUN mkdir -p /datos/archivos && chown -R node:node /datos
+RUN apk add --no-cache curl && mkdir -p /datos/archivos && chown -R node:node /datos
 
 # Sin privilegios de root: la imagen de node ya trae el usuario 'node'.
 USER node
