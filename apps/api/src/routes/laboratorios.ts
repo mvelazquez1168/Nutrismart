@@ -17,6 +17,8 @@ import { llamarClaude } from '../ia/cliente.js'
 import {
   obtenerCatalogo,
   obtenerCatalogoSimple,
+  obtenerCatalogoVisible,
+  serieAnalitica,
   listarEstudios,
   crearEstudio,
   PacienteNoVisibleError,
@@ -188,6 +190,35 @@ export async function registerLaboratoriosRoutes(app: FastifyInstance): Promise<
   )
 
   /* ---------------------------------------------------------------- */
+  /* GET /api/pacientes/:id/analitica — R49                            */
+  /* ---------------------------------------------------------------- */
+  /**
+   * La serie historica de cada analito catalogado del paciente.
+   *
+   * Aparte del listado de estudios, no derivado de el: aquel esta organizado
+   * por ESTUDIO —lo que trajo cada informe— y este por ANALITO —como ha ido
+   * evolucionando cada uno—. Son las dos preguntas de una consulta de
+   * seguimiento y ninguna de las dos se contesta bien con la forma de la otra.
+   */
+  app.get<{ Params: ParamsId }>(
+    '/api/pacientes/:id/analitica',
+    { preHandler: requireAuth },
+    async (request, reply) => {
+      const { tenantId, sub, roles } = request.auth
+      const { id } = request.params
+      if (!esUuid(id)) return reply.code(404).send(noEncontradoPaciente())
+
+      const alcance = await resolverAlcance(tenantId, sub, roles)
+      if (!alcance) return reply.code(403).send(sinProfesional())
+
+      const series = await serieAnalitica(tenantId, alcance.restringirA, id)
+      if (series === null) return reply.code(404).send(noEncontradoPaciente())
+
+      return series
+    },
+  )
+
+  /* ---------------------------------------------------------------- */
   /* POST /api/pacientes/:id/laboratorios                              */
   /* ---------------------------------------------------------------- */
   app.post<{ Params: ParamsId }>(
@@ -215,34 +246,120 @@ export async function registerLaboratoriosRoutes(app: FastifyInstance): Promise<
         fecha = fechaRaw
       }
 
-      // --- resultados ---
-      const catalogo = await obtenerCatalogoSimple()
-      const codigosValidos = new Set(catalogo.map((c) => c.codigo))
+      /* --- resultados --- R49: catalogado, cualitativo o libre --- */
+      const catalogo = await obtenerCatalogoVisible(tenantId)
       const resultados: {
-        codigo: string
-        valor: number
+        codigo: string | null
+        nombreLibre: string | null
+        valor: number | null
+        valorTexto: string | null
         refMinimo: number | null
         refMaximo: number | null
       }[] = []
       const vistos = new Set<string>()
+      /*
+       * Los nombres libres se comparan NORMALIZADOS — sin mayusculas ni
+       * espacios de sobra. El indice unico de la base solo cubre los
+       * catalogados (ver migracion 053), asi que «IgG» e «  igg » entrarian
+       * las dos y el estudio tendria el mismo analito repetido.
+       */
+      const libresVistos = new Set<string>()
 
       const crudos = Array.isArray(b['resultados']) ? (b['resultados'] as unknown[]) : []
       for (const [i, bruto] of crudos.entries()) {
         if (typeof bruto !== 'object' || bruto === null) continue
         const fila = bruto as Record<string, unknown>
         const codigo = typeof fila['codigo'] === 'string' ? fila['codigo'].trim() : ''
+        const nombreLibre =
+          typeof fila['nombre_libre'] === 'string' ? fila['nombre_libre'].trim() : ''
+        const valorTexto =
+          typeof fila['valor_texto'] === 'string' ? fila['valor_texto'].trim() : ''
         const valor = Number(fila['valor'])
+        const hayValor = Number.isFinite(valor)
 
-        if (!codigosValidos.has(codigo)) {
-          errores.push({ campo: `resultados.${i}.codigo`, mensaje: `Biomarcador desconocido: "${codigo}"` })
+        if (codigo === '' && nombreLibre === '') {
+          errores.push({
+            campo: `resultados.${i}`,
+            mensaje: 'Indica el código del analito o un nombre libre',
+          })
           continue
         }
-        if (!Number.isFinite(valor)) {
-          errores.push({ campo: `resultados.${i}.valor`, mensaje: 'El valor debe ser numérico' })
+
+        /* ---- Analito SIN catalogar: se guarda tal cual lo escribieron ---- */
+        if (codigo === '') {
+          if (!hayValor && valorTexto === '') {
+            errores.push({
+              campo: `resultados.${i}.valor`,
+              mensaje: `Indica un valor para "${nombreLibre}"`,
+            })
+            continue
+          }
+          const clave = nombreLibre.toLowerCase().replace(/\s+/g, ' ')
+          if (libresVistos.has(clave)) {
+            errores.push({
+              campo: `resultados.${i}.nombre_libre`,
+              mensaje: `"${nombreLibre}" aparece dos veces`,
+            })
+            continue
+          }
+          libresVistos.add(clave)
+          /*
+           * **Sin rango de referencia.** Un analito que no esta en ningun
+           * catalogo no tiene con que compararse, y aceptar un min/max suelto
+           * dejaria un intervalo que nadie puede auditar. El valor numerico si
+           * se guarda cuando lo es: sirve para verlo en el estudio.
+           */
+          resultados.push({
+            codigo: null,
+            nombreLibre,
+            valor: hayValor ? valor : null,
+            valorTexto: valorTexto === '' ? null : valorTexto,
+            refMinimo: null,
+            refMaximo: null,
+          })
+          continue
+        }
+
+        /* ---- Analito del catalogo ---- */
+        const meta = catalogo.get(codigo)
+        if (!meta) {
+          errores.push({ campo: `resultados.${i}.codigo`, mensaje: `Biomarcador desconocido: "${codigo}"` })
           continue
         }
         if (vistos.has(codigo)) {
           errores.push({ campo: `resultados.${i}.codigo`, mensaje: 'Biomarcador repetido' })
+          continue
+        }
+
+        /*
+         * **Un cualitativo guarda texto, y solo texto.**
+         *
+         * Un VIH «No Reactiva» convertido a numero es una afirmacion clinica
+         * falsa, asi que el `valor` que llegue se ignora a proposito — y las
+         * referencias tambien: no hay intervalo que comparar contra un texto.
+         */
+        if (meta.es_cualitativo) {
+          if (valorTexto === '') {
+            errores.push({
+              campo: `resultados.${i}.valor_texto`,
+              mensaje: `"${codigo}" es un resultado cualitativo: indica el texto (ej. "No Reactiva")`,
+            })
+            continue
+          }
+          vistos.add(codigo)
+          resultados.push({
+            codigo,
+            nombreLibre: null,
+            valor: null,
+            valorTexto,
+            refMinimo: null,
+            refMaximo: null,
+          })
+          continue
+        }
+
+        if (!hayValor) {
+          errores.push({ campo: `resultados.${i}.valor`, mensaje: 'El valor debe ser numérico' })
           continue
         }
         /*
@@ -269,7 +386,9 @@ export async function registerLaboratoriosRoutes(app: FastifyInstance): Promise<
         vistos.add(codigo)
         resultados.push({
           codigo,
+          nombreLibre: null,
           valor,
+          valorTexto: null,
           refMinimo: invertido ? null : refMinimo,
           refMaximo: invertido ? null : refMaximo,
         })

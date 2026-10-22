@@ -132,15 +132,38 @@ export async function registerIaRoutes(app: FastifyInstance): Promise<void> {
         })
       }
 
-      const marcadores: Marcador[] = estudio.resultados.map((r) => ({
-        nombre: r.nombre,
-        valor: r.valor,
-        unidad: r.unidad,
-        minimo: r.rango?.minimo ?? null,
-        maximo: r.rango?.maximo ?? null,
-        estado: r.estado,
-        anterior: r.anterior,
-      }))
+      /*
+       * **Al prompt solo van los numeros** — R49.
+       *
+       * `promptInterpretacionLabs` describe cada marcador como «valor unidad
+       * (referencia min-max)». Un cualitativo no tiene ninguna de las tres
+       * cosas, y colarlo como 0 le haria interpretar un VIH «No Reactiva»
+       * como un cero fuera de rango. Lo mismo con un analito libre, que
+       * ademas no tiene rango contra el que decir nada.
+       *
+       * Si al filtrar no queda ninguno, se responde como un estudio sin
+       * resultados: no hay nada que interpretar, y es mejor decirlo que pagar
+       * una llamada para que el modelo lo diga por su cuenta.
+       */
+      const marcadores: Marcador[] = estudio.resultados
+        .filter((r) => r.valor !== null && r.codigo !== null)
+        .map((r) => ({
+          nombre: r.nombre,
+          valor: r.valor as number,
+          unidad: r.unidad,
+          minimo: r.rango?.minimo ?? null,
+          maximo: r.rango?.maximo ?? null,
+          estado: r.estado,
+          anterior: r.anterior,
+        }))
+
+      if (marcadores.length === 0) {
+        return reply.code(400).send({
+          error: 'estudio_sin_resultados',
+          message:
+            'Este estudio no tiene valores numéricos que interpretar. Los resultados cualitativos y los analitos sin catalogar no se interpretan automáticamente.',
+        })
+      }
 
       const prompt = promptInterpretacionLabs({
         pacienteNombre: pac.nombre.trim(),

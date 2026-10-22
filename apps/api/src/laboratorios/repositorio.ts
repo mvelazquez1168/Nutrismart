@@ -19,18 +19,49 @@ export interface BiomarcadorConRango extends BiomarcadorConocido {
   maximo: number | null
   /** De donde salio el rango: util para explicarlo en la interfaz. */
   origenRango: 'por_sexo' | 'general' | 'ninguno'
+  /** true = el resultado es texto («No Reactiva»), no un numero — R49. */
+  es_cualitativo: boolean
+  activo: boolean
 }
 
 export interface ResultadoLab {
-  codigo: string
+  /** null solo cuando el analito no esta catalogado (`nombreLibre`) — R49. */
+  codigo: string | null
   nombre: string
   unidad: string
-  valor: number
+  /** null en los cualitativos y en los libres que llegaron como texto. */
+  valor: number | null
+  /** El resultado cualitativo, tal como lo escribio el profesional — R49. */
+  valor_texto: string | null
+  /** El analito que no esta en ningun catalogo — R49. */
+  nombre_libre: string | null
   rango: { minimo: number | null; maximo: number | null } | null
   estado: EstadoResultado
   anterior: number | null
   delta: number | null
   tendencia: Tendencia
+}
+
+/* ------------------------------------------------------------------ */
+/* Analitica: la serie historica por analito — R49                     */
+/* ------------------------------------------------------------------ */
+
+export interface PuntoSerie {
+  fecha: string
+  valor: number | null
+  valor_texto: string | null
+  estudio_id: string
+}
+
+export interface AnalitoHistorico {
+  codigo: string
+  nombre: string
+  grupo: string
+  unidad: string
+  es_cualitativo: boolean
+  refMin: number | null
+  refMax: number | null
+  serie: PuntoSerie[]
 }
 
 export interface Estudio {
@@ -151,7 +182,19 @@ interface FilaCatalogo {
   minimo: string | null
   maximo: string | null
   origen_rango: string
+  es_cualitativo: boolean
+  activo: boolean
 }
+
+/**
+ * Lo que una clinica ve del catalogo: lo global mas lo suyo — R49.
+ *
+ * `clinica_id is null` son los analitos estandar, iguales para todos. Con
+ * valor, son los que esa clinica declaro. Lo de OTRA clinica no se ve, que
+ * es la regla de aislamiento de siempre aplicada a una tabla que hasta R49
+ * era enteramente global.
+ */
+const SQL_CATALOGO_VISIBLE = `(b.clinica_id is null or b.clinica_id = $1)`
 
 /**
  * `sexo` opcional: sin el, se devuelven los rangos generales, que es lo
@@ -164,11 +207,12 @@ export async function obtenerCatalogo(
 ): Promise<BiomarcadorConRango[]> {
   const sql = `
     select b.codigo, b.nombre, b.unidad, b.decimales, b.grupo,
+           b.es_cualitativo, b.activo,
            ${SQL_RANGO_EFECTIVO}
     from biomarcador b
     ${JOIN_RANGOS.replace(/\$CLINICA/g, '$1').replace(/\$SEXO/g, '$2::sexo_biologico')}
-    where b.activo = true
-    order by b.orden asc
+    where b.activo = true and ${SQL_CATALOGO_VISIBLE}
+    order by b.grupo asc, b.orden asc
   `
   const { rows } = await pool.query<FilaCatalogo>(sql, [tenantId, sexo])
 
@@ -181,7 +225,29 @@ export async function obtenerCatalogo(
     minimo: r.minimo === null ? null : Number(r.minimo),
     maximo: r.maximo === null ? null : Number(r.maximo),
     origenRango: r.origen_rango as BiomarcadorConRango['origenRango'],
+    es_cualitativo: r.es_cualitativo === true,
+    activo: r.activo === true,
   }))
+}
+
+/**
+ * Lo justo para VALIDAR un POST: que el codigo exista y si es cualitativo.
+ *
+ * Aparte de `obtenerCatalogo` porque no necesita rangos ni sexo, y aparte de
+ * `obtenerCatalogoSimple` porque ESTE si se acota por clinica: aceptar un
+ * codigo de otra clinica dejaria entrar un resultado que su propio catalogo
+ * no sabe nombrar.
+ */
+export async function obtenerCatalogoVisible(
+  tenantId: string,
+): Promise<Map<string, { es_cualitativo: boolean }>> {
+  const { rows } = await pool.query<{ codigo: string; es_cualitativo: boolean }>(
+    `select b.codigo, b.es_cualitativo
+       from biomarcador b
+      where b.activo = true and (b.clinica_id is null or b.clinica_id = $1)`,
+    [tenantId],
+  )
+  return new Map(rows.map((r) => [r.codigo, { es_cualitativo: r.es_cualitativo === true }]))
 }
 
 /** Solo codigo/nombre/unidad, para el parseo de CSV. */
@@ -210,10 +276,13 @@ interface FilaEstudio {
 
 interface FilaResultado {
   estudio_id: string
-  codigo: string
+  codigo: string | null
   nombre: string
   unidad: string
-  valor: string
+  valor: string | null
+  valor_texto: string | null
+  nombre_libre: string | null
+  es_cualitativo: boolean
   anterior: string | null
   minimo: string | null
   maximo: string | null
@@ -252,9 +321,23 @@ export async function listarEstudios(
   // La tendencia se calcula sobre los estudios VIGENTES ordenados por
   // fecha de muestra. Un estudio anulado no debe servir de comparacion.
   const { rows: resultados } = await pool.query<FilaResultado>(
+    /*
+     * **`left join` al catalogo, no `join`** — R49.
+     *
+     * Un resultado libre (`nombre_libre`) no tiene codigo, y con el join
+     * interno desaparecia de la respuesta: el profesional lo habria escrito,
+     * se habria guardado, y no lo veria nunca. El nombre y la unidad caen al
+     * del catalogo cuando lo hay, y al texto libre cuando no.
+     *
+     * El `lag` sigue particionando por codigo: dos analitos libres con el
+     * mismo nombre no se comparan entre si —su codigo es null y en una
+     * particion de nulls el orden no significa nada—, y eso es lo correcto:
+     * «Inmunoglobulina IgG» escrito a mano en dos estudios distintos puede no
+     * ser la misma medicion.
+     */
     `with valores as (
        select e.id as estudio_id, e.fecha, e.created_at,
-              r.biomarcador_codigo as codigo, r.valor,
+              r.biomarcador_codigo as codigo, r.valor, r.valor_texto, r.nombre_libre,
               r.ref_minimo, r.ref_maximo
        from lab_estudio e
        join lab_resultado r on r.estudio_id = e.id
@@ -262,26 +345,42 @@ export async function listarEstudios(
      ),
      con_delta as (
        select *,
-              lag(valor) over (partition by codigo order by fecha asc, created_at asc) as anterior
+              case when codigo is null then null else
+                lag(valor) over (partition by codigo order by fecha asc, created_at asc)
+              end as anterior
        from valores
      )
-     select cd.estudio_id, cd.codigo, b.nombre, b.unidad, cd.valor, cd.anterior,
+     select cd.estudio_id, cd.codigo,
+            coalesce(b.nombre, cd.nombre_libre) as nombre,
+            coalesce(b.unidad, '') as unidad,
+            cd.valor, cd.valor_texto, cd.nombre_libre,
+            coalesce(b.es_cualitativo, false) as es_cualitativo,
+            cd.anterior,
             ${SQL_RANGO_EFECTIVO_RESULTADO}
      from con_delta cd
-     join biomarcador b on b.codigo = cd.codigo
+     left join biomarcador b on b.codigo = cd.codigo
      ${JOIN_RANGOS.replace(/\$CLINICA/g, '$2').replace(/\$SEXO/g, '$3::sexo_biologico')}
-     order by b.orden asc`,
+     order by b.grupo asc nulls last, b.orden asc nulls last, cd.nombre_libre asc`,
     [pacienteId, tenantId, sexo],
   )
 
   const porEstudio = new Map<string, ResultadoLab[]>()
   for (const r of resultados) {
-    const valor = Number(r.valor)
+    const valor = r.valor === null ? null : Number(r.valor)
     const anterior = r.anterior === null ? null : Number(r.anterior)
-    const delta = anterior === null ? null : Number((valor - anterior).toFixed(4))
+    const delta =
+      anterior === null || valor === null ? null : Number((valor - anterior).toFixed(4))
     const minimo = r.minimo === null ? null : Number(r.minimo)
     const maximo = r.maximo === null ? null : Number(r.maximo)
-    const hayRango = r.origen_rango !== 'ninguno'
+    /*
+     * **Sin numero no hay estado** — R49.
+     *
+     * Un cualitativo («No Reactiva») y un libre sin valor numerico no se
+     * pueden comparar con un intervalo. Decir «normal» ahi seria afirmar que
+     * algo esta bien sin haberlo comprobado, que es justo lo que
+     * `sin_referencia` existe para no hacer.
+     */
+    const hayRango = r.origen_rango !== 'ninguno' && valor !== null
 
     const lista = porEstudio.get(r.estudio_id) ?? []
     lista.push({
@@ -289,8 +388,10 @@ export async function listarEstudios(
       nombre: r.nombre,
       unidad: r.unidad,
       valor,
+      valor_texto: r.valor_texto,
+      nombre_libre: r.nombre_libre,
       rango: hayRango ? { minimo, maximo } : null,
-      estado: estadoDe(valor, minimo, maximo, hayRango),
+      estado: valor === null ? 'sin_referencia' : estadoDe(valor, minimo, maximo, hayRango),
       anterior,
       delta,
       tendencia: tendenciaDe(delta),
@@ -328,8 +429,12 @@ export interface DatosEstudio {
    * (R44). Una captura a mano no las tiene, y ahi manda el catalogo.
    */
   resultados: {
-    codigo: string
-    valor: number
+    /** null = analito sin catalogar; entonces `nombreLibre` manda — R49. */
+    codigo: string | null
+    nombreLibre: string | null
+    /** null en los cualitativos y en los libres escritos como texto. */
+    valor: number | null
+    valorTexto: string | null
     refMinimo?: number | null
     refMaximo?: number | null
   }[]
@@ -397,14 +502,19 @@ export async function crearEstudio(
       // caiga al catalogo en vez de inventar un intervalo que empieza en 0.
       await cliente.query(
         `insert into lab_resultado
-           (clinica_id, estudio_id, biomarcador_codigo, valor, ref_minimo, ref_maximo)
-         select $2, $1, c, v, rmin, rmax
-         from unnest($3::text[], $4::numeric[], $5::numeric[], $6::numeric[]) as t(c, v, rmin, rmax)`,
+           (clinica_id, estudio_id, biomarcador_codigo, nombre_libre,
+            valor, valor_texto, ref_minimo, ref_maximo)
+         select $2, $1, c, nl, v, vt, rmin, rmax
+         from unnest($3::text[], $4::text[], $5::numeric[], $6::text[],
+                     $7::numeric[], $8::numeric[])
+              as t(c, nl, v, vt, rmin, rmax)`,
         [
           id,
           tenantId,
           datos.resultados.map((r) => r.codigo),
+          datos.resultados.map((r) => r.nombreLibre),
           datos.resultados.map((r) => r.valor),
+          datos.resultados.map((r) => r.valorTexto),
           datos.resultados.map((r) => r.refMinimo ?? null),
           datos.resultados.map((r) => r.refMaximo ?? null),
         ],
@@ -421,4 +531,109 @@ export async function crearEstudio(
   } finally {
     cliente.release()
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Analitica: la serie historica por analito — R49                     */
+/* ------------------------------------------------------------------ */
+
+interface FilaSerie {
+  codigo: string
+  nombre: string
+  grupo: string
+  unidad: string
+  es_cualitativo: boolean
+  valor: string | null
+  valor_texto: string | null
+  fecha: string
+  estudio_id: string
+  minimo: string | null
+  maximo: string | null
+  origen_rango: string
+}
+
+/**
+ * Toda la historia de cada analito CATALOGADO de un paciente.
+ *
+ * ## Por que solo los catalogados
+ *
+ * Una serie historica es una comparacion: el mismo analito, medido varias
+ * veces. Un `nombre_libre` no garantiza eso — «IgG», «Inmunoglobulina G» e
+ * «Ig G» escritos en tres estudios son tres cadenas distintas, y unirlas por
+ * parecido de letras construiria una tendencia que nadie midio. Quedan fuera
+ * a proposito, y siguen visibles en el detalle de su estudio.
+ *
+ * ## El rango que se devuelve
+ *
+ * Es el del ULTIMO punto, resuelto con el mismo algoritmo que el listado de
+ * estudios (`SQL_RANGO_EFECTIVO_RESULTADO`): la referencia que declaro el
+ * informe gana sobre el catalogo de la clinica. Es el criterio con el que se
+ * esta valorando hoy, y es contra el que la pantalla pinta la banda.
+ *
+ * Devolver un rango por punto seria mas exacto y menos util: la grafica
+ * dibuja UNA banda, y una banda que cambia de altura a mitad del recorrido no
+ * se puede leer.
+ */
+export async function serieAnalitica(
+  tenantId: string,
+  restringirA: string | null,
+  pacienteId: string,
+): Promise<AnalitoHistorico[] | null> {
+  const { rows: pac } = await pool.query<{ sexo: string | null }>(
+    `select sexo_biologico::text as sexo from paciente
+     where id = $1 and clinica_id = $2 and ($3::uuid is null or nutricionista_id = $3)`,
+    [pacienteId, tenantId, restringirA],
+  )
+  if (!pac[0]) return null
+  const sexo = pac[0].sexo
+
+  const { rows } = await pool.query<FilaSerie>(
+    `with cd as (
+       select r.biomarcador_codigo as codigo,
+              r.valor, r.valor_texto, r.ref_minimo, r.ref_maximo,
+              e.id as estudio_id,
+              to_char(e.fecha,'YYYY-MM-DD') as fecha,
+              e.fecha as orden_fecha, e.created_at
+         from lab_estudio e
+         join lab_resultado r on r.estudio_id = e.id
+        where e.paciente_id = $1 and e.clinica_id = $2 and e.estado = 'vigente'
+          and r.biomarcador_codigo is not null
+     )
+     select cd.codigo, b.nombre, b.grupo, b.unidad, b.es_cualitativo,
+            cd.valor, cd.valor_texto, cd.fecha, cd.estudio_id,
+            ${SQL_RANGO_EFECTIVO_RESULTADO}
+       from cd
+       join biomarcador b on b.codigo = cd.codigo
+       ${JOIN_RANGOS.replace(/\$CLINICA/g, '$2').replace(/\$SEXO/g, '$3::sexo_biologico')}
+      where b.clinica_id is null or b.clinica_id = $2
+      order by b.grupo asc, b.orden asc, cd.orden_fecha asc, cd.created_at asc`,
+    [pacienteId, tenantId, sexo],
+  )
+
+  const porCodigo = new Map<string, AnalitoHistorico>()
+  for (const r of rows) {
+    const a = porCodigo.get(r.codigo) ?? {
+      codigo: r.codigo,
+      nombre: r.nombre,
+      grupo: r.grupo,
+      unidad: r.unidad,
+      es_cualitativo: r.es_cualitativo === true,
+      refMin: null,
+      refMax: null,
+      serie: [],
+    }
+    a.serie.push({
+      fecha: r.fecha,
+      valor: r.valor === null ? null : Number(r.valor),
+      valor_texto: r.valor_texto,
+      estudio_id: r.estudio_id,
+    })
+    // La consulta viene ordenada por fecha ascendente, asi que la ultima
+    // vuelta de cada analito deja el rango del punto mas reciente.
+    a.refMin = r.minimo === null ? null : Number(r.minimo)
+    a.refMax = r.maximo === null ? null : Number(r.maximo)
+    porCodigo.set(r.codigo, a)
+  }
+
+  return [...porCodigo.values()]
 }

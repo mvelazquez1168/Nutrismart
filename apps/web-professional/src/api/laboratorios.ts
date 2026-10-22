@@ -1,5 +1,6 @@
 import { apiGet, apiPost, apiUpload, apiDescargar } from './client'
 import type {
+  AnalitoHistorico,
   ArchivoSubido,
   Biomarcador,
   DatosEstudioEnvio,
@@ -14,6 +15,21 @@ export function getBiomarcadores(
 ): Promise<Biomarcador[]> {
   const qs = sexo ? `?sexo=${sexo}` : ''
   return apiGet<Biomarcador[]>(`/api/biomarcadores${qs}`, signal)
+}
+
+/**
+ * La serie histórica por analito — R49.
+ *
+ * Aparte de `getLaboratorios`: aquél está organizado por ESTUDIO —lo que
+ * trajo cada informe— y éste por ANALITO —cómo ha ido evolucionando cada uno—.
+ * Son las dos preguntas de una consulta de seguimiento, y ninguna se contesta
+ * bien con la forma de la otra.
+ */
+export function getAnalitica(
+  pacienteId: string,
+  signal?: AbortSignal,
+): Promise<AnalitoHistorico[]> {
+  return apiGet<AnalitoHistorico[]>(`/api/pacientes/${pacienteId}/analitica`, signal)
 }
 
 export function getLaboratorios(

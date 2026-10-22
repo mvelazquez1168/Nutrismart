@@ -108,6 +108,15 @@ export async function registerBioquimicaRoutes(app: FastifyInstance): Promise<vo
       // primero que aparece de cada código es el vigente.
       for (const estudio of recientes) {
         for (const r of estudio.resultados) {
+          /*
+           * **Solo los catalogados y con numero** — R49.
+           *
+           * Esta pantalla compara contra un rango y dibuja una tendencia: un
+           * cualitativo («No Reactiva») y un analito libre sin codigo no
+           * tienen ni lo uno ni lo otro. Se quedan fuera de este resumen y
+           * siguen visibles en el detalle de su estudio, que es donde se leen.
+           */
+          if (r.codigo === null || r.valor === null) continue
           if (porCodigo.has(r.codigo)) continue
           porCodigo.set(r.codigo, {
             codigo: r.codigo,

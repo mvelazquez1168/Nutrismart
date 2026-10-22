@@ -18,6 +18,18 @@
  * Los grupos son los del catálogo de biomarcadores, no una
  * clasificación propia: así el informe y la valoración hablan de lo
  * mismo.
+ *
+ * ── Dos pestañas desde R49 ──────────────────────────────────────────
+ *
+ * **Estudios** es todo lo anterior, sin un solo cambio. **Analítica**
+ * es la vista traspuesta: en vez de «qué trajo cada informe», «cómo ha
+ * ido cada analito». Son las dos preguntas de un seguimiento, y ninguna
+ * se contesta bien con la forma de la otra.
+ *
+ * El contenido de Estudios se extrajo a `ContenidoEstudios` tal cual
+ * estaba. Tiene tres salidas distintas —error, vacío y el panel
+ * completo— y envolverlo en pestañas desde dentro habría obligado a
+ * tocar las tres. Lo que decide qué se ve vive aquí fuera.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -27,6 +39,7 @@ import { getLaboratorios } from '../../api/laboratorios'
 import type { EstudioLab, SexoBiologico } from '../../api/tipos'
 import { ListaLaboratorios } from '../ListaLaboratorios'
 import { LaboratorioModal } from '../LaboratorioModal'
+import { PanelAnalitica } from './PanelAnalitica'
 
 const COLOR: Record<EstadoMarcador, string> = {
   normal: 'var(--status-normal)',
@@ -63,20 +76,23 @@ function rangoTexto(rango: { minimo: number | null; maximo: number | null } | nu
   return `≤ ${rango.maximo}`
 }
 
-export function PanelBioquimica({
-  pacienteId,
-  consultaId,
-  bloqueada,
-  sexoPaciente,
-  onGuardado,
-}: {
+interface Props {
   pacienteId: string
   consultaId: string
   bloqueada: boolean
   /** Decide qué rangos se ofrecen al capturar un estudio nuevo. */
   sexoPaciente: SexoBiologico | null
   onGuardado: () => void | Promise<void>
-}) {
+}
+
+/** Lo que había antes de R49, sin cambios. */
+function ContenidoEstudios({
+  pacienteId,
+  consultaId,
+  bloqueada,
+  sexoPaciente,
+  onGuardado,
+}: Props) {
   const [datos, setDatos] = useState<Bioquimica | null>(null)
   const [cargando, setCargando] = useState(true)
   const [abiertos, setAbiertos] = useState<Set<string>>(new Set())
@@ -375,6 +391,71 @@ export function PanelBioquimica({
           void onGuardado()
         }}
       />
+    </div>
+  )
+}
+
+type Pestana = 'estudios' | 'analitica'
+
+/**
+ * Las dos vistas del laboratorio — R49, R50.
+ *
+ * La pestaña activa vive aquí y no en la URL: es una preferencia de lectura
+ * dentro de una sección, no un sitio al que se llega con un enlace. Y las dos
+ * mitades se montan y desmontan al cambiar, que es lo que hace que la
+ * analítica pida sus datos cuando de verdad se va a mirar.
+ */
+export function PanelBioquimica(props: Props) {
+  const [pestana, setPestana] = useState<Pestana>('estudios')
+
+  const tabs: { clave: Pestana; etiqueta: string }[] = [
+    { clave: 'estudios', etiqueta: 'Estudios' },
+    { clave: 'analitica', etiqueta: 'Analítica' },
+  ]
+
+  return (
+    <div className="space-y-4">
+      <div className="overflow-x-auto border-b border-border">
+        <nav className="flex min-w-max gap-1" aria-label="Vistas del laboratorio">
+          {tabs.map((t) => {
+            const activa = t.clave === pestana
+            return (
+              <button
+                key={t.clave}
+                type="button"
+                onClick={() => setPestana(t.clave)}
+                aria-current={activa ? 'page' : undefined}
+                className={`-mb-px whitespace-nowrap border-b-2 px-4 py-2.5 text-sm transition-colors ${
+                  activa
+                    ? 'border-primary font-semibold text-primary'
+                    : 'border-transparent text-muted hover:text-ink'
+                }`}
+              >
+                {t.etiqueta}
+              </button>
+            )
+          })}
+        </nav>
+      </div>
+
+      {/*
+        **`display: none`, no renderizado condicional.**
+
+        Las dos mitades se montan una vez y se quedan montadas. Con el
+        condicional, volver a «Estudios» y regresar perdía el grupo elegido en
+        la analítica y la volvía a pedir al servidor; y al revés, cambiar de
+        pestaña remontaba la lista de estudios. Una pestaña es un cambio de
+        vista, no de pantalla: lo que se deja a medias debe seguir ahí.
+
+        El precio es que la analítica pide sus datos al cargar el panel aunque
+        nadie llegue a abrirla. Es una lectura, y se paga una vez.
+      */}
+      <div style={{ display: pestana === 'estudios' ? 'block' : 'none' }}>
+        <ContenidoEstudios {...props} />
+      </div>
+      <div style={{ display: pestana === 'analitica' ? 'block' : 'none' }}>
+        <PanelAnalitica pacienteId={props.pacienteId} />
+      </div>
     </div>
   )
 }

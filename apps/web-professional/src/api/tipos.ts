@@ -204,18 +204,48 @@ export interface Biomarcador {
   minimo: number | null
   maximo: number | null
   origenRango: 'por_sexo' | 'general' | 'ninguno'
+  /** true = el resultado es texto («No Reactiva»), no un número — R49. */
+  es_cualitativo: boolean
+  activo: boolean
 }
 
 export interface ResultadoLab {
-  codigo: string
+  /** null cuando el analito no está catalogado; entonces manda `nombre_libre` — R49. */
+  codigo: string | null
   nombre: string
   unidad: string
-  valor: number
+  /** null en los cualitativos y en los libres escritos como texto — R49. */
+  valor: number | null
+  valor_texto: string | null
+  nombre_libre: string | null
   rango: { minimo: number | null; maximo: number | null } | null
   estado: EstadoResultado
   anterior: number | null
   delta: number | null
   tendencia: Tendencia
+}
+
+/**
+ * La serie histórica de un analito — R49.
+ *
+ * Solo los CATALOGADOS: un `nombre_libre` escrito distinto en dos estudios
+ * no garantiza ser la misma medición, y unirlos por parecido construiría una
+ * tendencia que nadie midió.
+ */
+export interface AnalitoHistorico {
+  codigo: string
+  nombre: string
+  grupo: string
+  unidad: string
+  es_cualitativo: boolean
+  refMin: number | null
+  refMax: number | null
+  serie: {
+    fecha: string
+    valor: number | null
+    valor_texto: string | null
+    estudio_id: string
+  }[]
 }
 
 export interface ArchivoAdjunto {
@@ -273,8 +303,13 @@ export interface DatosEstudioEnvio {
   archivoId: string | null
   snapshotId: string | null
   resultados: {
-    codigo: string
-    valor: number
+    /** Ausente = analito sin catalogar; entonces `nombre_libre` es obligatorio — R49. */
+    codigo?: string
+    nombre_libre?: string
+    /** Para los cuantitativos del catálogo. */
+    valor?: number
+    /** Para los cualitativos y para los libres — R49. */
+    valor_texto?: string
     /**
      * Rango de referencia declarado por el laboratorio (del PDF) — R44.
      *
