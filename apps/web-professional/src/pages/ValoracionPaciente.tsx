@@ -19,7 +19,6 @@ import {
 } from '../api/valoracion'
 import type { PacienteDetalle } from '../api/tipos'
 import { TabsValoracion } from '../components/eval/TabsValoracion'
-import { DashboardBioquimica } from '../components/eval/DashboardBioquimica'
 import { FormAntropometria } from '../components/eval/FormAntropometria'
 import { PanelBioquimica } from '../components/eval/PanelBioquimica'
 import { FormHistorialClinico } from '../components/eval/FormHistorialClinico'
@@ -215,12 +214,6 @@ export function ValoracionPaciente() {
           onGuardado={refrescar}
         />
       )}
-      {/*
-        Solo lectura: enseña lo ya cargado en Laboratorios, no captura nada.
-        Por eso no recibe `consultaId` ni `bloqueada` — no hay nada que
-        bloquear en una valoración finalizada (R46).
-      */}
-      {tab === 'dashboards' && <DashboardBioquimica pacienteId={id} />}
       {tab === 'clinico' && (
         <div className="space-y-6">
           <FormHistorialClinico

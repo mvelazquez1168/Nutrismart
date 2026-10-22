@@ -29,8 +29,11 @@
  *   - **Catalogada cualitativa** — valor de texto («No Reactiva»). Un
  *     VIH guardado como número sería una afirmación clínica falsa.
  *   - **Sin catalogar** — el analito que no está en ninguna lista. Se
- *     guarda con su nombre tal como se escribió, y **sin rango**: no hay
- *     con qué compararlo y un intervalo inventado no se puede auditar.
+ *     guarda con su nombre tal como se escribió y, desde R51, con el rango
+ *     que el profesional quiera anotar. Ese rango va en sus propios campos
+ *     (`ref_*_libre`) y **solo se enseña**: no entra en el cálculo del
+ *     estado ni en la analítica, porque nadie lo ha validado contra un
+ *     catálogo.
  */
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
 import { Modal } from './Modal'
@@ -73,6 +76,15 @@ interface FilaResultado {
   refMin: number | null
   refMax: number | null
   esLibre: boolean
+  /**
+   * El rango que el profesional escribe para un analito libre — R51.
+   *
+   * Como TEXTO, igual que `valor`: al teclear se pasa por el vacío y por el
+   * «1.», y convertir en cada pulsación pondría un 0 a medio escribir. Solo
+   * se usa cuando `esLibre`; las filas del catálogo ya traen su rango.
+   */
+  refMinLibre?: string
+  refMaxLibre?: string
   /** Lo trajo la lectura del archivo, no el teclado. Se marca en la fila. */
   delArchivo?: boolean
 }
@@ -214,11 +226,17 @@ export function LaboratorioModal({
         refMin: null,
         refMax: null,
         esLibre: true,
+        refMinLibre: '',
+        refMaxLibre: '',
       },
     ])
   }
 
-  function editar(id: string, campo: 'valor' | 'nombre' | 'unidad', texto: string) {
+  function editar(
+    id: string,
+    campo: 'valor' | 'nombre' | 'unidad' | 'refMinLibre' | 'refMaxLibre',
+    texto: string,
+  ) {
     setFilas((prev) => prev.map((f) => (f.id === id ? { ...f, [campo]: texto } : f)))
   }
 
@@ -343,14 +361,24 @@ export function LaboratorioModal({
         const texto = f.valor.trim()
         if (f.esLibre) {
           /*
-           * **Sin catalogar: siempre como texto, y sin rango.**
+           * **Sin catalogar: el valor siempre como texto.**
            *
-           * El valor puede parecer un número («1240») y aun así no es
-           * comparable con nada: no hay catálogo que diga su unidad ni su
-           * intervalo. Guardarlo como texto conserva exactamente lo que el
-           * informe decía, que es lo único cierto que hay.
+           * Puede parecer un número («1240») y aun así no es comparable con
+           * nada por su cuenta: no hay catálogo que diga su unidad. Guardarlo
+           * como texto conserva exactamente lo que el informe decía.
+           *
+           * El rango SÍ viaja, si lo escribieron — R51. Va en sus propios
+           * campos (`ref_*_libre`) y no en los del catálogo: solo se enseña,
+           * no entra en el cálculo del estado ni en la analítica.
            */
-          return { nombre_libre: f.nombre.trim(), valor_texto: texto }
+          const min = Number((f.refMinLibre ?? '').trim().replace(',', '.'))
+          const max = Number((f.refMaxLibre ?? '').trim().replace(',', '.'))
+          return {
+            nombre_libre: f.nombre.trim(),
+            valor_texto: texto,
+            ref_min_libre: (f.refMinLibre ?? '').trim() !== '' && Number.isFinite(min) ? min : null,
+            ref_max_libre: (f.refMaxLibre ?? '').trim() !== '' && Number.isFinite(max) ? max : null,
+          }
         }
         if (f.es_cualitativo) {
           return { codigo: f.codigo as string, valor_texto: texto }
@@ -605,7 +633,7 @@ export function LaboratorioModal({
                     <th className="px-3 py-2 font-semibold text-ink">Analito</th>
                     <th className="w-32 px-2 py-2 font-semibold text-ink">Valor</th>
                     <th className="w-24 px-2 py-2 font-semibold text-ink">Unidad</th>
-                    <th className="w-36 px-2 py-2 font-semibold text-ink">Referencia</th>
+                    <th className="w-48 px-2 py-2 font-semibold text-ink">Referencia</th>
                     <th className="w-10 px-2 py-2" />
                   </tr>
                 </thead>
@@ -661,9 +689,42 @@ export function LaboratorioModal({
                         )}
                       </td>
                       <td className="px-2 py-2 text-xs text-muted">
-                        {f.esLibre || f.es_cualitativo
-                          ? '—'
-                          : textoRango(f.refMin, f.refMax, f.unidad)}
+                        {f.esLibre ? (
+                          /*
+                            El rango de un analito libre se escribe — R51.
+                            Antes aquí iba un «—» y el profesional tenía que
+                            recordar de memoria contra qué se lee un valor
+                            que él mismo acababa de teclear. Son opcionales:
+                            si el informe no lo trae, se dejan vacíos.
+                          */
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              step="any"
+                              value={f.refMinLibre ?? ''}
+                              onChange={(e) => editar(f.id, 'refMinLibre', e.target.value)}
+                              placeholder="mín"
+                              aria-label={`Referencia mínima de ${f.nombre || 'el analito'}`}
+                              className={`${claseControl(false)} w-20 px-1.5`}
+                            />
+                            <span aria-hidden="true">–</span>
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              step="any"
+                              value={f.refMaxLibre ?? ''}
+                              onChange={(e) => editar(f.id, 'refMaxLibre', e.target.value)}
+                              placeholder="máx"
+                              aria-label={`Referencia máxima de ${f.nombre || 'el analito'}`}
+                              className={`${claseControl(false)} w-20 px-1.5`}
+                            />
+                          </div>
+                        ) : f.es_cualitativo ? (
+                          '—'
+                        ) : (
+                          textoRango(f.refMin, f.refMax, f.unidad)
+                        )}
                       </td>
                       <td className="px-2 py-2 text-right">
                         <button

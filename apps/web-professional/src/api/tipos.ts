@@ -219,6 +219,13 @@ export interface ResultadoLab {
   valor_texto: string | null
   nombre_libre: string | null
   rango: { minimo: number | null; maximo: number | null } | null
+  /**
+   * El rango que el profesional escribió para un analito libre — R51.
+   *
+   * Aparte de `rango`: aquél sale del catálogo o del informe y decide el
+   * `estado`; éste solo se enseña en el detalle del estudio.
+   */
+  rangoLibre: { minimo: number | null; maximo: number | null } | null
   estado: EstadoResultado
   anterior: number | null
   delta: number | null
