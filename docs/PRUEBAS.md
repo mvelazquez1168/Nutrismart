@@ -5616,3 +5616,146 @@ El caso del desayuno es el que importa: una comida escrita a mano **sin** alimen
 ## Tropiezo de entorno
 
 El arnés de pruebas con Puppeteer resultó **frágil contra el formulario de Keycloak**: el campo de usuario es `input[name="username"]` y no siempre lleva `id="username"`, y la pantalla tarda entre dos y seis segundos en aparecer según lo caliente que esté Vite. Varias corridas que parecían fallos de la aplicación eran el arnés esperando un selector que no existía. Lo que funciona es reintentar el clic de acceso hasta que el campo aparezca, y esperar a que aparezca **contenido**, no un número fijo de segundos.
+
+---
+
+# R49 — Catálogo dinámico de analitos y formulario de laboratorio
+
+## Qué cambia
+
+El catálogo tenía **14 analitos globales** y nada más. Un informe real trae treinta líneas, varias cualitativas («No Reactiva»), y alguna que no está en ninguna lista. Lo que no estaba en los 14 **no se podía registrar**: el POST rechazaba el código y el valor se perdía.
+
+Ahora hay **93 analitos activos en 11 grupos**, resultados de texto, y una vía para lo que no está catalogado.
+
+## Las tres clases de resultado
+
+| Clase | Qué guarda | Cuándo se usa |
+|---|---|---|
+| **Cuantitativa catalogada** | `biomarcador_codigo` + `valor` numérico | Lo normal: Hemoglobina, Glucosa, Colesterol… |
+| **Cualitativa catalogada** | `biomarcador_codigo` + `valor_texto` | Los 7 de Inmunología: VIH, HBsAg, VDRL, H. pylori… |
+| **Sin catalogar** | `nombre_libre` + `valor_texto` | El analito que no está en el catálogo, con su nombre tal como se escribió |
+
+**Un cualitativo guardado como número sería una afirmación clínica falsa.** Un VIH «No Reactiva» convertido a 0 se compararía contra un intervalo y saldría «fuera de rango». Por eso el POST ignora a propósito el `valor` que llegue en un cualitativo, y tampoco acepta referencias: no hay intervalo que comparar contra un texto.
+
+## Por qué lo sin catalogar NO aparece en analítica ni en el dashboard
+
+Una serie histórica es una **comparación**: el mismo analito, medido varias veces. «IgG», «Inmunoglobulina G» e «Ig G» escritos a mano en tres informes son tres cadenas distintas, y unirlas por parecido de letras construiría una tendencia que nadie midió.
+
+Quedan fuera de `/analitica`, del dashboard de bioquímica y del resumen por marcadores. **Siguen visibles en el detalle de su estudio**, que es donde se leen, marcados como «sin catalogar».
+
+## Los rangos sembrados son ORIENTATIVOS
+
+Los rangos nuevos se sembraron en `biomarcador_rango` como generales (`sexo is null`) para las clínicas existentes, igual que hizo la migración 007. **Son valores poblacionales de adulto**; cada clínica los ajusta a lo que reporta su laboratorio. Donde el intervalo varía por sexo se usó el femenino como general, que es lo que pedía el encargo.
+
+Y siguen mandando sobre ellos las referencias que trae el informe (R44): el rango del laboratorio que hizo la medición gana sobre el criterio de quien no estaba ahí.
+
+## El formulario, rehecho
+
+El paso 2 pintaba los 14 analitos siempre, todos. Con 93 eso sería una pared de casillas vacías. Ahora se **busca y se agrega**: el profesional pone las filas que su informe trae y solo esas.
+
+- Buscador que filtra por nombre o código, **sin acentos ni mayúsculas** (escribir «hem» encuentra Hemoglobina).
+- Las filas leídas de un PDF o CSV se marcan «del informe»: distingue «lo leyó el sistema» de «lo escribí yo».
+- Enlace «＋ Agregar resultado no catalogado» para la fila libre, con su nombre y su unidad.
+- Agregar dos veces el mismo analito no crea dos filas.
+
+## Comprobación
+
+### API — 24 comprobaciones, todas pasan
+
+| Bloque | Resultado |
+|---|---|
+| `GET /api/biomarcadores` | 200 · **93 analitos** · 7 cualitativos · 11 grupos · cada fila con `activo` |
+| Rangos | Los 14 originales intactos (glucosa 70–100); `?sexo=femenino` resuelve el rango por sexo (hemoglobina 12–15.5); un analito nuevo trae el suyo (PLT 150–400) |
+| `POST` con las tres clases | **201**, los 4 resultados guardados |
+| Validaciones que rechazan | cualitativo sin texto · cuantitativo sin número · sin código ni nombre libre · libre sin valor · código inexistente · **nombre libre repetido** (`IgG` vs `  igg `) → **400** en los seis |
+| `GET .../laboratorios` | VIH con `valor = NULL` y `valor_texto = "No Reactiva"`; el libre con `codigo = NULL` |
+| `GET .../analitica` | Series solo de catalogados; el libre **no** aparece; la serie va de la fecha más antigua a la más reciente |
+
+### En pantalla
+
+Buscar «hem» filtra a Hemoglobina, Hematocrito, HCM y CHCM. Agregar filas, guardar, y el estudio aparece con sus resultados.
+
+## Dos consumidores que hubo que adaptar
+
+`valor` dejó de ser siempre numérico, y dos sitios lo daban por hecho:
+
+- **`routes/bioquimica.ts`** — el resumen por marcadores compara contra rangos y dibuja tendencias; los cualitativos y los libres se saltan.
+- **`routes/ia.ts`** — el prompt de interpretación describe cada marcador como «valor unidad (referencia min–max)». Un cualitativo no tiene ninguna de las tres cosas y colarlo como 0 haría interpretar un VIH «No Reactiva» como un cero fuera de rango. **Si al filtrar no queda ningún número, responde 400 en vez de pagar la llamada.**
+
+## Desviaciones respecto al encargo
+
+| El encargo decía | Realidad | Qué se hizo |
+|---|---|---|
+| Insertar `minimo`/`maximo` en `biomarcador` | Esa tabla **no tiene** esas columnas: los rangos viven en `biomarcador_rango`, por clínica y sexo, desde la 007 | Se siembran ahí como generales |
+| Insertar `FERR` y `HIERRO` | Ya existen como `ferritina` y `hierro_serico`; el `on conflict (codigo)` **no** los atrapa porque el código difiere | **No se insertan.** Habrían duplicado el mismo analito con dos series que no se suman |
+| Grupos en snake_case | Los 14 originales usaban etiquetas con acentos | Se normalizan a código en la migración; la interfaz los formatea (`lib/grupos.ts`) |
+| «perfil_glucemico ya tiene glucosa e **insulina**» | No hay insulina en el catálogo ni en la lista a añadir | No se añade |
+| — | `HTO` (Hematocrito) no estaba en la tabla del encargo | **Se añade**: un hemograma sin hematocrito está incompleto, y la propia comprobación del encargo lo nombra al buscar «hem» |
+
+### Un fallo propio que la verificación destapó
+
+La migración ampliaba `lab_resultado` pero **no quitaba el `NOT NULL` de `biomarcador_codigo`**. El CHECK de «código o nombre libre» nunca llegaba a evaluarse: el insert reventaba antes con un *not-null violation* de la 007. Se vio al primer POST con un analito libre. Corregido y la migración re-aplicada.
+
+---
+
+# R50 — Panel de analítica
+
+## Qué resuelve
+
+La pestaña «Estudios» enseña **lo que trajo cada informe**. «Analítica» enseña lo contrario: **cómo ha ido cada analito**. Una glucosa de 112 no significa lo mismo viniendo de 140 que viniendo de 95, y hasta ahora eso había que reconstruirlo abriendo estudio por estudio.
+
+## Las dos capas
+
+**Capa 1 — tabla resumen.** Banner con el conteo de alterados, pestañas por grupo (en orden clínico, no alfabético), y una fila por analito con último valor, referencia, badge de estado, variación y sparkline.
+
+**Capa 2 — modal de tendencia.** KPIs, gráfica con la banda de referencia sombreada y cada punto coloreado según su propio estado, o línea de tiempo de chips si es cualitativo.
+
+## Tres decisiones que importan
+
+**Subir no es malo por sí mismo.** El color de la variación no lo decide la dirección sino si el cambio **aleja** el valor del rango. Una hemoglobina que sube desde una anemia es una buena noticia; un colesterol que sube no. Pintar toda subida de rojo enseñaría a ignorar el color.
+
+**La banda de referencia entra siempre en el encuadre vertical.** Si la escala se ajustara solo a los valores medidos, un paciente con todo fuera de rango vería su línea cómodamente centrada y el límite fuera de la imagen: la gráfica diría «normal» con los datos de «alterado».
+
+**El color nunca va solo.** Verde, rojo y gris son `--status-normal`, `--status-critical` y `--muted` —los mismos tres de la tabla de estudios—, y el estado se repite en palabras en cada badge y en el `<title>` de cada punto.
+
+## Sin librería de gráficas
+
+El encargo proponía instalar `recharts`. **No se instaló**, por acuerdo explícito:
+
+- `CLAUDE.md` pide justificar cualquier dependencia pesada, y media docena de puntos sobre un eje de fechas no la justifica.
+- Ya hay cuatro gráficas en SVG a mano en esta aplicación (`GraficaComposicion`, `DashboardBioquimica`, `ResumenDietetico`). Una librería para la quinta dejaría dos estilos conviviendo.
+- Con una librería los colores hay que pasárselos desde los tokens igual, así que el ahorro es menor de lo que parece.
+
+Lo que se pierde es el tooltip flotante; se sustituye por un `<title>` por punto, que además **leen los lectores de pantalla** — cosa que un tooltip pintado a mano no hace.
+
+## Las pestañas no desmontan
+
+El contenido de las dos vive con `display: none`, no con renderizado condicional. Con el condicional, volver a «Estudios» y regresar perdía el grupo elegido y volvía a pedir la analítica al servidor. Una pestaña es un cambio de vista, no de pantalla.
+
+> **Efecto secundario a tener en cuenta:** la analítica pide sus datos al cargar el panel aunque nadie llegue a abrirla, y el DOM de «Estudios» sigue presente mientras se mira «Analítica». Esto último se notó probando: un selector de `<table>` sin acotar encuentra primero la tabla oculta de Estudios.
+
+## Comprobación en el navegador
+
+Paciente con 4 estudios (abr, jul, oct, oct) con Hemoglobina, Glucosa, Colesterol, Plaquetas, VIH y un analito sin catalogar.
+
+| Caso | Resultado |
+|---|---|
+| Pestañas | `[ Estudios ] [ Analítica ]`, Estudios por defecto |
+| Banner | «⚠ **2 analitos fuera de rango** en el último estudio de cada uno» |
+| Pestañas de grupo | Todos · Hematología · Perfil Lipídico · Glucémico · Inmunología (`formatGrupo` funcionando) |
+| Tabla | 5 filas · 4 sparklines (el cualitativo no lleva) · badges `ALTERADO`/`NORMAL`/`SIN REF.` |
+| Cualitativo | VIH muestra **«No Reactiva»**, badge `SIN REF.`, sin sparkline |
+| Sin catalogar | La IgG **no** aparece en analítica (correcto) |
+| Variación | Hemoglobina ▼ 12.5 % en rojo (se aleja); Glucosa ▼ 15.1 % en **verde** aunque siga alterada, porque se acerca al rango |
+| Modal cuantitativo | Gráfica con banda 12–15.5 sombreada, 4 puntos, el de 12.8 **en verde** porque esa medición sí estaba dentro |
+| Modal cualitativo | Sin gráfica · 4 chips con fecha y texto · «REFERENCIA —, no aplica» |
+| Cierre | Escape ✓ · clic en el fondo ✓ |
+| 375 px | 4 columnas (Analito, Último valor, Referencia, Estado) · tabs de grupo con scroll horizontal |
+
+### Un defecto anterior que salió al probar en móvil
+
+A 375 px la pantalla de valoración **ya desbordaba a lo ancho antes de este cambio**: 451 px de `scrollWidth` en la pestaña Antropometría, por la barra de secciones (`TabsValoracion`, `nav.flex min-w-max`) y por un bloque de cabecera. La pestaña Analítica deja ese mismo 451 px —no añade desbordamiento— y la de Estudios llega a 843 px por sus tablas. **No se tocó**: es anterior a R49/R50 y merece su propia rebanada.
+
+## Tropiezo de entorno
+
+Keycloak respondía en **4,5 s** por tener otra pila de contenedores compitiendo por la máquina, y el formulario de acceso no aparecía dentro del tiempo del arnés. Se resolvió calentando el endpoint de `auth` y reintentando el clic de acceso hasta cuatro veces. Si las pruebas de navegador fallan sin motivo aparente, mirar primero cuánto tarda `curl http://localhost:8080/realms/nutrismart/.well-known/openid-configuration`.
