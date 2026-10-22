@@ -9,18 +9,35 @@
  * en un laboratorio no es un error cosmético.
  *
  * El PDF también se lee — R43. Antes se pasaba directo a captura manual
- * con las cuarenta casillas en blanco y sin decirlo, así que el estudio se
- * guardaba vacío y el expediente acababa con «Sin valores capturados; solo
- * el informe adjunto». Ahora el servidor le saca el texto y lo mapea al
- * catálogo con IA; lo leído entra en las casillas COMO BORRADOR, con su
- * aviso, y sigue siendo el profesional quien lo confirma. Una imagen no se
- * lee: ahí la captura manual es la única vía, y se dice.
+ * con las casillas en blanco y sin decirlo, así que el estudio se
+ * guardaba vacío y el expediente acababa con «Sin valores capturados;
+ * solo el informe adjunto». Ahora el servidor le saca el texto y lo
+ * mapea al catálogo con IA; lo leído entra COMO BORRADOR, con su aviso,
+ * y sigue siendo el profesional quien lo confirma. Una imagen no se lee.
+ *
+ * ── El paso 2 ya no es un formulario de talla única ─────────────────
+ *
+ * Hasta R49 pintaba los 14 analitos del catálogo, siempre los mismos,
+ * siempre todos. Con 93 en el catálogo eso sería una pared de casillas
+ * vacías, y seguiría sin poder registrar lo que no estuviera en la
+ * lista. Ahora se **busca y se agrega**: el profesional pone las filas
+ * que su informe trae, y solo esas.
+ *
+ * Tres clases de fila, y la diferencia importa:
+ *
+ *   - **Catalogada cuantitativa** — valor numérico. Es la de siempre.
+ *   - **Catalogada cualitativa** — valor de texto («No Reactiva»). Un
+ *     VIH guardado como número sería una afirmación clínica falsa.
+ *   - **Sin catalogar** — el analito que no está en ninguna lista. Se
+ *     guarda con su nombre tal como se escribió, y **sin rango**: no hay
+ *     con qué compararlo y un intervalo inventado no se puede auditar.
  */
-import { useEffect, useState, type ChangeEvent, type DragEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
 import { Modal } from './Modal'
 import { useCambiosSinGuardar } from '../contexts/CambiosSinGuardar'
 import { Campo, claseControl } from './Campo'
 import { ApiError } from '../api/client'
+import { formatGrupo } from '../lib/grupos'
 import {
   getBiomarcadores,
   subirArchivo,
@@ -31,11 +48,34 @@ import {
 import type {
   ArchivoSubido,
   Biomarcador,
-  ReferenciaDeclarada,
+  DatosEstudioEnvio,
   SexoBiologico,
 } from '../api/tipos'
 
 type Paso = 'archivo' | 'revision'
+
+/**
+ * Una fila del formulario.
+ *
+ * `valor` es SIEMPRE una cadena, también en los cuantitativos: mientras se
+ * teclea se pasa por el vacío y por el «1.», y convertir a número en cada
+ * pulsación pondría un 0 donde el profesional está a medio escribir. La
+ * conversión ocurre una vez, al enviar.
+ */
+interface FilaResultado {
+  /** Clave local de React. No viaja al servidor. */
+  id: string
+  codigo: string | null
+  nombre: string
+  es_cualitativo: boolean
+  valor: string
+  unidad: string
+  refMin: number | null
+  refMax: number | null
+  esLibre: boolean
+  /** Lo trajo la lectura del archivo, no el teclado. Se marca en la fila. */
+  delArchivo?: boolean
+}
 
 interface Props {
   abierto: boolean
@@ -52,6 +92,30 @@ function hoyISO(): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
+let contador = 0
+function nuevoId(): string {
+  contador += 1
+  return `fila-${contador}`
+}
+
+/** «70 – 100 mg/dL», «≤ 200 mg/dL», «≥ 40 mg/dL» o «sin rango». */
+function textoRango(min: number | null, max: number | null, unidad: string): string {
+  if (min === null && max === null) return 'sin rango'
+  const u = unidad && unidad !== '—' ? ` ${unidad}` : ''
+  if (min !== null && max !== null) return `${min} – ${max}${u}`
+  if (max !== null) return `≤ ${max}${u}`
+  return `≥ ${min}${u}`
+}
+
+/** Sin acentos ni mayúsculas: buscar «hemoglobina» escribiendo «hem». */
+function normalizar(t: string): string {
+  return t
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .trim()
+}
+
 export function LaboratorioModal({
   abierto,
   pacienteId,
@@ -63,15 +127,8 @@ export function LaboratorioModal({
   const [catalogo, setCatalogo] = useState<Biomarcador[]>([])
 
   const [archivo, setArchivo] = useState<ArchivoSubido | null>(null)
-  const [valores, setValores] = useState<Record<string, string>>({})
-  /**
-   * Los rangos que el PDF declaraba, por código — R44.
-   *
-   * No se editan ni se enseñan como campo: son lo que decía el informe, y
-   * viajan con el resultado al guardar. Si se pudieran teclear dejarían de
-   * ser «lo que declaró el laboratorio», que es justo su valor.
-   */
-  const [referencias, setReferencias] = useState<Record<string, ReferenciaDeclarada>>({})
+  const [filas, setFilas] = useState<FilaResultado[]>([])
+  const [busqueda, setBusqueda] = useState('')
   const [noReconocidos, setNoReconocidos] = useState<{ etiqueta: string; valor: string }[]>([])
   const [avisos, setAvisos] = useState<string[]>([])
 
@@ -83,12 +140,17 @@ export function LaboratorioModal({
   const [error, setError] = useState<string | null>(null)
   const [arrastrando, setArrastrando] = useState(false)
 
+  // El catálogo en una ref además del estado: `procesarArchivo` corre dentro
+  // de un manejador y necesita el catálogo YA cargado para armar las filas,
+  // sin esperar al siguiente render.
+  const catalogoRef = useRef<Biomarcador[]>([])
+
   useEffect(() => {
     if (!abierto) return
     setPaso('archivo')
     setArchivo(null)
-    setValores({})
-    setReferencias({})
+    setFilas([])
+    setBusqueda('')
     setNoReconocidos([])
     setAvisos([])
     setFecha(hoyISO())
@@ -101,10 +163,72 @@ export function LaboratorioModal({
     if (!abierto) return
     const ctrl = new AbortController()
     getBiomarcadores(sexoPaciente, ctrl.signal)
-      .then(setCatalogo)
+      .then((c) => {
+        catalogoRef.current = c
+        setCatalogo(c)
+      })
       .catch(() => setError('No se pudo cargar el catálogo de biomarcadores'))
     return () => ctrl.abort()
   }, [abierto, sexoPaciente])
+
+  /* ---------------------------------------------------------------- */
+  /* Filas                                                             */
+  /* ---------------------------------------------------------------- */
+
+  function filaDeCatalogo(b: Biomarcador, valor = '', delArchivo = false): FilaResultado {
+    return {
+      id: nuevoId(),
+      codigo: b.codigo,
+      nombre: b.nombre,
+      es_cualitativo: b.es_cualitativo,
+      valor,
+      unidad: b.unidad,
+      refMin: b.minimo,
+      refMax: b.maximo,
+      esLibre: false,
+      delArchivo,
+    }
+  }
+
+  function agregar(b: Biomarcador) {
+    // Agregar dos veces el mismo analito crearía dos filas que el servidor
+    // rechazaría como repetidas al guardar. Se enfoca la que ya está.
+    if (filas.some((f) => f.codigo === b.codigo)) {
+      setBusqueda('')
+      return
+    }
+    setFilas((prev) => [...prev, filaDeCatalogo(b)])
+    setBusqueda('')
+  }
+
+  function agregarLibre() {
+    setFilas((prev) => [
+      ...prev,
+      {
+        id: nuevoId(),
+        codigo: null,
+        nombre: '',
+        es_cualitativo: false,
+        valor: '',
+        unidad: '',
+        refMin: null,
+        refMax: null,
+        esLibre: true,
+      },
+    ])
+  }
+
+  function editar(id: string, campo: 'valor' | 'nombre' | 'unidad', texto: string) {
+    setFilas((prev) => prev.map((f) => (f.id === id ? { ...f, [campo]: texto } : f)))
+  }
+
+  function quitar(id: string) {
+    setFilas((prev) => prev.filter((f) => f.id !== id))
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Archivo                                                           */
+  /* ---------------------------------------------------------------- */
 
   async function procesarArchivo(f: File) {
     setOcupado(true)
@@ -112,14 +236,18 @@ export function LaboratorioModal({
     try {
       const subido = await subirArchivo(f)
       setArchivo(subido)
+      const porCodigo = new Map(catalogoRef.current.map((b) => [b.codigo, b]))
 
       if (subido.mime === 'text/csv') {
         const prev = await previsualizarCsv(subido.id)
-        const iniciales: Record<string, string> = {}
-        for (const r of prev.reconocidos) iniciales[r.codigo] = String(r.valor)
-        setValores(iniciales)
-        // Un CSV de dos columnas no trae rangos: manda el catálogo.
-        setReferencias({})
+        setFilas(
+          prev.reconocidos
+            .map((r) => {
+              const b = porCodigo.get(r.codigo)
+              return b ? filaDeCatalogo(b, String(r.valor), true) : null
+            })
+            .filter((x): x is FilaResultado => x !== null),
+        )
         setNoReconocidos(prev.noReconocidos)
         setAvisos(prev.avisos)
       } else if (subido.mime === 'application/pdf') {
@@ -128,20 +256,28 @@ export function LaboratorioModal({
          *
          * El aviso de cuántos valores se encontraron NO es decoración: es lo
          * que distingue «el informe trae estos diez» de «esto lo escribí yo»,
-         * y es lo que hace que el profesional los revise. Si no se leyó nada,
-         * el servidor ya manda el aviso que lo explica —escaneado, ilegible,
-         * IA caída— y las casillas quedan en blanco, como antes.
+         * y es lo que hace que el profesional los revise.
          */
         const prev = await previsualizarPdf(subido.id)
-        const iniciales: Record<string, string> = {}
-        const refInicial: Record<string, ReferenciaDeclarada> = {}
-        for (const r of prev.reconocidos) {
-          iniciales[r.codigo] = String(r.valor)
-          // R44: el rango que el informe traía impreso. Solo si lo traía.
-          if (r.referencia) refInicial[r.codigo] = r.referencia
-        }
-        setValores(iniciales)
-        setReferencias(refInicial)
+        setFilas(
+          prev.reconocidos
+            .map((r) => {
+              const b = porCodigo.get(r.codigo)
+              if (!b) return null
+              const fila = filaDeCatalogo(b, String(r.valor), true)
+              /*
+               * El rango que el informe traía impreso gana sobre el del
+               * catálogo — R44. Solo si lo traía: lo que no venía en el papel
+               * se queda con el criterio de la clínica.
+               */
+              if (r.referencia) {
+                fila.refMin = r.referencia.minimo
+                fila.refMax = r.referencia.maximo
+              }
+              return fila
+            })
+            .filter((x): x is FilaResultado => x !== null),
+        )
         setNoReconocidos(prev.noReconocidos)
         setAvisos(
           prev.reconocidos.length > 0
@@ -152,13 +288,10 @@ export function LaboratorioModal({
             : prev.avisos,
         )
       } else {
-        // Imagen: no hay texto que extraer. Se dice, en vez de dejar cuarenta
-        // casillas vacías sin explicación.
-        setValores({})
-        setReferencias({})
+        setFilas([])
         setNoReconocidos([])
         setAvisos([
-          'Este archivo es una imagen y no se puede leer automáticamente. Captura los valores a mano en los campos de abajo.',
+          'Este archivo es una imagen y no se puede leer automáticamente. Busca los analitos y captura los valores a mano.',
         ])
       }
       setPaso('revision')
@@ -183,24 +316,22 @@ export function LaboratorioModal({
 
   /**
    * Aviso al salir con cambios sin guardar (R46). Solo con el modal
-   * abierto, y cubre sobre todo el botón Atrás del navegador, que hasta
-   * ahora cerraba el modal y se llevaba lo escrito.
+   * abierto, y cubre sobre todo el botón Atrás del navegador.
    */
   const { marcarGuardado } = useCambiosSinGuardar({
     nombre: 'Laboratorio',
     activo: abierto,
-    valores: {
-      paso,
-      archivoId: archivo?.id ?? null,
-      valores,
-      referencias,
-      noReconocidos,
-      fecha,
-      laboratorio,
-      notas,
-    },
+    valores: { paso, archivoId: archivo?.id ?? null, filas, fecha, laboratorio, notas },
     guardar: () => guardar(),
   })
+
+  /* ---------------------------------------------------------------- */
+  /* Guardar                                                           */
+  /* ---------------------------------------------------------------- */
+
+  const conValor = filas.filter(
+    (f) => f.valor.trim() !== '' && (!f.esLibre || f.nombre.trim() !== ''),
+  )
 
   async function guardar() {
     if (ocupado) return
@@ -208,24 +339,29 @@ export function LaboratorioModal({
     setError(null)
 
     try {
-      const resultados = Object.entries(valores)
-        .map(([codigo, bruto]) => ({
-          codigo,
-          valor: Number(String(bruto).replace(',', '.')),
+      const resultados: DatosEstudioEnvio['resultados'] = conValor.map((f) => {
+        const texto = f.valor.trim()
+        if (f.esLibre) {
           /*
-           * El rango del informe viaja con su resultado — R44.
+           * **Sin catalogar: siempre como texto, y sin rango.**
            *
-           * Se busca por código, no por posición: si el profesional corrigió
-           * un valor leído del PDF, el rango sigue siendo el que ese informe
-           * declaraba para ese analito. Un código escrito a mano no tiene
-           * entrada aquí y sale con null, que es lo correcto — ahí manda el
-           * catálogo.
+           * El valor puede parecer un número («1240») y aun así no es
+           * comparable con nada: no hay catálogo que diga su unidad ni su
+           * intervalo. Guardarlo como texto conserva exactamente lo que el
+           * informe decía, que es lo único cierto que hay.
            */
-          refMinimo: referencias[codigo]?.minimo ?? null,
-          refMaximo: referencias[codigo]?.maximo ?? null,
-        }))
-        // Un campo vacío significa "no se midió", no cero.
-        .filter((r) => Number.isFinite(r.valor) && String(valores[r.codigo]).trim() !== '')
+          return { nombre_libre: f.nombre.trim(), valor_texto: texto }
+        }
+        if (f.es_cualitativo) {
+          return { codigo: f.codigo as string, valor_texto: texto }
+        }
+        return {
+          codigo: f.codigo as string,
+          valor: Number(texto.replace(',', '.')),
+          refMinimo: f.refMin,
+          refMaximo: f.refMax,
+        }
+      })
 
       await crearEstudio(pacienteId, {
         fecha,
@@ -244,12 +380,19 @@ export function LaboratorioModal({
     }
   }
 
-  const porGrupo = new Map<string, Biomarcador[]>()
-  for (const b of catalogo) {
-    porGrupo.set(b.grupo, [...(porGrupo.get(b.grupo) ?? []), b])
-  }
+  /* ---------------------------------------------------------------- */
+  /* Buscador                                                          */
+  /* ---------------------------------------------------------------- */
 
-  const conValor = Object.values(valores).filter((v) => String(v).trim() !== '').length
+  const sugerencias = useMemo(() => {
+    const q = normalizar(busqueda)
+    if (q === '') return []
+    const yaPuestos = new Set(filas.map((f) => f.codigo).filter(Boolean))
+    return catalogo
+      .filter((b) => !yaPuestos.has(b.codigo))
+      .filter((b) => normalizar(b.nombre).includes(q) || normalizar(b.codigo).includes(q))
+      .slice(0, 12)
+  }, [busqueda, catalogo, filas])
 
   return (
     <Modal
@@ -257,16 +400,15 @@ export function LaboratorioModal({
       onCerrar={onCerrar}
       bloqueado={ocupado}
       /*
-        Un clic fuera no tira el estudio a medio capturar — R43. Cuarenta
-        casillas y dos pasos de trabajo no se descartan sin preguntar; para
-        salir están Cancelar, Escape y el aviso de cambios sin guardar.
+        Un clic fuera no tira el estudio a medio capturar — R43. Para salir
+        están Cancelar, Escape y el aviso de cambios sin guardar.
       */
       sinCierreAlFondo
       titulo="Registrar laboratorio"
       descripcion={
         paso === 'archivo'
           ? 'Adjunta el informe. Un CSV o un PDF con texto se leen automáticamente; una imagen se captura a mano.'
-          : 'Revisa los valores antes de guardarlos.'
+          : 'Busca los analitos del informe y captura sus valores.'
       }
       pie={
         paso === 'revision' ? (
@@ -282,10 +424,10 @@ export function LaboratorioModal({
             <button
               type="button"
               onClick={() => void guardar()}
-              disabled={ocupado}
+              disabled={ocupado || (conValor.length === 0 && !archivo)}
               className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-60"
             >
-              {ocupado ? 'Guardando…' : `Guardar (${conValor} valores)`}
+              {ocupado ? 'Guardando…' : `Guardar (${conValor.length} valores)`}
             </button>
           </>
         ) : (
@@ -374,7 +516,8 @@ export function LaboratorioModal({
                 No reconocidos en el archivo
               </p>
               <p className="mt-1 text-xs text-muted">
-                Se muestran para que no se pierdan; captúralos abajo si corresponden a algún analito.
+                Se muestran para que no se pierdan. Búscalos abajo si corresponden a algún
+                analito, o agrégalos como resultado no catalogado.
               </p>
               <ul className="mt-2 space-y-0.5 text-sm text-ink">
                 {noReconocidos.map((n, i) => (
@@ -408,39 +551,144 @@ export function LaboratorioModal({
             </Campo>
           </div>
 
-          {[...porGrupo.entries()].map(([grupo, biomarcadores]) => (
-            <fieldset key={grupo} disabled={ocupado}>
-              <legend className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
-                {grupo}
-              </legend>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {biomarcadores.map((b) => (
-                  <label key={b.codigo} className="text-sm">
-                    <span className="mb-1 flex items-baseline justify-between gap-2">
-                      <span className="font-medium text-ink">{b.nombre}</span>
-                      <span className="text-xs text-muted">
-                        {b.origenRango === 'ninguno'
-                          ? 'sin rango'
-                          : `${b.minimo ?? '—'}–${b.maximo ?? '—'}`}{' '}
-                        {b.unidad}
-                      </span>
-                    </span>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      step={b.decimales > 0 ? '0.01' : '1'}
-                      value={valores[b.codigo] ?? ''}
-                      onChange={(e) =>
-                        setValores((prev) => ({ ...prev, [b.codigo]: e.target.value }))
-                      }
-                      placeholder="—"
-                      className={claseControl(false)}
-                    />
-                  </label>
-                ))}
+          {/* ---- Buscador de analitos ---- */}
+          <div>
+            <Campo id="buscar-analito" etiqueta="Agregar analito">
+              <input
+                id="buscar-analito"
+                type="search"
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+                placeholder="Buscar analito (ej: Hemoglobina, Glucosa…)"
+                autoComplete="off"
+                className={claseControl(false)}
+              />
+            </Campo>
+
+            {busqueda.trim() !== '' && (
+              <div className="mt-2">
+                {sugerencias.length === 0 ? (
+                  <p className="text-xs text-muted">
+                    Ningún analito del catálogo coincide. Puedes agregarlo como resultado no
+                    catalogado, abajo.
+                  </p>
+                ) : (
+                  <ul className="flex flex-wrap gap-1.5">
+                    {sugerencias.map((b) => (
+                      <li key={b.codigo}>
+                        <button
+                          type="button"
+                          onClick={() => agregar(b)}
+                          className="rounded-pill border border-border bg-surface px-3 py-1 text-left text-xs text-ink hover:border-primary hover:bg-primary-tint hover:text-primary"
+                        >
+                          {b.nombre}
+                          <span className="ml-1.5 text-muted">{formatGrupo(b.grupo)}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
-            </fieldset>
-          ))}
+            )}
+          </div>
+
+          {/* ---- Filas ---- */}
+          {filas.length === 0 ? (
+            <p className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted">
+              Todavía no has agregado ningún analito. Búscalo arriba por su nombre.
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-md border border-border">
+              <table className="min-w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-surface-2 text-left">
+                    <th className="px-3 py-2 font-semibold text-ink">Analito</th>
+                    <th className="w-32 px-2 py-2 font-semibold text-ink">Valor</th>
+                    <th className="w-24 px-2 py-2 font-semibold text-ink">Unidad</th>
+                    <th className="w-36 px-2 py-2 font-semibold text-ink">Referencia</th>
+                    <th className="w-10 px-2 py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {filas.map((f) => (
+                    <tr key={f.id} className="border-b border-border last:border-0 align-middle">
+                      <td className="px-3 py-2">
+                        {f.esLibre ? (
+                          <input
+                            value={f.nombre}
+                            onChange={(e) => editar(f.id, 'nombre', e.target.value)}
+                            placeholder="Nombre del analito"
+                            aria-label="Nombre del analito"
+                            className={claseControl(false)}
+                          />
+                        ) : (
+                          <>
+                            <span className="font-medium text-ink">{f.nombre}</span>
+                            <span className="ml-1.5 text-xs text-muted">{f.codigo}</span>
+                            {/* Lo que vino del archivo se marca: distingue
+                                «lo leyó el sistema» de «lo escribí yo». */}
+                            {f.delArchivo && (
+                              <span className="ml-1.5 text-xs text-primary">· del informe</span>
+                            )}
+                          </>
+                        )}
+                      </td>
+                      <td className="px-2 py-2">
+                        <input
+                          // Los cualitativos y los libres son texto; el resto,
+                          // un número con el teclado decimal del móvil.
+                          type={f.es_cualitativo || f.esLibre ? 'text' : 'number'}
+                          inputMode={f.es_cualitativo || f.esLibre ? 'text' : 'decimal'}
+                          step="any"
+                          value={f.valor}
+                          onChange={(e) => editar(f.id, 'valor', e.target.value)}
+                          placeholder={f.es_cualitativo ? 'No Reactiva' : '—'}
+                          aria-label={`Valor de ${f.nombre || 'el analito'}`}
+                          className={claseControl(false)}
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        {f.esLibre ? (
+                          <input
+                            value={f.unidad}
+                            onChange={(e) => editar(f.id, 'unidad', e.target.value)}
+                            placeholder="unidad"
+                            aria-label="Unidad"
+                            className={claseControl(false)}
+                          />
+                        ) : (
+                          <span className="text-muted">{f.unidad}</span>
+                        )}
+                      </td>
+                      <td className="px-2 py-2 text-xs text-muted">
+                        {f.esLibre || f.es_cualitativo
+                          ? '—'
+                          : textoRango(f.refMin, f.refMax, f.unidad)}
+                      </td>
+                      <td className="px-2 py-2 text-right">
+                        <button
+                          type="button"
+                          onClick={() => quitar(f.id)}
+                          aria-label={`Quitar ${f.nombre || 'la fila'}`}
+                          className="rounded-md px-2 py-1 text-muted hover:bg-surface-2 hover:text-ink"
+                        >
+                          ×
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={agregarLibre}
+            className="text-sm font-medium text-primary hover:underline"
+          >
+            ＋ Agregar resultado no catalogado
+          </button>
 
           <Campo id="notas-lab" etiqueta="Notas">
             <textarea

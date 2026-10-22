@@ -35,6 +35,7 @@
  */
 import { useEffect, useState } from 'react'
 import { getBiomarcadores, getLaboratorios } from '../../api/laboratorios'
+import { formatGrupo } from '../../lib/grupos'
 import type { Biomarcador, EstadoResultado, EstudioLab } from '../../api/tipos'
 
 /* ------------------------------------------------------------------ */
@@ -80,15 +81,26 @@ function construirSeries(
 
   for (const e of ascendente) {
     for (const r of e.resultados) {
-      const serie = porCodigo.get(r.codigo) ?? {
-        codigo: r.codigo,
+      /*
+       * **Solo los catalogados y con número** — R49.
+       *
+       * Esta pantalla dibuja una evolución contra un rango. Un cualitativo
+       * («No Reactiva») no tiene número que trazar, y un analito sin código
+       * no se puede unir entre estudios: «IgG» e «Inmunoglobulina G»
+       * escritos a mano no garantizan ser la misma medición. Los dos siguen
+       * visibles en el detalle de su estudio, que es donde se leen.
+       */
+      if (r.codigo === null || r.valor === null) continue
+      const codigo = r.codigo
+      const serie = porCodigo.get(codigo) ?? {
+        codigo,
         nombre: r.nombre,
         unidad: r.unidad,
-        grupo: gruposPorCodigo.get(r.codigo)?.grupo ?? SIN_GRUPO,
+        grupo: gruposPorCodigo.get(codigo)?.grupo ?? SIN_GRUPO,
         puntos: [],
       }
       serie.puntos.push({ fecha: e.fecha, valor: r.valor, estado: r.estado, rango: r.rango })
-      porCodigo.set(r.codigo, serie)
+      porCodigo.set(codigo, serie)
     }
   }
 
@@ -425,7 +437,9 @@ export function DashboardBioquimica({ pacienteId }: { pacienteId: string }) {
         series.length > 0 &&
         gruposOrdenados.map((grupo) => (
           <section key={grupo} className="space-y-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">{grupo}</h3>
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
+              {formatGrupo(grupo)}
+            </h3>
             {(porGrupo.get(grupo) ?? []).map((s) => (
               <FilaBiomarcador
                 key={s.codigo}

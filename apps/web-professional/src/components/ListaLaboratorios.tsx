@@ -112,30 +112,61 @@ export function ListaLaboratorios({ estudios }: { estudios: EstudioLab[] }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {ordenar(e.resultados).map((r) => (
-                    <tr key={r.codigo} className="border-b border-border last:border-0">
-                      <td className="px-5 py-2 text-ink">{r.nombre}</td>
+                  {/*
+                    **El detalle del estudio los enseña TODOS** — R49.
+
+                    Es la única pantalla donde aparece un analito sin
+                    catalogar, y la única donde se lee un cualitativo. El
+                    resumen y la analítica los dejan fuera porque comparan
+                    contra rangos; aquí no se compara nada, se transcribe lo
+                    que trajo el informe.
+                  */}
+                  {ordenar(e.resultados).map((r, i) => (
+                    <tr
+                      key={r.codigo ?? `libre-${i}`}
+                      className="border-b border-border last:border-0"
+                    >
+                      <td className="px-5 py-2 text-ink">
+                        {r.nombre}
+                        {r.codigo === null && (
+                          <span className="ml-1.5 text-xs text-muted">· sin catalogar</span>
+                        )}
+                      </td>
                       <td className="px-5 py-2 font-semibold text-ink">
-                        {r.valor} <span className="font-normal text-muted">{r.unidad}</span>
+                        {r.valor !== null ? (
+                          <>
+                            {r.valor} <span className="font-normal text-muted">{r.unidad}</span>
+                          </>
+                        ) : (
+                          // Un cualitativo se enseña con sus palabras. Ponerle
+                          // un número aquí sería inventar una medición.
+                          <span>{r.valor_texto ?? '—'}</span>
+                        )}
                       </td>
                       <td className="px-5 py-2">
-                        <RangoTexto rango={r.rango} unidad={r.unidad} />
+                        {r.valor === null ? (
+                          <span className="text-muted">—</span>
+                        ) : (
+                          <RangoTexto rango={r.rango} unidad={r.unidad} />
+                        )}
                       </td>
                       <td className="px-5 py-2">
                         <EstadoLab estado={r.estado} />
                       </td>
                       <td className="px-5 py-2">
-                        <Tendencia
-                          metrica={{
-                            codigo: r.codigo,
-                            nombre: r.nombre,
-                            unidad: r.unidad,
-                            valor: r.valor,
-                            anterior: r.anterior,
-                            delta: r.delta,
-                            tendencia: r.tendencia,
-                          }}
-                        />
+                        {r.codigo !== null && r.valor !== null && (
+                          <Tendencia
+                            metrica={{
+                              codigo: r.codigo,
+                              nombre: r.nombre,
+                              unidad: r.unidad,
+                              valor: r.valor,
+                              anterior: r.anterior,
+                              delta: r.delta,
+                              tendencia: r.tendencia,
+                            }}
+                          />
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -180,12 +211,19 @@ export function UltimosLaboratorios({ estudios }: { estudios: EstudioLab[] }) {
       <h2 className="mb-1 font-semibold text-ink">Últimos laboratorios</h2>
       <p className="mb-3 text-xs text-muted">{formatearFecha(ultimo.fecha)}</p>
       <ul className="space-y-2">
-        {destacados.map((r) => (
-          <li key={r.codigo} className="flex items-center justify-between gap-2">
+        {destacados.map((r, i) => (
+          <li key={r.codigo ?? `libre-${i}`} className="flex items-center justify-between gap-2">
             <span className="min-w-0 truncate text-sm text-ink">{r.nombre}</span>
             <span className="flex shrink-0 items-center gap-2">
               <span className="text-sm font-semibold text-ink">
-                {r.valor} <span className="font-normal text-muted">{r.unidad}</span>
+                {/* Un cualitativo se lee con sus palabras — R49. */}
+                {r.valor !== null ? (
+                  <>
+                    {r.valor} <span className="font-normal text-muted">{r.unidad}</span>
+                  </>
+                ) : (
+                  (r.valor_texto ?? '—')
+                )}
               </span>
               <EstadoLab estado={r.estado} />
             </span>
