@@ -17,12 +17,11 @@
  *   --ink #141A17       --muted #6B7280
  */
 
-/* El tema base trae cabecera, caja y fondo propios. Se apagan: si no,
-   la pantalla sale con una tarjeta de Keycloak DENTRO de la nuestra. */
+/* La cabecera del tema base no se quiere en ninguna pantalla: nuestras
+   paginas ponen su propia identidad, y las demas no la necesitan. */
 #kc-header,
 #kc-header-wrapper,
-.login-pf-header,
-#kc-page-title {
+.login-pf-header {
   display: none !important;
 }
 
@@ -43,9 +42,30 @@ body,
   max-width: none !important;
 }
 
-#kc-content,
-#kc-content-wrapper,
-.card-pf {
+/* ── Desmontar la tarjeta del tema base: SOLO en nuestras pantallas ──
+ *
+ * `login.ftl` y `login-reset-password.ftl` traen su propio panel
+ * partido, y para que ocupe el ancho completo hay que quitarle a
+ * `#kc-content` el fondo, el borde y el ancho maximo.
+ *
+ * El `:has(.ns-split)` no es un adorno. Sin el, estas reglas se
+ * aplicaban TAMBIEN a las pantallas del flujo que no hemos reescrito
+ * —«revisa tu correo», «establece tu contrasena», las de error— y las
+ * dejaba sin tarjeta: el campo de texto de borde a borde de la
+ * pantalla y el boton azul de PatternFly. Esas pantallas caen ahora al
+ * bloque de mas abajo.
+ *
+ * Si un navegador no soporta `:has()` el bloque entero se descarta y
+ * nuestras pantallas salen con la tarjeta de Keycloak alrededor: mas
+ * fea, pero entera. Es la degradacion que se prefiere.
+ */
+body:has(.ns-split) #kc-page-title {
+  display: none !important;
+}
+
+body:has(.ns-split) #kc-content,
+body:has(.ns-split) #kc-content-wrapper,
+body:has(.ns-split) .card-pf {
   margin: 0 !important;
   padding: 0 !important;
   border: 0 !important;
@@ -53,6 +73,60 @@ body,
   background: transparent !important;
   max-width: none !important;
   width: 100% !important;
+}
+
+/* ── El resto del flujo ──────────────────────────────────────────────
+ *
+ * «Revisa tu correo», «establece tu contrasena» y las paginas de error
+ * las sigue pintando Keycloak con su marcado. No se reescriben una por
+ * una —siempre quedaria alguna fuera— pero al menos se les da el
+ * aspecto de la casa: centradas, en una tarjeta, y con el boton del
+ * color de NutriSmart en vez del azul de PatternFly.
+ */
+body:not(:has(.ns-split)) .login-pf-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px !important;
+  background: #f7faf9;
+}
+
+body:not(:has(.ns-split)) #kc-content {
+  width: 100%;
+  max-width: 420px;
+}
+
+body:not(:has(.ns-split)) .card-pf {
+  padding: 32px 28px !important;
+  border: 1px solid #e6ecea !important;
+  border-radius: 16px !important;
+  background: #ffffff !important;
+  box-shadow: 0 4px 14px rgba(16, 40, 34, 0.07) !important;
+}
+
+body:not(:has(.ns-split)) #kc-page-title {
+  margin: 0 0 16px;
+  font-size: 22px;
+  font-weight: 700;
+  color: #141a17;
+}
+
+body:not(:has(.ns-split)) input[type='submit'],
+body:not(:has(.ns-split)) button[type='submit'] {
+  width: 100%;
+  padding: 13px;
+  border: 0;
+  border-radius: 12px;
+  background: #0e7c66;
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+body:not(:has(.ns-split)) a {
+  color: #0e7c66;
 }
 
 body {
@@ -137,6 +211,15 @@ body {
   color: #6b7280;
 }
 
+/* La frase que explica qué va a pasar, en la pantalla de recuperación. */
+.ns-instruccion {
+  margin: 0 0 20px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #6b7280;
+  text-align: center;
+}
+
 /* ---- Formulario ---- */
 
 .ns-campo {
@@ -183,9 +266,12 @@ body {
   line-height: 1.5;
 }
 
+/* Debajo del boton: centrado, y separado lo justo para que no parezca
+   parte de el. Antes iba a la derecha y encima, cuando competia con el
+   boton de entrar. */
 .ns-olvide {
-  margin-bottom: 20px;
-  text-align: right;
+  margin-top: 16px;
+  text-align: center;
 }
 
 .ns-olvide a {

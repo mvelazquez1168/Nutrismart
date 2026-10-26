@@ -84,12 +84,6 @@
           </div>
         </#if>
 
-        <#if realm.resetPasswordAllowed>
-          <div class="ns-olvide">
-            <a href="${url.loginResetCredentialsUrl}">¿Olvidaste tu contraseña?</a>
-          </div>
-        </#if>
-
         <#-- Keycloak necesita este campo para recordar qué credencial se
              usó cuando el usuario tiene más de una. -->
         <input type="hidden" id="id-hidden-input" name="credentialId"
@@ -97,6 +91,28 @@
 
         <input tabindex="3" class="ns-boton" name="login" id="kc-login"
                type="submit" value="${msg("doLogIn")}" />
+
+        <#--
+          Recuperar la contraseña, DEBAJO del botón.
+
+          Va aquí y no encima porque el camino normal es entrar: el
+          enlace de recuperación por delante del botón compite con lo
+          que casi todo el mundo viene a hacer.
+
+          `url.loginResetCredentialsUrl` es el flujo NATIVO de Keycloak
+          —pide el usuario, manda un correo con un enlace de un solo
+          uso, y la pantalla a la que lleva hereda este mismo tema—. La
+          aplicación no participa y no ve ninguna contraseña.
+
+          La condición no sobra: si el realm tiene «Forgot password»
+          desactivado, esa URL responde con una página de error. Mejor
+          no enseñar el enlace que llevar a un callejón.
+        -->
+        <#if realm.resetPasswordAllowed>
+          <div class="ns-olvide">
+            <a href="${url.loginResetCredentialsUrl}" tabindex="4">${msg("doForgotPassword")}</a>
+          </div>
+        </#if>
       </form>
 
       <#-- Quien no tiene cuenta no puede crearla: las da el
