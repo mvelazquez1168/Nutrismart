@@ -86,15 +86,29 @@ export function ClinicasPage() {
     setErrorAdmin(null)
     setExitoAdmin(null)
     try {
-      await crearAdminClinica(clinicaSeleccionada.id, {
+      const r = await crearAdminClinica(clinicaSeleccionada.id, {
         nombre: nombreAdmin.trim(),
         correo: correoAdmin.trim(),
       })
+      const correo = correoAdmin.trim()
       setNombreAdmin('')
       setCorreoAdmin('')
-      setExitoAdmin(
-        `Usuario administrador creado. Se envió un correo a ${correoAdmin.trim()} para que establezca su contraseña.`,
-      )
+
+      // Dos mensajes, porque son dos cosas distintas. Prometer un correo
+      // que no se ha enviado deja a alguien esperando en su bandeja.
+      if (r.usuarioExistente) {
+        setExitoAdmin(
+          `${correo} ya tenía cuenta en NutriSmart. Se le dio el rol de administrador de esta clínica; ` +
+            `entra con la contraseña que ya usaba y no recibirá ningún correo.` +
+            (r.tenantIdPrevio
+              ? ' Aviso: su cuenta sigue asociada a otra clínica, así que al entrar seguirá viendo aquélla.'
+              : ''),
+        )
+      } else {
+        setExitoAdmin(
+          `Usuario administrador creado. Se envió un correo a ${correo} para que establezca su contraseña.`,
+        )
+      }
     } catch (e) {
       setErrorAdmin(e instanceof ApiError ? e.message : 'No se pudo crear el administrador')
     } finally {
@@ -183,8 +197,9 @@ export function ClinicasPage() {
                 Crear administrador para {clinicaSeleccionada.nombre_comercial}
               </h2>
               <p className="mt-0.5 text-xs text-muted">
-                Se crea el usuario en Keycloak con rol <code>admin_clinica</code> y se le envía un
-                correo para que establezca su contraseña.
+                Si ya existe una cuenta con ese correo, solo se le añade el rol{' '}
+                <code>admin_clinica</code>. Si no, se crea y se le envía un correo para que
+                establezca su contraseña.
               </p>
             </div>
             <button

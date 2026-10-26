@@ -34,12 +34,30 @@ import type { FastifyInstance } from 'fastify'
 import { pool } from '../db.js'
 import { requireSuperAdmin } from '../auth.js'
 import {
+  buscarUsuarioKeycloakPorEmail,
   crearUsuarioKeycloak,
   enviarEmailActivacion,
   eliminarUsuarioKeycloak,
   asignarRolKeycloak,
 } from '../keycloak-admin.js'
 import { config } from '../config.js'
+
+/**
+ * Lo único que ve el operador cuando algo falla del lado de Keycloak.
+ *
+ * Antes se le devolvía el mensaje de Keycloak tal cual —«Keycloak create
+ * user error 409: {...}», rutas del Admin API, nombres de realm—. Eso no
+ * le sirve de nada a quien está delante de la pantalla y, de paso,
+ * cuenta por fuera cómo está montado el servidor.
+ *
+ * El detalle NO se pierde: va entero a `request.log.error`, que es donde
+ * hay que mirarlo.
+ *
+ * Las validaciones de más arriba («correo inválido», «ya hay un
+ * profesional con ese correo») sí siguen diciendo lo suyo: son nuestras,
+ * describen algo que la persona puede arreglar y no revelan nada.
+ */
+const ERROR_GENERICO = 'No se pudo completar la operación. Intenta de nuevo.'
 
 const RE_CORREO = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -146,41 +164,72 @@ export async function registerSuperAdminRoutes(app: FastifyInstance): Promise<vo
 
       const username = correo.split('@')[0]!
 
-      // Crear usuario en Keycloak
+      /*
+       * Primero se BUSCA, y solo si no está se crea.
+       *
+       * Antes se creaba siempre, y a la segunda clínica de la misma
+       * persona Keycloak devolvía 409 y la pantalla decía «ya existe un
+       * usuario con ese correo» — un callejón sin salida: ni se podía
+       * crear ni había forma de usar la cuenta que ya existía. Alguien
+       * que asesora a dos clínicas es un caso normal, no un error.
+       *
+       * Un fallo de la búsqueda NO se trata como «no existe». Si
+       * Keycloak no contesta y se sigue adelante, el intento de crear
+       * acaba en el mismo 409 de antes; peor aún, si contestara a
+       * medias se crearía un duplicado.
+       */
       let keycloakUserId: string
+      let usuarioExistente: boolean
+
+      let encontrado: Awaited<ReturnType<typeof buscarUsuarioKeycloakPorEmail>>
       try {
-        keycloakUserId = await crearUsuarioKeycloak({
-          username,
-          email: correo,
-          firstName: nombre,
-          tenantId: clinicaId,
-        })
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : 'Error al crear usuario en Keycloak'
-        if (msg.includes('Ya existe')) {
-          return reply.code(409).send({ error: 'correo_repetido_keycloak', message: msg })
+        encontrado = await buscarUsuarioKeycloakPorEmail(correo)
+      } catch (err) {
+        request.log.error({ err, correo }, 'superadmin: fallo al buscar el usuario en Keycloak')
+        return reply.code(503).send({ error: 'keycloak_error', message: ERROR_GENERICO })
+      }
+
+      if (encontrado) {
+        // Solo se le asigna el rol. No se le tocan ni el nombre, ni el
+        // correo, ni el `tenant_id`: esa cuenta ya es de alguien y
+        // pisarle los datos desde aquí le cambiaría la clínica en la
+        // que trabaja. Ver la nota de la respuesta.
+        keycloakUserId = encontrado.id
+        usuarioExistente = true
+      } else {
+        try {
+          keycloakUserId = await crearUsuarioKeycloak({
+            username,
+            email: correo,
+            firstName: nombre,
+            tenantId: clinicaId,
+          })
+          usuarioExistente = false
+        } catch (err) {
+          request.log.error({ err, correo }, 'superadmin: fallo al crear el usuario en Keycloak')
+          return reply.code(503).send({ error: 'keycloak_error', message: ERROR_GENERICO })
         }
-        throw err
       }
 
       // Asignar rol admin_clinica en Keycloak para que el token ya lo traiga
-      // desde el primer login. Si falla, hacemos rollback del usuario.
+      // desde el primer login. `asignarRolKeycloak` es idempotente: si ya
+      // lo tiene, no hace nada.
       try {
         await asignarRolKeycloak(keycloakUserId, 'admin_clinica')
       } catch (rolErr) {
+        // El rollback SOLO si acabamos de crear la cuenta. Borrar un
+        // usuario que ya existía por un fallo nuestro al asignarle un
+        // rol le quitaría el acceso a la clínica donde ya trabajaba.
+        //
         // Se ESPERA el borrado. Lanzado sin await, la respuesta de error
         // puede salir antes de que Keycloak lo procese, y el reintento
         // inmediato choca con «ya existe un usuario con ese correo».
-        await eliminarUsuarioKeycloak(keycloakUserId)
+        if (!usuarioExistente) {
+          await eliminarUsuarioKeycloak(keycloakUserId)
+        }
 
-        // Y se devuelve el motivo real en vez de dejarlo como un 500. Lo
-        // que falla aquí es casi siempre configuración del realm —el rol no
-        // existe, o al service account le falta permiso— y «el servidor
-        // tuvo un problema» manda a buscar en el sitio equivocado.
-        const motivo =
-          rolErr instanceof Error ? rolErr.message : 'No se pudo asignar el rol admin_clinica'
         request.log.error({ err: rolErr }, 'superadmin: rol admin_clinica no asignado')
-        return reply.code(503).send({ error: 'rol_no_asignado', message: motivo })
+        return reply.code(503).send({ error: 'rol_no_asignado', message: ERROR_GENERICO })
       }
 
       // Crear profesional en la DB
@@ -194,12 +243,25 @@ export async function registerSuperAdminRoutes(app: FastifyInstance): Promise<vo
         )
         profesionalId = rows[0]!.id
       } catch (dbErr) {
-        void eliminarUsuarioKeycloak(keycloakUserId)
-        throw dbErr
+        // Mismo criterio que arriba: no se borra una cuenta que ya era
+        // de alguien.
+        if (!usuarioExistente) void eliminarUsuarioKeycloak(keycloakUserId)
+        request.log.error({ err: dbErr, clinicaId, correo }, 'superadmin: alta de admin fallida')
+        return reply.code(500).send({ error: 'alta_fallida', message: ERROR_GENERICO })
       }
 
-      // Enviar email de activación
-      void enviarEmailActivacion(keycloakUserId)
+      /*
+       * El correo de activación SOLO para cuentas nuevas.
+       *
+       * `execute-actions-email` con UPDATE_PASSWORD le pediría a quien ya
+       * tiene cuenta que se invente una contraseña nueva, como si la
+       * suya no valiera. Quien ya entra a NutriSmart entra igual: lo
+       * único que ha cambiado es que ahora también es administrador de
+       * esta clínica.
+       */
+      if (!usuarioExistente) {
+        void enviarEmailActivacion(keycloakUserId)
+      }
 
       return reply.code(201).send({
         id: profesionalId,
@@ -209,6 +271,21 @@ export async function registerSuperAdminRoutes(app: FastifyInstance): Promise<vo
         correo,
         rol: 'admin_clinica',
         estado: 'activo',
+        /** Para que la pantalla sepa si decir «se le envió un correo». */
+        usuarioExistente,
+        /*
+         * El `tenant_id` que ese usuario ya tenía, si tenía otro.
+         *
+         * No se toca a propósito, y conviene que quien mire la pantalla
+         * lo sepa: ese claim es el que decide en qué clínica actúa su
+         * token (`requireAuth` en auth.ts). Mientras una cuenta solo
+         * pueda llevar un `tenant_id`, esta persona seguirá entrando a
+         * la clínica de antes aunque aquí conste como administradora.
+         */
+        tenantIdPrevio:
+          usuarioExistente && encontrado?.tenantId && encontrado.tenantId !== clinicaId
+            ? encontrado.tenantId
+            : null,
       })
     },
   )

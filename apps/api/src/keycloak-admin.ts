@@ -84,6 +84,64 @@ async function getAdminToken(): Promise<string> {
  * se olvida en la siguiente llamada que alguien añada, y el olvido no
  * produce ningún error hasta que una persona real intenta entrar.
  */
+export interface UsuarioKeycloak {
+  id: string
+  username: string
+  email: string | null
+  /** El `tenant_id` que ya tenga, si lo tiene. Ver nota en superadmin.ts. */
+  tenantId: string | null
+}
+
+/**
+ * Busca un usuario por correo. `null` si no existe.
+ *
+ * `exact=true` no es opcional: sin él, Keycloak hace una búsqueda por
+ * prefijo y `ana@vida.cr` devolvería también `ana@vida.cr.mx`. Dar de
+ * alta a la persona equivocada como administradora de una clínica es
+ * justo el error que no se puede permitir aquí.
+ *
+ * Devuelve el primero aunque la lista traiga más. Con `exact=true` sobre
+ * un realm donde el correo es único no puede haber dos; si algún día los
+ * hubiera, elegir el primero es tan arbitrario como cualquier otra cosa
+ * y al menos es estable.
+ */
+export async function buscarUsuarioKeycloakPorEmail(
+  email: string,
+): Promise<UsuarioKeycloak | null> {
+  const token = await getAdminToken()
+  const url =
+    `${config.keycloak.adminUrl}/admin/realms/${config.keycloak.realm}` +
+    `/users?exact=true&email=${encodeURIComponent(email)}`
+
+  const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  if (!resp.ok) {
+    const text = await resp.text()
+    throw new Error(`Keycloak buscar usuario error ${resp.status}: ${text}`)
+  }
+
+  const lista = (await resp.json()) as {
+    id?: string
+    username?: string
+    email?: string
+    attributes?: Record<string, unknown>
+  }[]
+
+  const u = Array.isArray(lista) ? lista[0] : undefined
+  if (!u?.id) return null
+
+  // Los atributos llegan siempre como lista aunque el mapper los declare
+  // de valor único.
+  const attr = u.attributes?.['tenant_id']
+  const tenantId = Array.isArray(attr) ? (attr[0] as string | undefined) : undefined
+
+  return {
+    id: u.id,
+    username: u.username ?? '',
+    email: u.email ?? null,
+    tenantId: tenantId ?? null,
+  }
+}
+
 export async function crearUsuarioKeycloak(params: {
   username: string
   email: string

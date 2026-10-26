@@ -29,6 +29,18 @@ export interface AdminClinica {
   correo: string
   rol: 'admin_clinica'
   estado: 'activo'
+  /**
+   * `true` si la cuenta de Keycloak YA existía y solo se le añadió el
+   * rol. Cambia lo que puede prometer la pantalla: a quien ya tenía
+   * cuenta no se le manda ningún correo.
+   */
+  usuarioExistente: boolean
+  /**
+   * El `tenant_id` que esa cuenta ya traía, si era de OTRA clínica.
+   * `null` cuando no aplica. Ese claim decide en qué clínica actúa su
+   * token, y no se toca al asignar el rol.
+   */
+  tenantIdPrevio: string | null
 }
 
 export function getClinicas(signal?: AbortSignal): Promise<Clinica[]> {
