@@ -130,6 +130,10 @@ export function ModalRegla({
           : 'Se ejecutará cuando se evalúen las reglas de la clínica.'
       }
       bloqueado={guardando}
+      // Mismo motivo que en CitaModal: la regla se arma a mano —nombre,
+      // tipo, condiciones, canal— y un clic de más al lado del diálogo
+      // lo borraba todo. Se sale por «Cancelar».
+      sinCierreAlFondo
       onCerrar={onCerrar}
       pie={
         <>

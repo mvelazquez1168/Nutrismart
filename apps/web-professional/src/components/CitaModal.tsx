@@ -137,6 +137,10 @@ export function CitaModal({ abierto, cita, onCerrar, onGuardado }: Props) {
       abierto={abierto}
       onCerrar={onCerrar}
       bloqueado={guardando}
+      // Un clic al lado del diálogo ya no cierra. Aquí hay fecha, hora,
+      // duración, tipo y motivo escritos a mano, y cerrar los tira sin
+      // preguntar. Se sale por «Cancelar», que es deliberado.
+      sinCierreAlFondo
       titulo={esEdicion ? 'Editar cita' : 'Nueva cita'}
       descripcion={
         esEdicion
