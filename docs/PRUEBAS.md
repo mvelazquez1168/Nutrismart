@@ -5854,3 +5854,123 @@ Solo en las filas libres del formulario, como dos campos numéricos opcionales (
 Una fila libre con rango escrito muestra **«700 – 1600»** y, al lado, el estado **«Sin referencia»**. Parece una contradicción y no lo es: el rango lo escribió el profesional y **el sistema no evalúa contra él**. El valor de un libre se guarda como texto y ese intervalo no está validado contra ningún catálogo.
 
 Evaluarlo convertiría una nota suelta en un criterio clínico —el mismo valor saldría «ALTERADO» en rojo porque alguien tecleó dos números—, y eso es una decisión de producto, no un detalle de esta tabla. Queda anotado en el código y **pendiente de decidir**: si se quiere que el estado se calcule también para los libres con rango, es un cambio pequeño y localizado.
+
+---
+
+# R53 — Personalización de la app del paciente y multi-clínica
+
+Rama `r53-personalizacion`, desde `main`. Migraciones **059** y **060**.
+
+El paciente elige el color de su app y se construye un avatar ilustrado; el logo de la clínica llega a su pantalla; y un profesional puede pertenecer a más de una clínica.
+
+## Pre-vuelo 022 — ejecutado
+
+El checksum guardado en dev era el de CRLF (`f6f75020…`). Se hicieron **las dos mitades**, porque solo una rompe el runner:
+
+1. `022_recordatorios_cita.sql` se normalizó a LF en disco (el blob del repo ya era LF; `.gitattributes` dice `*.sql text eol=lf`, así que `git diff` queda vacío y no hay nada que commitear).
+2. La fila de `schema_migrations` pasó al hash de LF (`40240bc03d9eadce…`).
+
+Hacer solo (2) —que es lo que pedía el prompt— habría dejado el archivo en CRLF y el runner habría abortado en la 022 **en esta máquina**. Comprobado: entre el paso 1 y el 2, `npm run migrate` falló con «ya fue aplicada pero su contenido cambió». Después, limpio.
+
+## Lo que NO se construyó, porque ya existía
+
+| El encargo pedía | Ya existía | Dónde |
+|---|---|---|
+| `clinica.logo_url` + `GET /api/paciente/clinica-config` | **`brand_config`** (`clinica_id`, `nombre_app`, `logo_ruta`, `logo_mime`, `color_primario`) con `GET /api/brand`, `GET /api/brand/logo` (público), `PUT /api/brand`, `PUT /api/brand/logo` | `routes/brand.ts` |
+| Paso 5.4: subir logo desde web-professional | **`MarcaPage.tsx`**, con previo y selector de paleta de marca | `pages/ajustes/MarcaPage.tsx` |
+| Paso 6.3/6.4: CRUD de profesionales + sección «Equipo» | **`EquipoPage.tsx`** y `GET/POST/PATCH /api/admin/profesionales` | `routes/equipo.ts` |
+| `paciente.foto_url` | **`configuracion_paciente.foto_url`** | `026_alimentos.sql` |
+| Subida de archivos (`@fastify/static`, `/opt/nutrismart/uploads`) | Una capa de almacenamiento propia: `almacen`, tabla `archivo` (`ruta_relativa`, `sha256`, `mime`) y `POST /api/archivos` con `@fastify/multipart` **ya instalado** | `src/almacen/`, `routes/archivos.ts` |
+
+Lo único que faltaba del Paso 5 era **enseñar** el logo en la app del paciente. `GET /api/paciente/yo` ya devolvía `clinica.tieneLogo` pero no la dirección; ahora devuelve `logoUrl` montada, y la cabecera de Inicio la pinta junto al nombre de la clínica — junto, no en su lugar: un logo que no carga dejaría al paciente sin saber de quién es la app.
+
+## Migración 059
+
+**Tipos corregidos.** El encargo declaraba `clinica_profesional` con `SERIAL` e `INTEGER REFERENCES clinica(id)`. `clinica.id` y `profesional.id` son **uuid** desde la 001: la tabla tal como venía escrita no llega a crearse, falla con error de tipo en la clave ajena. Se usa `uuid`.
+
+**Las preferencias van en `configuracion_paciente`, no en `paciente`.** Esa tabla tiene PK `(paciente_id, clinica_id)` a propósito —la misma persona puede ser paciente de dos clínicas y querer la app distinta en cada una— y ya alberga `modo_diario`, `fondo`, `foto_url` y `nombre_preferido`. Ponerlas en `paciente` habría perdido esa distinción y repartido las preferencias entre dos tablas.
+
+**Dos columnas que el encargo no tenía y el generador necesita:** `avatar_ojos` y `avatar_lentes`. Los 12 personajes de la galería se distinguen también por color de ojos, y dos de ellos llevan gafas; sin esas columnas, elegir el personaje 6 y guardarlo lo cambiaba por otro.
+
+**El rol del backfill es el real, no `'admin'`.** El encargo hacía `SELECT clinica_id, id, 'admin' FROM profesional`, lo que habría convertido en administrador de clínica a **todos** los nutricionistas. Se copia `profesional.rol` —que ya es el enum `profesional_rol (admin_clinica, nutricionista)`— y `activo` sale de `estado <> 'inactivo'`. Comprobado: Dr. Luis Peralta queda `nutricionista`, las dos doctoras `admin_clinica`.
+
+Por lo mismo, `clinica_profesional.rol` reusa ese enum en vez del `'admin'/'profesional'` del encargo: son los mismos dos papeles con otro nombre, y dos vocabularios para lo mismo obligan a traducir en cada consulta.
+
+`profesional.clinica_id` **no se elimina**, como pedía el encargo. Queda marcada como legada en un `comment on column`.
+
+## Migración 060 — el trigger que evita un 403 silencioso
+
+Desde la 059, `resolverAlcance()` decide la pertenencia leyendo `clinica_profesional`. Un profesional dado de alta **sin** su fila ahí no puede entrar: la API responde 403 y el mensaje habla de permisos, no de una fila que falta.
+
+Hay **tres** sitios que insertan en `profesional` (dos en `equipo.ts`, uno en `superadmin.ts`) y nada impide un cuarto. En vez de añadir el INSERT en cada uno, un trigger `after insert or update of clinica_id, rol, estado` deriva la membresía. Probado en transacción con rollback:
+
+| Acción | Resultado |
+|---|---|
+| `insert into profesional` | membresía creada automáticamente |
+| `set estado = 'inactivo'` | `clinica_profesional.activo` → **false** |
+| `set rol = 'admin_clinica', estado = 'activo'` | rol → **admin_clinica**, activo → **true** |
+
+No borra membresías: una segunda clínica añadida a mano vive solo en la tabla de unión y el trigger no la toca.
+
+## El color del paciente contra la marca de la clínica
+
+`asegurarMarca()` ya pintaba `--primary` y `--nav` con `brand_config.color_primario`. La paleta del paciente escribe las mismas variables. Las dos llegan de peticiones distintas, así que sin una regla gana la que conteste más tarde — una carrera, visible como un parpadeo de color al abrir la app.
+
+**La regla: «verde» significa «sin elegir».** Es el valor por defecto de la columna y es además el verde de fábrica de NutriSmart. Con `verde`, manda la clínica y el white-label sigue intacto. Con cualquier otra paleta, manda el paciente, y `aplicarMarca()` se aparta (`hayPaletaElegida()`).
+
+Volver a «Verde» no deja el color pegado: `restablecerPaleta()` quita las propiedades en línea de `<html>` —que ganan a cualquier hoja de estilos— y `reaplicarMarca()` devuelve el color de la clínica sin volver a pedirlo.
+
+**El precio, asumido y anotado:** un paciente de una clínica morada no puede elegir exactamente este verde; le quedaría el morado de su clínica. A cambio sigue en pie el white-label, que es regla no negociable de CLAUDE.md. **Si se prefiere la otra lectura —que el paciente siempre gane— es un cambio de dos líneas en `usePerfil.publicar()`.**
+
+## Avatar: `avatar.ts` + `CaraSVG.tsx`, no un solo archivo
+
+El prototipo de referencia construye el SVG concatenando cadenas. En React eso obliga a `dangerouslySetInnerHTML` con colores que vienen del servidor. Se partió en dos:
+
+- **`avatar.ts`** — los datos: opciones, los 12 personajes y la geometría del pelo (rutas constantes, elegidas por clave, nunca interpoladas). Más `configSegura()`, que normaliza lo que llegue del servidor contra las mismas listas cerradas que impone la base.
+- **`CaraSVG.tsx`** — el dibujo, en JSX. Así no hay ninguna cadena de marcado que inyectar.
+
+Se conservan las coordenadas del prototipo (lienzo 100×100, cabeza en (50, 59)) y el orden de pintado, que es lo que hace que funcione: fondo → pelo de detrás → cuello → cara → corona de pelo → orejas → ojos → cejas → nariz → boca → mejillas → gafas. El pelo va en dos capas porque la melena tiene que quedar **detrás** de la cara y el flequillo **delante**.
+
+**El fondo sale de la paleta activa, no del personaje.** En la referencia cada personaje traía su degradado; aquí la galería enseña ya lo que va a quedar guardado, y cambiar de paleta recolorea también el avatar. Los doce se siguen distinguiendo por piel, pelo, ojos y expresión.
+
+`PerfilScreen.tsx` no se creó: la pantalla de perfil **ya existe** (`pages/Perfil.tsx`, con nombre preferido, foto y fondo). Se le añadieron dos tarjetas, `ConstructorAvatar` y `SelectorPaleta`. La sección del avatar va **después** de la de la foto a propósito: la foto, si la hay, tapa al avatar, y verlo en ese orden explica por qué el avatar dejó de salir.
+
+## API
+
+| Endpoint | Qué hace |
+|---|---|
+| `PATCH /api/paciente/perfil/paleta` | Valida contra las diez y hace upsert en `configuracion_paciente` |
+| `PATCH /api/paciente/perfil/avatar` | Los siete campos **de una vez**: el paciente pulsa guardar una sola vez, y un PATCH por campo dejaría estados a medias si se cae la red entre dos |
+| `GET /api/paciente/configuracion` | Añade `paleta`, `avatar` y `tieneAvatar` |
+| `GET /api/paciente/yo` | Añade `clinica.logoUrl` |
+
+Todo se valida en el servidor contra las mismas listas cerradas del CHECK: un CHECK que salta llega al cliente como 500, y lo que tiene que ver es por qué su elección no vale.
+
+`resolverAlcance()` pasa a `clinica_profesional`. Comprobado contra la base que los tres profesionales existentes resuelven **idéntico** antes y después.
+
+## Comprobación — 12 de 12 en navegador real
+
+Puppeteer a 390×844, login de Keycloak incluido.
+
+| Paso | Resultado |
+|---|---|
+| Pantalla de perfil | Secciones «Tu avatar» y «El color de tu aplicación» |
+| Galería | **15 caras SVG** (12 de galería + previo + cabecera); la cara tiene **443 elementos** |
+| Personalizar | Piel oscura + Rizado + Amplia + Gafas → las gafas se dibujan |
+| Guardar avatar | El botón confirma |
+| Paleta → Violeta | `--primary` pasa de `#0e7c66` a `#7C3AED` |
+| Recargar | **Sigue violeta** (caché de localStorage + perfil) |
+| Ir a Inicio | El avatar está en la cabecera y **la paleta gana a `aplicarMarca()`** |
+| Volver a Verde | `--primary` vuelve a `#0e7c66`, el color de la clínica |
+
+Un fallo durante la prueba fue del script, no del producto: esperaba un tiempo fijo tras el login y el SPA monta después de dos redirecciones de Keycloak. Se cambió por esperar al selector.
+
+## Lo que queda pendiente, y por qué
+
+**1. Subida de foto por multipart (Paso 2).** Hoy la foto del paciente se da **por URL https**, que ya funciona. Convertirla en subida de archivo es viable reusando `almacen` —`@fastify/multipart` está instalado y `POST /api/archivos` ya sube ficheros—, pero ese endpoint es `requireAuth` (profesional) y guarda **documentación clínica**. Meter ahí fotos de perfil de pacientes mezcla dos cosas con reglas de retención distintas, y decidirlo es de producto. **No se hizo; la URL sigue siendo el camino.**
+
+El `/opt/nutrismart/uploads` + `@fastify/static` del encargo no se montó: `@fastify/static` **no está instalado** y serviría archivos por una ruta pública, al revés de lo que hace hoy `GET /api/archivos/:id`, que es autenticado.
+
+**2. Que un profesional trabaje de verdad en dos clínicas.** El esquema ya lo soporta y `resolverAlcance()` también. Lo que falta no es SQL: **`tenantId` sale del claim `tenant_id` del token de Keycloak** (`auth.ts`), así que la clínica en la que un profesional está actuando la decide el token. Para alternar hacen falta (a) que el token pueda llevar más de una clínica o reemitirse, y (b) un selector de clínica en web-professional. Las dos son decisiones de arquitectura que el encargo no aborda. Hoy: un profesional en dos clínicas entra en la que diga su token, y en esa funciona todo.
+
+**3. `profesional.clinica_id`.** Sigue viva y la usan ~50 sitios para acotar por tenant. Deprecarla es su propia rebanada; el trigger de la 060 mantiene las dos fuentes coherentes mientras tanto.

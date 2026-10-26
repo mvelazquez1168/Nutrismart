@@ -9,12 +9,17 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   getPerfil,
+  guardarAvatar,
   guardarFondo,
+  guardarPaleta,
   guardarPerfil,
+  type AvatarPaciente,
   type Perfil,
 } from '../lib/api'
 import { initKeycloak } from '../lib/keycloak'
 import { aplicarFondo, type Fondo } from '../lib/temas'
+import { aplicarPaletaDelPerfil, restablecerPaleta } from '../lib/palette'
+import { reaplicarMarca } from '../lib/marca'
 
 let cache: Perfil | null = null
 let cargando: Promise<Perfil> | null = null
@@ -23,6 +28,17 @@ const suscriptores = new Set<(p: Perfil) => void>()
 function publicar(p: Perfil): void {
   cache = p
   aplicarFondo(p.fondo)
+  // La paleta se aplica por el mismo camino que el fondo, y DESPUÉS de
+  // `asegurarMarca()`: lo que elige el paciente gana al color de la
+  // clínica, pero solo en su app (ver lib/palette.ts).
+  if (p.paleta === 'verde') {
+    // Volver a «Verde» es dejar de elegir: se quitan las propiedades en
+    // linea y se devuelve el color de la clinica.
+    restablecerPaleta()
+    reaplicarMarca()
+  } else {
+    aplicarPaletaDelPerfil(p.paleta)
+  }
   for (const s of suscriptores) s(p)
 }
 
@@ -120,5 +136,44 @@ export function usePerfil() {
     [],
   )
 
-  return { perfil, error, reintentar, cambiarFondo, cambiarPerfil }
+  /**
+   * La paleta, igual que el fondo: se pinta antes de preguntar.
+   *
+   * Es lo que convierte el selector en un previo instantáneo. Si el
+   * servidor dice que no, se vuelve al color anterior y quien llamó
+   * decide qué contar.
+   */
+  const cambiarPaleta = useCallback(async (paleta: string) => {
+    const previo = cache
+    if (previo) publicar({ ...previo, paleta })
+    try {
+      const r = await guardarPaleta(paleta)
+      if (cache) publicar({ ...cache, paleta: r.paleta })
+    } catch (e) {
+      if (previo) publicar(previo)
+      throw e
+    }
+  }, [])
+
+  /**
+   * El avatar NO se pinta antes de guardar.
+   *
+   * A diferencia del color, aquí hay un botón de guardar explícito: el
+   * paciente va probando peinados y no quiere que cada toque quede
+   * grabado. Se publica cuando el servidor confirma.
+   */
+  const cambiarAvatar = useCallback(async (avatar: AvatarPaciente) => {
+    const r = await guardarAvatar(avatar)
+    if (cache) publicar({ ...cache, avatar: r, tieneAvatar: true })
+  }, [])
+
+  return {
+    perfil,
+    error,
+    reintentar,
+    cambiarFondo,
+    cambiarPerfil,
+    cambiarPaleta,
+    cambiarAvatar,
+  }
 }

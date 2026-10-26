@@ -57,6 +57,37 @@ const TIPOS_COMIDA = [
 
 const RE_FECHA = /^\d{4}-\d{2}-\d{2}$/
 
+/* ---- R53: personalización de la app del paciente ---- */
+
+/** Las mismas diez del CHECK de la migración 059 y de `palette.ts`. */
+const PALETAS = [
+  'verde',
+  'azul-oceano',
+  'azul-cielo',
+  'turquesa',
+  'indigo',
+  'violeta',
+  'rosa',
+  'naranja',
+  'rojo',
+  'gris',
+] as const
+
+const ESTILOS_CABELLO = [
+  'Corto',
+  'Largo',
+  'Rizado',
+  'Ondulado',
+  'Moño',
+  'Corto M',
+  'Calvo',
+] as const
+
+const EXPRESIONES = ['Sonrisa', 'Neutral', 'Amplia'] as const
+
+/** Color de seis dígitos. Mismo patrón que el CHECK de la 059. */
+const RE_HEX = /^#[0-9a-fA-F]{6}$/
+
 interface Pac {
   id: string
   clinica_id: string
@@ -189,7 +220,10 @@ export async function registerAlimentosRoutes(app: FastifyInstance): Promise<voi
       // respuesta sigue siendo completa.
       const { rows } = await pool.query(
         `select p.nombre,
-                c.modo_diario, c.fondo, c.foto_url, c.nombre_preferido
+                c.modo_diario, c.fondo, c.foto_url, c.nombre_preferido,
+                c.paleta_color, c.avatar_personaje, c.avatar_piel,
+                c.avatar_cabello_estilo, c.avatar_cabello_color,
+                c.avatar_ojos, c.avatar_expresion, c.avatar_lentes
            from paciente p
            left join configuracion_paciente c
                   on c.paciente_id = p.id and c.clinica_id = p.clinica_id
@@ -209,6 +243,23 @@ export async function registerAlimentosRoutes(app: FastifyInstance): Promise<voi
         nombre: f['nombre_preferido'] ?? f['nombre'],
         nombrePreferido: f['nombre_preferido'] ?? null,
         nombreExpediente: f['nombre'],
+        // R53. `paleta` va suelta y el avatar agrupado porque son dos
+        // cosas que se guardan por separado, con un PATCH cada una.
+        paleta: f['paleta_color'] ?? 'verde',
+        avatar: {
+          personaje: f['avatar_personaje'] ?? 0,
+          piel: f['avatar_piel'] ?? '#FDDCB5',
+          cabelloEstilo: f['avatar_cabello_estilo'] ?? 'Largo',
+          cabelloColor: f['avatar_cabello_color'] ?? '#2C1B18',
+          ojos: f['avatar_ojos'] ?? '#3D2B1A',
+          expresion: f['avatar_expresion'] ?? 'Sonrisa',
+          lentes: f['avatar_lentes'] === true,
+        },
+        // Para que la pantalla sepa si enseñar el avatar o las
+        // iniciales: sin fila de configuración, el paciente no ha
+        // elegido nada todavía y un avatar por defecto seria inventarle
+        // una cara.
+        tieneAvatar: f['avatar_personaje'] !== null && f['avatar_personaje'] !== undefined,
       })
     },
   )
@@ -339,6 +390,127 @@ export async function registerAlimentosRoutes(app: FastifyInstance): Promise<voi
       return reply.send({
         fotoUrl: r['foto_url'],
         nombrePreferido: r['nombre_preferido'],
+      })
+    },
+  )
+
+  /* ================================================================ */
+  /* Paleta y avatar — R53                                             */
+  /* ================================================================ */
+
+  app.patch<{ Body: Record<string, unknown> }>(
+    '/api/paciente/perfil/paleta',
+    { preHandler: requireAuthPaciente },
+    async (request, reply) => {
+      const pac = await resolverPaciente(request.authPac.sub)
+      if (!pac) {
+        const r = await sinExpediente(request.authPac.sub)
+        return reply.code(r.codigo).send(r.cuerpo)
+      }
+
+      const v = (request.body ?? {})['paleta']
+      if (typeof v !== 'string' || !(PALETAS as readonly string[]).includes(v)) {
+        return reply.code(400).send({ error: 'validacion', message: 'Esa paleta no existe' })
+      }
+
+      const { rows } = await pool.query(
+        `insert into configuracion_paciente (paciente_id, clinica_id, paleta_color)
+         values ($1, $2, $3)
+         on conflict (paciente_id, clinica_id)
+         do update set paleta_color = excluded.paleta_color, updated_at = now()
+         returning paleta_color`,
+        [pac.id, pac.clinica_id, v],
+      )
+
+      return reply.send({ paleta: rows[0]!['paleta_color'] })
+    },
+  )
+
+  /**
+   * El avatar ilustrado.
+   *
+   * Los siete campos van juntos y de una vez: el paciente los ajusta en
+   * la misma pantalla y pulsa guardar una sola vez. Un PATCH por campo
+   * dejaría estados a medias —piel nueva con pelo viejo— si se cae la
+   * red entre dos de ellos.
+   *
+   * Se valida TODO contra las mismas listas cerradas que impone la base
+   * (migración 059). Un CHECK que salta llega al cliente como 500, y lo
+   * que tiene que ver es por qué su elección no vale.
+   */
+  app.patch<{ Body: Record<string, unknown> }>(
+    '/api/paciente/perfil/avatar',
+    { preHandler: requireAuthPaciente },
+    async (request, reply) => {
+      const pac = await resolverPaciente(request.authPac.sub)
+      if (!pac) {
+        const r = await sinExpediente(request.authPac.sub)
+        return reply.code(r.codigo).send(r.cuerpo)
+      }
+
+      const b = request.body ?? {}
+      const malo = (mensaje: string) =>
+        reply.code(400).send({ error: 'validacion', message: mensaje })
+
+      const personaje = Number(b['personaje'])
+      if (!Number.isInteger(personaje) || personaje < 0 || personaje > 11) {
+        return malo('Ese personaje no existe')
+      }
+
+      const hex = (v: unknown) => typeof v === 'string' && RE_HEX.test(v)
+      if (!hex(b['piel'])) return malo('Ese tono de piel no vale')
+      if (!hex(b['cabelloColor'])) return malo('Ese color de pelo no vale')
+      if (!hex(b['ojos'])) return malo('Ese color de ojos no vale')
+
+      const estilo = b['cabelloEstilo']
+      if (typeof estilo !== 'string' || !(ESTILOS_CABELLO as readonly string[]).includes(estilo)) {
+        return malo('Ese peinado no existe')
+      }
+
+      const expresion = b['expresion']
+      if (typeof expresion !== 'string' || !(EXPRESIONES as readonly string[]).includes(expresion)) {
+        return malo('Esa expresion no existe')
+      }
+
+      const { rows } = await pool.query(
+        `insert into configuracion_paciente
+           (paciente_id, clinica_id, avatar_personaje, avatar_piel,
+            avatar_cabello_estilo, avatar_cabello_color, avatar_ojos,
+            avatar_expresion, avatar_lentes)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         on conflict (paciente_id, clinica_id)
+         do update set avatar_personaje      = excluded.avatar_personaje,
+                       avatar_piel           = excluded.avatar_piel,
+                       avatar_cabello_estilo = excluded.avatar_cabello_estilo,
+                       avatar_cabello_color  = excluded.avatar_cabello_color,
+                       avatar_ojos           = excluded.avatar_ojos,
+                       avatar_expresion      = excluded.avatar_expresion,
+                       avatar_lentes         = excluded.avatar_lentes,
+                       updated_at            = now()
+         returning avatar_personaje, avatar_piel, avatar_cabello_estilo,
+                   avatar_cabello_color, avatar_ojos, avatar_expresion, avatar_lentes`,
+        [
+          pac.id,
+          pac.clinica_id,
+          personaje,
+          b['piel'],
+          estilo,
+          b['cabelloColor'],
+          b['ojos'],
+          expresion,
+          b['lentes'] === true,
+        ],
+      )
+
+      const a = rows[0]!
+      return reply.send({
+        personaje: a['avatar_personaje'],
+        piel: a['avatar_piel'],
+        cabelloEstilo: a['avatar_cabello_estilo'],
+        cabelloColor: a['avatar_cabello_color'],
+        ojos: a['avatar_ojos'],
+        expresion: a['avatar_expresion'],
+        lentes: a['avatar_lentes'] === true,
       })
     },
   )

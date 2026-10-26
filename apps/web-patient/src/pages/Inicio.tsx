@@ -12,6 +12,7 @@ import {
   getDashboard,
   getTareas,
   getYo,
+  urlApi,
   marcarTarea,
   type Dashboard,
   type Tarea,
@@ -225,8 +226,22 @@ export function Inicio() {
           de cabeceras siguen con el color de la clinica. El nombre sale
           del perfil (el preferido si lo hay) y no de `yo`. */}
       <header className="fondo-hero px-4 pb-8 pt-10">
-        <div className="mb-3 flex items-center justify-between">
-          <p className="text-sm text-muted">{yo.clinica.nombre}</p>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          {/* El logo de la clínica, si lo subió — R53.
+              Va con el nombre al lado y no en su lugar: un logo sin
+              texto deja al paciente sin saber de quién es la app cuando
+              la imagen no carga. `h-7` es la altura, el ancho lo decide
+              la imagen: los logos no son cuadrados. */}
+          <div className="flex min-w-0 items-center gap-2">
+            {yo.clinica.logoUrl && (
+              <img
+                src={urlApi(yo.clinica.logoUrl)}
+                alt=""
+                className="h-7 w-auto max-w-[110px] shrink-0 object-contain"
+              />
+            )}
+            <p className="truncate text-sm text-muted">{yo.clinica.nombre}</p>
+          </div>
           <button type="button" onClick={salir} className="text-xs text-muted underline">
             Salir
           </button>
@@ -241,6 +256,7 @@ export function Inicio() {
             <Avatar
               nombre={perfil?.nombre ?? yo.nombre}
               fotoUrl={perfil?.fotoUrl}
+              avatar={perfil?.tieneAvatar ? perfil.avatar : null}
               size="md"
             />
           </button>

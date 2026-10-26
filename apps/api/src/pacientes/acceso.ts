@@ -33,10 +33,30 @@ export async function resolverAlcance(
   sub: string,
   roles: string[],
 ): Promise<Alcance | null> {
+  /*
+   * La pertenencia sale de `clinica_profesional`, no de
+   * `profesional.clinica_id` — R53.
+   *
+   * Es el cambio que permite que un profesional trabaje en varias
+   * clínicas: con la columna, su `clinica_id` solo podía valer una cosa
+   * y entrar al segundo tenant devolvía null, o sea 403. Con la tabla de
+   * unión, el `tenantId` que traiga el token decide en cuál está
+   * actuando, y aquí se comprueba que de verdad pertenece a ella.
+   *
+   * Dos condiciones de estado y no una: `cp.activo` es «ya no trabaja en
+   * ESTA clínica» y `p.estado` es «esta cuenta ya no se usa en ninguna».
+   * Un profesional que se va de una clínica y sigue en otra necesita que
+   * sean cosas distintas.
+   */
   const { rows } = await pool.query<{ id: string }>(
-    `select id from profesional
-     where keycloak_user_id = $1 and clinica_id = $2 and estado <> 'inactivo'
-     limit 1`,
+    `select p.id
+       from profesional p
+       join clinica_profesional cp
+         on cp.profesional_id = p.id
+        and cp.clinica_id = $2
+        and cp.activo = true
+      where p.keycloak_user_id = $1 and p.estado <> 'inactivo'
+      limit 1`,
     [sub, tenantId],
   )
 

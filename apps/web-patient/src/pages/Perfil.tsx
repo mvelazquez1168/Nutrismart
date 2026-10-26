@@ -25,6 +25,9 @@ import { entrar, initKeycloak, salir } from '../lib/keycloak'
 import { usePerfil } from '../hooks/usePerfil'
 import { FONDOS, type Fondo } from '../lib/temas'
 import { Avatar } from '../components/Avatar'
+import { ConstructorAvatar } from '../components/perfil/ConstructorAvatar'
+import { SelectorPaleta } from '../components/perfil/SelectorPaleta'
+import { configSegura } from '../components/perfil/avatar'
 import { NavBar } from '../components/NavBar'
 
 function Tarjeta({ titulo, pie, children }: { titulo: string; pie?: string; children: React.ReactNode }) {
@@ -39,7 +42,15 @@ function Tarjeta({ titulo, pie, children }: { titulo: string; pie?: string; chil
 
 export function Perfil() {
   const navegar = useNavigate()
-  const { perfil, error: errorPerfil, reintentar, cambiarFondo, cambiarPerfil } = usePerfil()
+  const {
+    perfil,
+    error: errorPerfil,
+    reintentar,
+    cambiarFondo,
+    cambiarPerfil,
+    cambiarPaleta,
+    cambiarAvatar,
+  } = usePerfil()
 
   const [nombre, setNombre] = useState('')
   const [foto, setFoto] = useState('')
@@ -147,7 +158,12 @@ export function Perfil() {
           ← Inicio
         </button>
         <div className="flex items-center gap-3">
-          <Avatar nombre={perfil.nombre} fotoUrl={perfil.fotoUrl} size="lg" />
+          <Avatar
+            nombre={perfil.nombre}
+            fotoUrl={perfil.fotoUrl}
+            avatar={perfil.tieneAvatar ? perfil.avatar : null}
+            size="lg"
+          />
           <div className="min-w-0">
             <h1 className="truncate text-xl font-bold text-ink">{perfil.nombre}</h1>
             {perfil.nombrePreferido && perfil.nombrePreferido !== perfil.nombreExpediente && (
@@ -177,7 +193,12 @@ export function Perfil() {
           pie="Pega la dirección de una imagen. Debe empezar por https://"
         >
           <div className="flex items-center gap-3">
-            <Avatar nombre={nombre.trim() || perfil.nombre} fotoUrl={foto.trim() || null} size="md" />
+            <Avatar
+              nombre={nombre.trim() || perfil.nombre}
+              fotoUrl={foto.trim() || null}
+              avatar={perfil.tieneAvatar ? perfil.avatar : null}
+              size="md"
+            />
             <input
               type="url"
               value={foto}
@@ -213,6 +234,27 @@ export function Perfil() {
             )}
           </div>
         )}
+
+        {/* R53. Va DESPUÉS de la foto a propósito: la foto, si la hay,
+            tapa al avatar, y verlo en ese orden explica por qué el
+            avatar dejó de salir. */}
+        <Tarjeta
+          titulo="Tu avatar"
+          pie={
+            perfil.fotoUrl
+              ? 'Ahora mismo se ve tu foto. Si la quitas, vuelve este avatar.'
+              : 'Elige una cara y ajústala a tu gusto.'
+          }
+        >
+          <ConstructorAvatar inicial={configSegura(perfil.avatar)} onGuardar={cambiarAvatar} />
+        </Tarjeta>
+
+        <Tarjeta
+          titulo="El color de tu aplicación"
+          pie="Se aplica al momento, y solo en tu teléfono."
+        >
+          <SelectorPaleta actual={perfil.paleta} onElegir={cambiarPaleta} />
+        </Tarjeta>
 
         <Tarjeta titulo="El fondo de tu aplicación" pie="Se aplica al momento.">
           <div className="grid grid-cols-2 gap-2">

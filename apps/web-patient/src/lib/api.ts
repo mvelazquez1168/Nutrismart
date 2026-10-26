@@ -58,7 +58,13 @@ export interface Yo {
   telefono: string | null
   fechaNacimiento: string | null
   sexo: string | null
-  clinica: { nombre: string; colorPrimario: string | null; tieneLogo: boolean }
+  clinica: {
+    nombre: string
+    colorPrimario: string | null
+    tieneLogo: boolean
+    /** R53. Ya montada por el servidor; null si la clínica no tiene logo. */
+    logoUrl: string | null
+  }
 }
 
 export interface Dashboard {
@@ -94,6 +100,18 @@ export function vincular(token: string): Promise<{ mensaje: string }> {
     method: 'POST',
     conAuth: true,
   })
+}
+
+/**
+ * Una ruta relativa de la API, lista para un `src` o un `href`.
+ *
+ * El servidor devuelve rutas sin host (`/api/brand/logo?...`). En dev
+ * `VITE_API_URL` va vacía y todo pasa por el proxy de Vite, así que la
+ * ruta tal cual vale; en producción hay que anteponer el host. Esto
+ * resuelve los dos casos en un sitio.
+ */
+export function urlApi(ruta: string): string {
+  return `${BASE}${ruta}`
 }
 
 export function getYo(): Promise<Yo> {
@@ -580,6 +598,17 @@ export function getRecurso(id: string): Promise<Recurso> {
 /* PAC-09 — perfil y fondo                                             */
 /* ------------------------------------------------------------------ */
 
+/** Los siete campos del avatar ilustrado — R53. */
+export interface AvatarPaciente {
+  personaje: number
+  piel: string
+  cabelloEstilo: string
+  cabelloColor: string
+  ojos: string
+  expresion: string
+  lentes: boolean
+}
+
 export interface Perfil {
   modoDiario: ModoDiario
   fondo: 'neutro' | 'verde' | 'azul' | 'morado' | 'salmon' | 'cafe' | 'noche'
@@ -589,10 +618,37 @@ export interface Perfil {
   nombrePreferido: string | null
   /** El del expediente clínico. No lo cambia el paciente. */
   nombreExpediente: string
+  /** R53. Una de las diez de `lib/palette.ts`. */
+  paleta: string
+  avatar: AvatarPaciente
+  /**
+   * Si el paciente llegó a construirse un avatar.
+   *
+   * `avatar` trae siempre valores —los de fábrica— para que la pantalla
+   * de perfil tenga de dónde partir. Esto distingue «eligió esta cara»
+   * de «todavía no ha elegido», que es cuando se enseñan las iniciales.
+   */
+  tieneAvatar: boolean
 }
 
 export function getPerfil(): Promise<Perfil> {
   return pedir('/api/paciente/configuracion', { conAuth: true })
+}
+
+export function guardarPaleta(paleta: string): Promise<{ paleta: string }> {
+  return pedir('/api/paciente/perfil/paleta', {
+    method: 'PATCH',
+    conAuth: true,
+    body: JSON.stringify({ paleta }),
+  })
+}
+
+export function guardarAvatar(avatar: AvatarPaciente): Promise<AvatarPaciente> {
+  return pedir('/api/paciente/perfil/avatar', {
+    method: 'PATCH',
+    conAuth: true,
+    body: JSON.stringify(avatar),
+  })
 }
 
 export function guardarFondo(fondo: Perfil['fondo']): Promise<{ fondo: Perfil['fondo'] }> {
