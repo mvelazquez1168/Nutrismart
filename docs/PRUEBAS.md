@@ -5854,3 +5854,125 @@ Solo en las filas libres del formulario, como dos campos numéricos opcionales (
 Una fila libre con rango escrito muestra **«700 – 1600»** y, al lado, el estado **«Sin referencia»**. Parece una contradicción y no lo es: el rango lo escribió el profesional y **el sistema no evalúa contra él**. El valor de un libre se guarda como texto y ese intervalo no está validado contra ningún catálogo.
 
 Evaluarlo convertiría una nota suelta en un criterio clínico —el mismo valor saldría «ALTERADO» en rojo porque alguien tecleó dos números—, y eso es una decisión de producto, no un detalle de esta tabla. Queda anotado en el código y **pendiente de decidir**: si se quiere que el estado se calcule también para los libres con rango, es un cambio pequeño y localizado.
+
+---
+
+# R52 — Ingesta diaria por porciones
+
+Rama `r52-ingesta-diaria`. Migraciones **056**, **057** y **058**.
+
+La pantalla «Qué comí → Detallado» se rehace: seis franjas siempre a la vista, barras de macro contra la prescripción, buscador en panel deslizante y ficha de alimento con donut. La cantidad se dice en **porciones** («1.5 tazas»), no en gramos.
+
+## Lo que NO se construyó, y por qué
+
+El encargo proponía cuatro tablas nuevas: `alimento`, `alimento_unidad`, `ingesta_diaria` y `plan_nutricional`. **Tres ya existían con otro nombre.** Construirlas habría dado dos contabilidades de la misma comida.
+
+| El encargo pedía | Ya existía | Desde |
+|---|---|---|
+| `alimento` | `alimento_catalogo` — 46 alimentos, sinónimos regionales, búsqueda sin acentos, multi-tenant | `026_alimentos.sql` |
+| `ingesta_diaria` | `registro_comida` + `registro_comida_item` | `023`, `026` |
+| `plan_nutricional` | La prescripción dietética de `conclusion_valoracion`: `kcal_prescritas`, `pct_proteina`, `pct_cho`, `pct_grasa` y los gramos derivados | `018_eval_conclusion.sql` |
+| `alimento_unidad` | **Nada.** Esto sí faltaba | — |
+
+Lo decisivo es el trigger `recalcular_totales_comida()` (`026:137`): deriva los totales de `registro_comida` a partir de sus ítems, y de esa fila leen **la ficha del profesional (R22) y la media de calorías del progreso (R23)**. Escribir la ingesta en una tabla paralela la habría hecho **invisible para el nutricionista**.
+
+Además, ninguna de las cuatro tablas propuestas llevaba `clinica_id`, y `ingesta_diaria` no tenía `activo` —borrado físico—. Las dos cosas van contra reglas no negociables de CLAUDE.md.
+
+**El Paso 5 del encargo (formulario de plan nutricional en web-professional) no se construyó porque ya está hecho**: es la sección «Prescripción dietética» de `FormConclusion.tsx`. La meta de agua tampoco se añadió: la hidratación vive en `hidratacion_litros` (`017_eval_clinico.sql:109`).
+
+## Las franjas son SEIS, no cuatro
+
+`tipo_comida` es un enum de Postgres desde `011_plan_alimentario.sql:18`:
+
+```
+desayuno · media_manana · almuerzo · merienda · cena · extra
+```
+
+El encargo pedía cuatro secciones (`desayuno, almuerzo, cena, merienda`) y un valor `otro` que no existe en el enum. Se respetan las seis: el plan alimentario las usa, y dejar dos fuera habría escondido lo que el paciente ya tiene apuntado en ellas.
+
+## Migración 056 — unidades de medida
+
+- `alimento_unidad`: `alimento_id`, **`clinica_id`**, `nombre`, `gramos_equivalentes`, `es_defecto`, `activo`.
+  - Único parcial de **una sola unidad por defecto** por alimento.
+  - Único `(alimento_id, lower(nombre))` para que el seed se pueda reejecutar.
+- `alimento_catalogo`: `fibra_por_100g`, `codigo_barras`, `verificado`.
+- `registro_comida_item`: `unidad_id` (`on delete set null`) y `cantidad`.
+- Seed: la `porcion_tipica_g` de cada alimento pasa a ser su unidad por defecto, más una de 100 g/ml.
+
+`cantidad_g` **sigue siendo la verdad del cálculo**. `unidad_id` + `cantidad` existen para poder volver a enseñar «1.5 tazas» en vez de «240 g». Si una clínica retira una medida, el ítem conserva sus gramos y sus kcal: pierde la etiqueta, no el dato clínico.
+
+## Migración 057 — los alimentos que faltaban
+
+De los 32 del encargo, **28 ya estaban**. Cinco con otro nombre que los sinónimos ya resuelven (`Pan de molde blanco`→`Pan blanco`, `Carne molida res 90%`→`Carne molida de res`, `Tilapia al vapor`→`Tilapia`, `Huevo entero cocido`→`Huevo entero`, `Atún en agua (enlatado)`→`Atún en agua`).
+
+Entran **cuatro**: Arroz integral cocido, Yuca cocida, Plátano verde cocido y Agua de pipa. Son los primeros con `fibra_por_100g` y `verificado = true`; los 46 anteriores quedan en NULL/false, **a la espera de una pasada de curación que no es de esta rebanada**.
+
+Las categorías del encargo (Tubérculos, Panadería, Platos CR, Pescados, Huevos) no existen: `categoria` tiene un CHECK de nueve valores fijos. La yuca y el plátano verde van a `cereales`, donde la 026 ya puso la papa — por función en el plato, no por botánica.
+
+Se añaden además unidades caseras donde cambian la forma de apuntar: `1 taza` para arroz, frijoles y pasta; `2 tortillas`; `2 rebanadas` de pan; `1 cucharada` de aceite; `1 puñado` de maní y almendras.
+
+## Migración 058 — las tildes
+
+La 056 se escribió en **ASCII puro** (los dos arreglos de encoding que necesitó la 055 vinieron de ahí). El efecto secundario: las etiquetas generadas salieron «1 porcion (150 g)», **sin tilde, y eso lo lee el paciente**.
+
+No se corrigió editando la 056 —ya estaba aplicada y el runner guarda un checksum por fichero justo para impedirlo—, sino con una migración nueva que además arregla las instalaciones donde la 056 ya corrió. De paso, la expresión que compone la etiqueta —copiada en la 056 y en la 057, que es como se coló el fallo— se saca a la función `alimento_unidad_etiqueta(text, numeric)`.
+
+**Regla para el futuro:** un `.sql` con datos en español va en UTF-8 sin BOM, como la 026. ASCII solo cuando el fichero no lleve más que DDL y comentarios.
+
+## API
+
+Se extendieron los endpoints existentes en vez de crear `/api/pacientes/:id/*`. Toda la API del paciente va por `/api/paciente/*` y **resuelve la identidad del token, nunca de la URL**: meter el id del paciente en la ruta reintroduciría una superficie de IDOR que el diseño actual elimina por construcción.
+
+| Endpoint | Cambio |
+|---|---|
+| `GET /api/paciente/alimentos` | Ahora devuelve `unidades[]`, `fibraPor100g`, `verificado`. Acepta `fuente=biblioteca` o `mis-alimentos`, y `limite` |
+| `GET /api/paciente/alimentos/:id` | **Nuevo.** Una ficha concreta, para abrir un alimento apuntado hace días |
+| `POST /api/paciente/diario/items` | Acepta `{unidadId, cantidad}` además de `{cantidadG}` |
+| `GET /api/paciente/diario/:id/items` | Devuelve `cantidad`, `unidadId`, `unidadNombre` |
+| `GET /api/paciente/diario` | Cada comida trae sus `items[]`. Antes la pantalla pedía los ítems franja por franja: con seis franjas eran **siete peticiones** para abrir un día |
+
+Dos decisiones de seguridad en el POST:
+
+1. **Los gramos los calcula el servidor** desde la unidad del catálogo; no se aceptan del cliente junto con la unidad. Si no, los gramos y la etiqueta podrían decir cosas distintas y ninguna pantalla sabría cuál vale.
+2. La unidad se valida **contra el alimento** (`u.alimento_id = a.id` dentro del LEFT JOIN). Sin esa comparación se podría apuntar pechuga de pollo medida en «1 taza de arroz».
+
+«Mis alimentos» son los de la **clínica** del paciente: no hay alimentos por paciente en el modelo, el catálogo es global o de la clínica.
+
+## Diseño
+
+Tres colores nuevos en `tokens.css`, **fijos como los estados clínicos**: `--macro-cho #F59E0B`, `--macro-prot #3B82F6`, `--macro-grasa #EC4899`, con sus clases `macro-cho/prot/grasa` en el preset. Un macro tiene que ser del mismo color en las dos apps y en todas las marcas; si el ámbar cambiase con la clínica, una barra dejaría de significar lo mismo.
+
+El bottom nav **no se tocó**: sigue en seis ítems, que es su tope documentado.
+
+El toggle **Rápido / Detallado se conserva** y sube por encima de la rama. Era una decisión de producto explícita (`026_alimentos.sql:9`: «hay pacientes que no van a hacer otra cosa»), y el encargo la habría eliminado.
+
+`BuscadorAlimento.tsx` queda en el repo sin usar, como pedía el encargo. `PanelItems`, que vivía dentro de `Registros.tsx`, sí se quitó: lo sustituye `ApuntarTab` por completo y `noUnusedLocals` no admite dejarlo huérfano.
+
+## Comprobación — 29 de 29 en navegador real
+
+Puppeteer a 390×844, login de Keycloak incluido, contra API y base de datos reales.
+
+| Paso | Resultado |
+|---|---|
+| Modo Detallado | Las **seis** franjas visibles; 3 barras de macro con color de token |
+| Buscar «arroz» | Encuentra `Arroz blanco cocido` y `Gallo pinto` (por el sinónimo «arroz con frijoles») |
+| Dos pestañas | Biblioteca / Mis alimentos |
+| Ficha | Donut con **3 arcos**, tiles Carbohidratos/Proteína/Grasa/Calorías, chips de unidad |
+| 1 porción (150 g) | 195 kcal · C 42.3 · P 4.1 · G 0.5 |
+| **1.5 × 1 taza (160 g)** | = 240 g → **312 kcal**, recalculado en el cliente |
+| Guardar | El ítem aparece con su medida y **312 kcal**: lo prometido y lo guardado coinciden |
+| Panel | Se cierra al guardar |
+| Volver a Rápido | Conserva su pantalla **y ve lo apuntado en Detallado** |
+
+Dos fallos que encontró la prueba y se corrigieron:
+
+- Los tiles decían «Carbos» en vez de «Carbohidratos». `MACROS` pasa a tener tres nombres por macro —60 px en las barras, sitio en los tiles, una letra en los chips— porque uno solo no sirve para los tres.
+- **Al volver de Detallado, el modo Rápido enseñaba el día sin lo recién apuntado.** Son dos estados distintos y el de Rápido no se releía; el trigger de la base ya había reescrito la descripción de la comida. `cambiarModo` ahora recarga al volver.
+
+Un tercer «fallo» era del test, no del producto: `innerText` aplica el `uppercase` del CSS, así que `¿Cuánto comiste?` llegaba en mayúsculas. Las comparaciones del script se normalizan.
+
+## Datos de dev
+
+Paciente de prueba: `paciente-prueba` / `nutrismart-dev` (María Fernández, Clínica Nutrición Vida). La contraseña se fijó para esta comprobación.
+
+El `.env` de las dos apps web vive en **la raíz del repo** (`envDir` en `vite.config.ts`), y en dev `VITE_API_URL` y `VITE_KEYCLOAK_URL` van **vacías a propósito**: todo pasa por el proxy de Vite (`/api`, `/realms`) para que la app funcione igual desde un móvil de la red local. Un `.env` dentro de `apps/web-patient/` no se lee.

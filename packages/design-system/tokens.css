@@ -54,6 +54,13 @@
   /* ---- Gráficas (paleta validada, independiente de la marca) ---- */
   --chart-1: #2a78d6; --chart-2: #eb6834; --chart-3: #1baf7a; --chart-4: #eda100;
   --chart-grid: #E6ECEA; --chart-axis: #C3C2B7;
+
+  /* ---- Macronutrientes (R52) ----
+     FIJOS, como los estados clínicos y la paleta de gráficas: un mismo
+     macro tiene que ser del mismo color en las dos apps y en todas las
+     marcas. Si el ámbar de los carbohidratos cambiase con la clínica,
+     una barra de progreso dejaría de significar lo mismo. */
+  --macro-cho: #F59E0B; --macro-prot: #3B82F6; --macro-grasa: #EC4899;
 }
 
 /* ============================================================

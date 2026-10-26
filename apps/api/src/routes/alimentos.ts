@@ -98,7 +98,24 @@ const num = (v: unknown) => (v === null || v === undefined ? null : Number(v))
 /** Redondeo a un decimal, que es la precisión de las columnas. */
 const r1 = (n: number) => Math.round(n * 10) / 10
 
+interface UnidadFila {
+  id: string
+  nombre: string
+  gramosEquivalentes: string | number
+  esDefecto: boolean
+}
+
 function aAlimento(f: Record<string, unknown>) {
+  // `unidades` llega como json desde la base, con los numeros ya
+  // serializados. Se normalizan a number aqui para que el cliente no
+  // tenga que distinguir de donde salio cada campo.
+  const unidades = ((f['unidades'] ?? []) as UnidadFila[]).map((u) => ({
+    id: u.id,
+    nombre: u.nombre,
+    gramosEquivalentes: Number(u.gramosEquivalentes),
+    esDefecto: u.esDefecto,
+  }))
+
   return {
     id: f['id'] as string,
     nombre: f['nombre'] as string,
@@ -107,9 +124,16 @@ function aAlimento(f: Record<string, unknown>) {
     proteinaPor100g: num(f['proteina_por_100g']),
     choPor100g: num(f['cho_por_100g']),
     grasaPor100g: num(f['grasa_por_100g']),
+    // R52. NULL en los 46 alimentos de la 026: no se conoce, y un 0
+    // afirmaria que el frijol no tiene fibra.
+    fibraPor100g: num(f['fibra_por_100g']),
     porcionTipicaG: num(f['porcion_tipica_g']),
     unidadPorcion: f['unidad_porcion'] as string,
+    verificado: f['verificado'] === true,
     propio: f['clinica_id'] !== null,
+    // Siempre al menos dos: la porcion tipica y los 100 g. La pantalla
+    // de detalle preselecciona la que tenga `esDefecto`.
+    unidades,
   }
 }
 
@@ -118,7 +142,7 @@ export async function registerAlimentosRoutes(app: FastifyInstance): Promise<voi
   /* Catálogo                                                          */
   /* ================================================================ */
 
-  app.get<{ Querystring: { q?: string; categoria?: string } }>(
+  app.get<{ Querystring: { q?: string; categoria?: string; fuente?: string; limite?: string } }>(
     '/api/paciente/alimentos',
     { preHandler: requireAuthPaciente },
     async (request, reply) => {
@@ -135,6 +159,23 @@ export async function registerAlimentosRoutes(app: FastifyInstance): Promise<voi
           ? request.query.categoria
           : null
 
+      // R52 pide dos pestanas en el buscador: «Biblioteca» y «Mis
+      // alimentos». No hay alimentos POR PACIENTE en el modelo —el
+      // catalogo es global o de la clinica (026)—, asi que «mis
+      // alimentos» son los de la clinica del paciente, que es lo que su
+      // nutricionista dio de alta para el. Un valor que no sea ninguno
+      // de los dos se ignora en vez de dar 400: el buscador seguiria
+      // siendo util y un filtro mal escrito no debe vaciar la pantalla.
+      const fuente =
+        request.query.fuente === 'biblioteca' || request.query.fuente === 'mis-alimentos'
+          ? request.query.fuente
+          : null
+
+      const limitePedido = Number(request.query.limite)
+      const limite = Number.isFinite(limitePedido)
+        ? Math.min(Math.max(Math.floor(limitePedido), 1), 60)
+        : 40
+
       // El lado izquierdo usa la misma función que indexa la tabla, así
       // que "platano" encuentra "Plátano" y "jitomate" encuentra
       // "Tomate".
@@ -149,23 +190,99 @@ export async function registerAlimentosRoutes(app: FastifyInstance): Promise<voi
       // propia clínica. Los de otra clínica no existen para este
       // paciente.
       const { rows } = await pool.query(
-        `select id, clinica_id, nombre, categoria, kcal_por_100g, proteina_por_100g,
-                cho_por_100g, grasa_por_100g, porcion_tipica_g, unidad_porcion
-           from alimento_catalogo
-          where activo = true
-            and (clinica_id is null or clinica_id = $1)
+        `select a.id, a.clinica_id, a.nombre, a.categoria, a.kcal_por_100g,
+                a.proteina_por_100g, a.cho_por_100g, a.grasa_por_100g,
+                a.fibra_por_100g, a.porcion_tipica_g, a.unidad_porcion, a.verificado,
+                -- Las unidades en la misma consulta y no en una por
+                -- alimento: la pantalla de detalle las necesita para
+                -- pintar las chips en cuanto el paciente toca un
+                -- resultado, y 40 consultas mas por busqueda se notan
+                -- en un movil con mala red.
+                coalesce(
+                  (select json_agg(json_build_object(
+                            'id', u.id,
+                            'nombre', u.nombre,
+                            'gramosEquivalentes', u.gramos_equivalentes,
+                            'esDefecto', u.es_defecto)
+                          order by u.es_defecto desc, u.gramos_equivalentes)
+                     from alimento_unidad u
+                    where u.alimento_id = a.id and u.activo = true),
+                  '[]'::json) as unidades
+           from alimento_catalogo a
+          where a.activo = true
+            and (a.clinica_id is null or a.clinica_id = $1)
             and ($2::text is null
-                 or alimento_texto_busqueda(nombre, sinonimos)
+                 or alimento_texto_busqueda(a.nombre, a.sinonimos)
                       like '%' || lower(unaccent('unaccent', $2)) || '%')
-            and ($3::text is null or categoria = $3)
+            and ($3::text is null or a.categoria = $3)
+            and ($4::text is null
+                 or ($4 = 'biblioteca' and a.clinica_id is null)
+                 or ($4 = 'mis-alimentos' and a.clinica_id = $1))
           -- Lo propio de la clínica primero: si alguien se molestó en
           -- dar de alta "casado del día", es lo que quiere encontrar.
-          order by (clinica_id is null), nombre
-          limit 40`,
-        [pac.clinica_id, q === '' ? null : q, cat],
+          order by (a.clinica_id is null), a.nombre
+          limit $5`,
+        [pac.clinica_id, q === '' ? null : q, cat, fuente, limite],
       )
 
       return reply.send(rows.map(aAlimento))
+    },
+  )
+
+  /**
+   * Una ficha concreta — R52.
+   *
+   * La búsqueda ya devuelve las unidades, así que la pantalla de detalle
+   * no necesita esto para abrirse. Hace falta para el otro camino: abrir
+   * un alimento que el paciente apuntó hace días, cuando lo único que
+   * hay guardado es su id.
+   */
+  app.get<{ Params: { id: string } }>(
+    '/api/paciente/alimentos/:id',
+    { preHandler: requireAuthPaciente },
+    async (request, reply) => {
+      const pac = await resolverPaciente(request.authPac.sub)
+      if (!pac) {
+        const r = await sinExpediente(request.authPac.sub)
+        return reply.code(r.codigo).send(r.cuerpo)
+      }
+
+      const { id } = request.params
+      if (!esUuid(id)) {
+        return reply
+          .code(404)
+          .send({ error: 'no_encontrado', message: 'Ese alimento no está disponible' })
+      }
+
+      const { rows } = await pool.query(
+        `select a.id, a.clinica_id, a.nombre, a.categoria, a.kcal_por_100g,
+                a.proteina_por_100g, a.cho_por_100g, a.grasa_por_100g,
+                a.fibra_por_100g, a.porcion_tipica_g, a.unidad_porcion, a.verificado,
+                coalesce(
+                  (select json_agg(json_build_object(
+                            'id', u.id,
+                            'nombre', u.nombre,
+                            'gramosEquivalentes', u.gramos_equivalentes,
+                            'esDefecto', u.es_defecto)
+                          order by u.es_defecto desc, u.gramos_equivalentes)
+                     from alimento_unidad u
+                    where u.alimento_id = a.id and u.activo = true),
+                  '[]'::json) as unidades
+           from alimento_catalogo a
+          where a.id = $1 and a.activo = true
+            and (a.clinica_id is null or a.clinica_id = $2)`,
+        [id, pac.clinica_id],
+      )
+
+      // Un alimento de otra clínica se contesta igual que uno que no
+      // existe: desde fuera no debe poder distinguirse.
+      if (!rows[0]) {
+        return reply
+          .code(404)
+          .send({ error: 'no_encontrado', message: 'Ese alimento no está disponible' })
+      }
+
+      return reply.send(aAlimento(rows[0]))
     },
   )
 
@@ -378,13 +495,19 @@ export async function registerAlimentosRoutes(app: FastifyInstance): Promise<voi
         return reply.code(404).send({ error: 'no_encontrada', message: 'No se encontró la comida' })
       }
 
+      // La unidad por LEFT JOIN: las filas de antes de R52 no la tienen
+      // y las que la tenían pueden haberla perdido si la clínica retiró
+      // la medida del catálogo (`on delete set null`). En los dos casos
+      // quedan los gramos, que es el dato clínico.
       const { rows } = await pool.query(
-        `select id, alimento_id, nombre_alimento, cantidad_g,
-                kcal, proteina_g, cho_g, grasa_g,
-                to_char(created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at
-           from registro_comida_item
-          where registro_comida_id = $1 and activo = true
-          order by created_at, id`,
+        `select i.id, i.alimento_id, i.nombre_alimento, i.cantidad_g, i.cantidad,
+                i.unidad_id, u.nombre as unidad_nombre,
+                i.kcal, i.proteina_g, i.cho_g, i.grasa_g,
+                to_char(i.created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at
+           from registro_comida_item i
+           left join alimento_unidad u on u.id = i.unidad_id
+          where i.registro_comida_id = $1 and i.activo = true
+          order by i.created_at, i.id`,
         [registroId],
       )
 
@@ -394,6 +517,9 @@ export async function registerAlimentosRoutes(app: FastifyInstance): Promise<voi
           alimentoId: f['alimento_id'],
           nombre: f['nombre_alimento'],
           cantidadG: num(f['cantidad_g']),
+          cantidad: num(f['cantidad']),
+          unidadId: f['unidad_id'],
+          unidadNombre: f['unidad_nombre'],
           kcal: num(f['kcal']),
           proteinaG: num(f['proteina_g']),
           choG: num(f['cho_g']),
@@ -441,21 +567,73 @@ export async function registerAlimentosRoutes(app: FastifyInstance): Promise<voi
       const f = b['fecha']
       const fecha = typeof f === 'string' && RE_FECHA.test(f) ? f : null
 
-      const cantidad = Number(b['cantidadG'])
-      if (!Number.isFinite(cantidad) || cantidad <= 0 || cantidad > 5000) {
-        return reply
-          .code(400)
-          .send({ error: 'validacion', message: 'Indica una cantidad entre 1 y 5000' })
+      /*
+       * Dos formas de decir cuánto se comió — R52.
+       *
+       * La pantalla nueva manda `unidadId` + `cantidad` («1.5 tazas»),
+       * que es como la gente mide. La anterior manda `cantidadG`. Se
+       * admiten las dos: un alimento escrito a mano no tiene unidades
+       * que elegir, y las filas de antes de R52 se siguen editando.
+       *
+       * Los gramos se calculan en el servidor a partir de la unidad del
+       * catálogo, nunca se aceptan del cliente junto con la unidad: si
+       * no, los gramos y la etiqueta podrían decir cosas distintas y
+       * ninguna pantalla sabría cuál vale.
+       */
+      const unidadId = b['unidadId']
+      const usaUnidad = unidadId !== undefined && unidadId !== null && unidadId !== ''
+
+      let cantidadUnidades: number | null = null
+      if (usaUnidad) {
+        if (typeof unidadId !== 'string' || !esUuid(unidadId)) {
+          return reply
+            .code(400)
+            .send({ error: 'validacion', message: 'La unidad indicada no es válida' })
+        }
+        const n = Number(b['cantidad'])
+        // 0.25 es el mínimo del selector de la pantalla (un cuarto de
+        // porción); por debajo de eso el redondeo a un decimal de las
+        // columnas se come la diferencia.
+        if (!Number.isFinite(n) || n < 0.25 || n > 100) {
+          return reply
+            .code(400)
+            .send({ error: 'validacion', message: 'Indica una cantidad entre 0.25 y 100' })
+        }
+        cantidadUnidades = Math.round(n * 100) / 100
       }
 
       const alimentoId = b['alimentoId']
+      const tieneAlimento = alimentoId !== undefined && alimentoId !== null && alimentoId !== ''
+
+      if (usaUnidad && !tieneAlimento) {
+        return reply.code(400).send({
+          error: 'validacion',
+          message: 'Una unidad de medida solo se puede usar con un alimento del catálogo',
+        })
+      }
+
+      // En gramos (o ml, según el alimento). Es lo que se guarda y con
+      // lo que se calculan las kcal, igual que antes de R52.
+      let cantidad: number
+      if (!usaUnidad) {
+        const g = Number(b['cantidadG'])
+        if (!Number.isFinite(g) || g <= 0 || g > 5000) {
+          return reply
+            .code(400)
+            .send({ error: 'validacion', message: 'Indica una cantidad entre 1 y 5000' })
+        }
+        cantidad = g
+      } else {
+        cantidad = 0 // se fija al resolver la unidad contra el alimento
+      }
+
       let nombre: string
       let kcal: number | null = null
       let prot: number | null = null
       let cho: number | null = null
       let grasa: number | null = null
 
-      if (alimentoId !== undefined && alimentoId !== null && alimentoId !== '') {
+      if (tieneAlimento) {
         if (typeof alimentoId !== 'string' || !esUuid(alimentoId)) {
           return reply
             .code(400)
@@ -465,17 +643,36 @@ export async function registerAlimentosRoutes(app: FastifyInstance): Promise<voi
         // Se relee el alimento del servidor en vez de fiarse de las
         // cifras que manda el cliente: si no, cualquiera podría apuntar
         // una pizza con 0 kcal y el diario dejaría de valer.
+        //
+        // La unidad entra por LEFT JOIN y con `u.alimento_id = a.id` en
+        // la condición: así una unidad existente pero de OTRO alimento
+        // llega como null y se rechaza. Sin esa comparación se podría
+        // apuntar pechuga de pollo medida en «1 taza de arroz».
         const { rows } = await pool.query(
-          `select nombre, kcal_por_100g, proteina_por_100g, cho_por_100g, grasa_por_100g
-             from alimento_catalogo
-            where id = $1 and activo = true and (clinica_id is null or clinica_id = $2)`,
-          [alimentoId, pac.clinica_id],
+          `select a.nombre, a.kcal_por_100g, a.proteina_por_100g, a.cho_por_100g,
+                  a.grasa_por_100g,
+                  u.id as unidad_id, u.gramos_equivalentes
+             from alimento_catalogo a
+             left join alimento_unidad u
+                    on u.id = $3::uuid and u.alimento_id = a.id and u.activo = true
+            where a.id = $1 and a.activo = true
+              and (a.clinica_id is null or a.clinica_id = $2)`,
+          [alimentoId, pac.clinica_id, usaUnidad ? unidadId : null],
         )
         const a = rows[0]
         if (!a) {
           return reply
             .code(404)
             .send({ error: 'no_encontrado', message: 'Ese alimento ya no está disponible' })
+        }
+
+        if (usaUnidad) {
+          if (!a['unidad_id']) {
+            return reply
+              .code(404)
+              .send({ error: 'no_encontrada', message: 'Esa medida ya no está disponible' })
+          }
+          cantidad = r1(Number(a['gramos_equivalentes']) * (cantidadUnidades as number))
         }
 
         const factor = cantidad / 100
@@ -526,8 +723,9 @@ export async function registerAlimentosRoutes(app: FastifyInstance): Promise<voi
         const { rows } = await cliente.query<{ id: string }>(
           `insert into registro_comida_item
              (registro_comida_id, clinica_id, alimento_id, nombre_alimento,
-              cantidad_g, kcal, proteina_g, cho_g, grasa_g)
-           values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+              cantidad_g, kcal, proteina_g, cho_g, grasa_g,
+              unidad_id, cantidad)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
            returning id`,
           [
             registroId,
@@ -539,16 +737,32 @@ export async function registerAlimentosRoutes(app: FastifyInstance): Promise<voi
             prot,
             cho,
             grasa,
+            usaUnidad ? (unidadId as string) : null,
+            cantidadUnidades,
           ],
         )
 
         await cliente.query('commit')
+
+        // Se devuelve también la etiqueta de la unidad para que la lista
+        // pueda pintar «1.5 tazas» sin volver a pedir el alimento.
+        let unidadNombre: string | null = null
+        if (usaUnidad) {
+          const { rows: u } = await pool.query<{ nombre: string }>(
+            `select nombre from alimento_unidad where id = $1`,
+            [unidadId as string],
+          )
+          unidadNombre = u[0]?.nombre ?? null
+        }
 
         return reply.code(201).send({
           registroId,
           id: rows[0]!.id,
           nombre,
           cantidadG: cantidad,
+          cantidad: cantidadUnidades,
+          unidadId: usaUnidad ? (unidadId as string) : null,
+          unidadNombre,
           kcal,
           proteinaG: prot,
           choG: cho,

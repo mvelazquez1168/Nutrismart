@@ -10,27 +10,23 @@ import { useNavigate } from 'react-router-dom'
 import {
   ApiError,
   FRANJAS,
-  anadirItem,
   borrarComida,
   getDiario,
-  getItems,
   getMetricas,
   getModoDiario,
   getSemanaDiario,
   guardarComida,
   guardarMetrica,
-  quitarItem,
   setModoDiario,
   type Diario,
   type DiaSemana,
   type Franja,
-  type ItemComida,
   type Metrica,
   type ModoDiario,
   type TipoMetrica,
 } from '../lib/api'
 import { entrar, initKeycloak } from '../lib/keycloak'
-import { BuscadorAlimento } from '../components/BuscadorAlimento'
+import ApuntarTab from '../components/ingesta/ApuntarTab'
 import { PanelBienestar } from '../components/PanelBienestar'
 import { PanelCuerpo } from '../components/PanelCuerpo'
 import { NavBar } from '../components/NavBar'
@@ -85,122 +81,6 @@ function BarraSemana({ dias }: { dias: DiaSemana[] }) {
   )
 }
 
-/**
- * Los alimentos de una franja, en modo detallado.
- *
- * `registroId` puede ser null: la comida no existe hasta que se le mete
- * el primer alimento, y se crea en el mismo paso. Así no quedan comidas
- * vacías de quien abrió la franja y se arrepintió.
- */
-function PanelItems({
-  registroId,
-  fecha,
-  franja,
-  onCambio,
-}: {
-  registroId: string | null
-  fecha: string
-  franja: Franja
-  onCambio: () => Promise<void>
-}) {
-  const [items, setItems] = useState<ItemComida[]>([])
-  const [buscando, setBuscando] = useState(false)
-  const [ocupado, setOcupado] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!registroId) {
-      setItems([])
-      return
-    }
-    let vivo = true
-    getItems(registroId)
-      .then((r) => {
-        if (vivo) setItems(r)
-      })
-      .catch(() => {
-        /* la lista vacía ya comunica el estado */
-      })
-    return () => {
-      vivo = false
-    }
-  }, [registroId])
-
-  async function anadir(datos: { alimentoId?: string; nombre?: string; cantidadG: number }) {
-    const r = await anadirItem({ ...datos, fecha, tipoComida: franja })
-    setBuscando(false)
-    setItems((prev) => [...prev, r])
-    // El total de la comida lo recalcula el servidor: se recarga el
-    // diario entero en vez de sumar aquí, para que no haya dos cuentas
-    // que puedan discrepar.
-    await onCambio()
-  }
-
-  async function quitar(item: ItemComida) {
-    if (!registroId || ocupado) return
-    setOcupado(true)
-    setError(null)
-    try {
-      await quitarItem(registroId, item.id)
-      setItems((prev) => prev.filter((i) => i.id !== item.id))
-      await onCambio()
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'No se pudo quitar')
-    } finally {
-      setOcupado(false)
-    }
-  }
-
-  return (
-    <div className="space-y-3">
-      {items.length > 0 && (
-        <ul className="divide-y divide-border">
-          {items.map((i) => (
-            <li key={i.id} className="flex items-baseline justify-between gap-2 py-2">
-              <div className="min-w-0">
-                <p className="truncate text-sm text-ink">{i.nombre}</p>
-                <p className="text-xs text-muted tabular-nums">{Math.round(i.cantidadG)} g</p>
-              </div>
-              <div className="flex shrink-0 items-baseline gap-3">
-                <span className="text-sm tabular-nums text-muted">
-                  {i.kcal !== null ? `${Math.round(i.kcal)} kcal` : '—'}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => void quitar(i)}
-                  disabled={ocupado}
-                  aria-label={`Quitar ${i.nombre}`}
-                  className="text-xs text-muted hover:text-ink"
-                >
-                  Quitar
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {error && (
-        <p role="alert" className="text-xs" style={{ color: 'var(--status-critical)' }}>
-          {error}
-        </p>
-      )}
-
-      {buscando ? (
-        <BuscadorAlimento onElegir={anadir} onCerrar={() => setBuscando(false)} />
-      ) : (
-        <button
-          type="button"
-          onClick={() => setBuscando(true)}
-          className="w-full rounded-md border border-dashed border-border py-2.5 text-sm font-medium text-primary"
-        >
-          + Añadir alimento
-        </button>
-      )}
-    </div>
-  )
-}
-
 function PanelDiario() {
   const [fecha, setFecha] = useState(hoyLocal())
   const [diario, setDiario] = useState<Diario | null>(null)
@@ -235,6 +115,16 @@ function PanelDiario() {
   async function cambiarModo(nuevo: ModoDiario) {
     setModo(nuevo)
     setEditando(null)
+    // Al volver de «Detallado» hay que releer el día: esa pantalla tiene
+    // su propio estado y lo que se apuntó allí no pasó por el `diario`
+    // de aquí. Sin esto, el modo Rápido enseña el día como estaba antes
+    // de añadir nada — y el trigger de la base ya había reescrito la
+    // descripción de la comida con los alimentos.
+    if (nuevo === 'simple') {
+      cargar(fecha).catch(() => {
+        /* el error ya se enseña por el camino normal de carga */
+      })
+    }
     try {
       await setModoDiario(nuevo)
     } catch {
@@ -291,6 +181,41 @@ function PanelDiario() {
 
   return (
     <div className="space-y-4">
+      {/* El modo lo elige el paciente, no la clínica. Hay quien no va a
+          apuntar alimento por alimento nunca, y forzarlo consigue que
+          deje de apuntar del todo.
+
+          Va arriba y fuera de la rama porque en R52 las dos vistas ya no
+          comparten nada: «Detallado» es una pantalla entera con su
+          propio navegador de días. */}
+      <div className="flex gap-1.5" role="group" aria-label="Modo del diario">
+        {(
+          [
+            { clave: 'simple', etiqueta: 'Rápido', pie: 'Una frase por comida' },
+            { clave: 'detallado', etiqueta: 'Detallado', pie: 'Alimento por alimento' },
+          ] as const
+        ).map((m) => (
+          <button
+            key={m.clave}
+            type="button"
+            onClick={() => void cambiarModo(m.clave)}
+            aria-pressed={modo === m.clave}
+            className={`flex-1 rounded-md border px-2 py-2 text-center ${
+              modo === m.clave
+                ? 'border-primary bg-primary-tint text-primary'
+                : 'border-border text-muted'
+            }`}
+          >
+            <span className="block text-xs font-semibold">{m.etiqueta}</span>
+            <span className="block text-[0.65rem] leading-tight">{m.pie}</span>
+          </button>
+        ))}
+      </div>
+
+      {modo === 'detallado' ? (
+        <ApuntarTab />
+      ) : (
+        <>
       <div className="flex items-center justify-between gap-2">
         <label htmlFor="fecha" className="text-sm font-medium text-ink">
           Día
@@ -337,33 +262,6 @@ function PanelDiario() {
         )}
       </section>
 
-      {/* El modo lo elige el paciente, no la clínica. Hay quien no va a
-          apuntar alimento por alimento nunca, y forzarlo consigue que
-          deje de apuntar del todo. */}
-      <div className="flex gap-1.5" role="group" aria-label="Modo del diario">
-        {(
-          [
-            { clave: 'simple', etiqueta: 'Rápido', pie: 'Una frase por comida' },
-            { clave: 'detallado', etiqueta: 'Detallado', pie: 'Alimento por alimento' },
-          ] as const
-        ).map((m) => (
-          <button
-            key={m.clave}
-            type="button"
-            onClick={() => void cambiarModo(m.clave)}
-            aria-pressed={modo === m.clave}
-            className={`flex-1 rounded-md border px-2 py-2 text-center ${
-              modo === m.clave
-                ? 'border-primary bg-primary-tint text-primary'
-                : 'border-border text-muted'
-            }`}
-          >
-            <span className="block text-xs font-semibold">{m.etiqueta}</span>
-            <span className="block text-[0.65rem] leading-tight">{m.pie}</span>
-          </button>
-        ))}
-      </div>
-
       <ul className="space-y-2">
         {FRANJAS.map((f) => {
           const r = diario.registros.find((x) => x.tipoComida === f.clave)
@@ -388,18 +286,7 @@ function PanelDiario() {
                 )}
               </button>
 
-              {abierta && modo === 'detallado' && (
-                <div className="border-t border-border p-4">
-                  <PanelItems
-                    registroId={r?.id ?? null}
-                    fecha={fecha}
-                    franja={f.clave}
-                    onCambio={() => cargar(fecha)}
-                  />
-                </div>
-              )}
-
-              {abierta && modo === 'simple' && (
+              {abierta && (
                 <div className="space-y-2 border-t border-border p-4">
                   <label htmlFor={`d-${f.clave}`} className="block text-xs text-muted">
                     ¿Qué comiste?
@@ -457,6 +344,8 @@ function PanelDiario() {
         <p role="alert" className="text-center text-sm" style={{ color: 'var(--status-critical)' }}>
           {error}
         </p>
+      )}
+        </>
       )}
     </div>
   )

@@ -34,6 +34,13 @@ module.exports = {
           1: 'var(--chart-1)', 2: 'var(--chart-2)',
           3: 'var(--chart-3)', 4: 'var(--chart-4)',
         },
+        // Macronutrientes (R52). Mismo criterio que `status` y `chart`:
+        // no se re-tematizan con la marca.
+        macro: {
+          cho: 'var(--macro-cho)',
+          prot: 'var(--macro-prot)',
+          grasa: 'var(--macro-grasa)',
+        },
       },
       fontFamily: { sans: ['var(--font-sans)'] },
       borderRadius: {

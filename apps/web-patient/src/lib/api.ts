@@ -254,6 +254,14 @@ export interface Comida {
   choG: number | null
   grasaG: number | null
   actualizadoEn: string
+  /**
+   * Los alimentos de la comida — R52.
+   *
+   * Vacío en las comidas del modo simple, donde la descripción es una
+   * frase y no hay nada que desglosar. Vienen en la misma respuesta que
+   * el día para no pedir los items franja por franja.
+   */
+  items: ItemComida[]
 }
 
 export interface Diario {
@@ -403,6 +411,15 @@ export function marcarTarea(id: string, completada: boolean): Promise<Tarea> {
 
 export type ModoDiario = 'simple' | 'detallado'
 
+/** Una medida del alimento: «1 taza (160 g)». R52. */
+export interface UnidadAlimento {
+  id: string
+  nombre: string
+  gramosEquivalentes: number
+  /** La que se preselecciona al abrir el detalle. Hay exactamente una. */
+  esDefecto: boolean
+}
+
 export interface Alimento {
   id: string
   nombre: string
@@ -411,9 +428,15 @@ export interface Alimento {
   proteinaPor100g: number
   choPor100g: number
   grasaPor100g: number
+  /** R52. Null en los 46 alimentos sembrados antes: no se conoce. */
+  fibraPor100g: number | null
   porcionTipicaG: number
   unidadPorcion: 'g' | 'ml' | 'pza'
+  /** Ficha contrastada contra una fuente (USDA, INCAP). R52. */
+  verificado: boolean
   propio: boolean
+  /** Siempre al menos dos: la porción típica y los 100 g. R52. */
+  unidades: UnidadAlimento[]
 }
 
 export interface ItemComida {
@@ -421,6 +444,11 @@ export interface ItemComida {
   alimentoId: string | null
   nombre: string
   cantidadG: number
+  /** Nº de unidades («1.5» tazas). Null si se apuntó en gramos. R52. */
+  cantidad: number | null
+  unidadId: string | null
+  /** Null si se apuntó en gramos o si la clínica retiró la medida. */
+  unidadNombre: string | null
   kcal: number | null
   proteinaG: number | null
   choG: number | null
@@ -440,24 +468,46 @@ export function setModoDiario(modoDiario: ModoDiario): Promise<{ modoDiario: Mod
   })
 }
 
-export function buscarAlimentos(q: string, categoria?: string): Promise<Alimento[]> {
+/** Las dos pestañas del buscador de R52. */
+export type FuenteAlimento = 'biblioteca' | 'mis-alimentos'
+
+export function buscarAlimentos(
+  q: string,
+  opciones: { categoria?: string; fuente?: FuenteAlimento; limite?: number } = {},
+): Promise<Alimento[]> {
   const p = new URLSearchParams()
   if (q.trim() !== '') p.set('q', q.trim())
-  if (categoria) p.set('categoria', categoria)
+  if (opciones.categoria) p.set('categoria', opciones.categoria)
+  if (opciones.fuente) p.set('fuente', opciones.fuente)
+  if (opciones.limite) p.set('limite', String(opciones.limite))
   const cola = p.toString()
   return pedir(`/api/paciente/alimentos${cola ? `?${cola}` : ''}`, { conAuth: true })
+}
+
+export function getAlimento(id: string): Promise<Alimento> {
+  return pedir(`/api/paciente/alimentos/${id}`, { conAuth: true })
 }
 
 export function getItems(registroId: string): Promise<ItemComida[]> {
   return pedir(`/api/paciente/diario/${registroId}/items`, { conAuth: true })
 }
 
+/**
+ * Apunta un alimento en una franja del día.
+ *
+ * Dos formas de decir cuánto: `unidadId` + `cantidad` («1.5 tazas»), que
+ * es la de la pantalla de R52, o `cantidadG` en gramos, que es la del
+ * modo detallado anterior. Con unidad, los gramos los calcula el
+ * servidor desde el catálogo — aquí no se mandan.
+ */
 export function anadirItem(datos: {
   fecha: string
   tipoComida: Franja
   alimentoId?: string
   nombre?: string
-  cantidadG: number
+  cantidadG?: number
+  unidadId?: string
+  cantidad?: number
 }): Promise<ItemComida & { registroId: string }> {
   return pedir('/api/paciente/diario/items', {
     method: 'POST',

@@ -104,7 +104,7 @@ export async function registerPacienteRegistrosRoutes(app: FastifyInstance): Pro
       const q = request.query.fecha
       const fecha = typeof q === 'string' && RE_FECHA.test(q) ? q : null
 
-      const [registros, plan] = await Promise.all([
+      const [registros, plan, items] = await Promise.all([
         pool.query(
           // `order by rc.tipo_comida` con la tabla ALIADA, no
           // `order by tipo_comida` a secas: el alias de salida es texto
@@ -131,7 +131,55 @@ export async function registerPacienteRegistrosRoutes(app: FastifyInstance): Pro
             order by c.numero_consulta desc limit 1`,
           [pac.id, pac.clinica_id],
         ),
+        /*
+         * Los alimentos de todas las comidas del día, en una consulta —
+         * R52.
+         *
+         * Antes la pantalla pedía los items comida por comida
+         * (`/diario/:registroId/items`), que con seis franjas son siete
+         * peticiones para abrir un día. La pantalla nueva los enseña
+         * todos a la vez, dentro de cada sección, así que se traen
+         * juntos y se reparten en memoria. El endpoint por comida se
+         * queda: lo usa el modo detallado anterior.
+         */
+        pool.query(
+          `select i.registro_comida_id, i.id, i.alimento_id, i.nombre_alimento,
+                  i.cantidad_g, i.cantidad, i.unidad_id, u.nombre as unidad_nombre,
+                  i.kcal, i.proteina_g, i.cho_g, i.grasa_g,
+                  to_char(i.created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at
+             from registro_comida_item i
+             join registro_comida rc on rc.id = i.registro_comida_id
+             left join alimento_unidad u on u.id = i.unidad_id
+            where rc.paciente_id = $1 and rc.clinica_id = $2 and rc.activo = true
+              and rc.fecha = coalesce($3::date, (now() at time zone 'America/Costa_Rica')::date)
+              and i.activo = true
+            order by i.created_at, i.id`,
+          [pac.id, pac.clinica_id, fecha],
+        ),
       ])
+
+      // Agrupados por comida antes de armar la respuesta: así cada fila
+      // sale ya con sus alimentos y la pantalla no tiene que cruzarlos.
+      const itemsPorComida = new Map<string, unknown[]>()
+      for (const i of items.rows) {
+        const clave = i['registro_comida_id'] as string
+        const lista = itemsPorComida.get(clave) ?? []
+        lista.push({
+          id: i['id'],
+          alimentoId: i['alimento_id'],
+          nombre: i['nombre_alimento'],
+          cantidadG: num(i['cantidad_g']),
+          cantidad: num(i['cantidad']),
+          unidadId: i['unidad_id'],
+          unidadNombre: i['unidad_nombre'],
+          kcal: num(i['kcal']),
+          proteinaG: num(i['proteina_g']),
+          choG: num(i['cho_g']),
+          grasaG: num(i['grasa_g']),
+          apuntadoEn: i['created_at'],
+        })
+        itemsPorComida.set(clave, lista)
+      }
 
       const filas = registros.rows.map((r) => ({
         id: r['id'],
@@ -142,6 +190,9 @@ export async function registerPacienteRegistrosRoutes(app: FastifyInstance): Pro
         choG: num(r['cho_g']),
         grasaG: num(r['grasa_g']),
         actualizadoEn: r['updated_at'],
+        // Vacío en las comidas del modo simple: ahí la descripción es
+        // una frase y no hay alimentos que desglosar.
+        items: itemsPorComida.get(r['id'] as string) ?? [],
       }))
 
       const suma = (campo: keyof (typeof filas)[number]) =>
