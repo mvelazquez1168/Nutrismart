@@ -12,6 +12,7 @@ import { procesarRecordatorios } from '../agenda/recordatorios.js'
 import { requireAuth } from '../auth.js'
 import { esUuid } from '../pacientes/validacion.js'
 import { resolverAlcance } from '../pacientes/acceso.js'
+import { avisarCambioDeCita, inicioDeCita } from '../email/agenda-avisos.js'
 import { listarProfesionales } from '../pacientes/repositorio.js'
 import { validarCita, validarEstado, CITA_ESTADOS, type CitaEstado } from '../agenda/validacion.js'
 import {
@@ -173,6 +174,9 @@ export async function registerAgendaRoutes(app: FastifyInstance): Promise<void> 
       // para otro profesional es una función posterior, y permitirlo
       // sin más saltaría el control de solapes del titular.
       const id = await crearCita(tenantId, alcance.restringirA, alcance.profesionalId, validacion.datos)
+      // R54. No se espera: el correo no debe anadir segundos a la
+      // respuesta ni tumbarla si Resend falla.
+      avisarCambioDeCita(id, 'agendada', { log: request.log })
       return reply.code(201).send({ id, estado: 'programada' })
     } catch (error) {
       if (error instanceof PacienteNoVisibleError) {
@@ -227,9 +231,24 @@ export async function registerAgendaRoutes(app: FastifyInstance): Promise<void> 
         return reply.code(400).send({ error: 'validacion', errores: validacion.errores })
       }
 
+      // Se lee ANTES de actualizar: despues ya no hay con que comparar,
+      // y sin saber la hora anterior no se puede distinguir «te movimos
+      // la cita» de «te cambiamos la nota».
+      const inicioAnterior = await inicioDeCita(id)
+
       try {
         const ok = await actualizarCita(tenantId, alcance.restringirA, id, validacion.datos)
         if (!ok) return reply.code(404).send(noEncontrada())
+
+        // Solo si de verdad cambio de hora. Editar el motivo o las
+        // notas de una cita no es reagendarla, y avisar al paciente de
+        // un cambio que no le afecta es como se consigue que deje de
+        // leer los correos.
+        const inicioNuevo = await inicioDeCita(id)
+        if (inicioAnterior && inicioNuevo && inicioAnterior !== inicioNuevo) {
+          avisarCambioDeCita(id, 'reagendada', { inicioAnterior, log: request.log })
+        }
+
         return obtenerCita(tenantId, alcance.restringirA, id)
       } catch (error) {
         if (error instanceof CitaNoEditableError) {
@@ -275,6 +294,14 @@ export async function registerAgendaRoutes(app: FastifyInstance): Promise<void> 
       try {
         const ok = await cambiarEstado(tenantId, alcance.restringirA, id, nuevo)
         if (!ok) return reply.code(404).send(noEncontrada())
+
+        // Solo la cancelacion se avisa. «Completada» y «no asistio» son
+        // apuntes de lo que ya paso: el paciente estaba delante, o no
+        // estaba, y un correo contandoselo no le dice nada nuevo.
+        if (nuevo === 'cancelada') {
+          avisarCambioDeCita(id, 'cancelada', { log: request.log })
+        }
+
         return { id, estado: nuevo }
       } catch (error) {
         if (error instanceof TransicionInvalidaError) {

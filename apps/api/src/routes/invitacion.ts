@@ -119,9 +119,11 @@ export async function registerInvitacionRoutes(app: FastifyInstance): Promise<vo
       let envio: ResultadoEnvio = 'fallo'
       try {
         envio = await enviarInvitacion({
+          // R54: la marca (nombre, color y logo) se lee de brand_config
+          // a partir del id, en vez de pasar el nombre suelto.
+          clinicaId: tenantId,
           correoPaciente: p.correo,
           nombrePaciente: p.nombre,
-          nombreClinica: p.clinica,
           token,
         })
         if (envio === 'enviado') {

@@ -16,6 +16,7 @@
     "verificar:resumen-ia": "tsx src/plan/verificar-resumen-ia.ts",
     "verificar:habitos": "tsx src/dietetico/verificar-habitos.ts",
     "verificar:labs-pdf": "tsx src/laboratorios/verificar-pdf.ts",
+    "verificar:correos": "tsx src/email/verificar.ts",
     "seed": "tsx src/seed.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
