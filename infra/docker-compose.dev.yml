@@ -55,7 +55,14 @@ services:
   # `getaddrinfo ENOTFOUND keycloak`, un fallo de DNS con pinta de fallo
   # de autenticación. Eso deja de poder pasar.
   keycloak:
-    image: quay.io/keycloak/keycloak:26.3
+    # Imagen propia: la base mas el tema de login de NutriSmart.
+    # Contexto en la raiz del repo, como el servicio `api` de abajo: el
+    # tema vive en apps/api/keycloak-theme/ y Docker no deja copiar nada
+    # por encima del contexto.
+    build:
+      context: ..
+      dockerfile: infra/keycloak/Dockerfile
+    image: nutrismart-keycloak:dev
     container_name: nutrismart-keycloak
     # `start-dev`, no `start`: sin HTTPS obligatorio ni hostname estricto.
     # Producción usa `start` con `KC_HOSTNAME` (docker-compose.prod.yml).

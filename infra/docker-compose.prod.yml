@@ -42,7 +42,16 @@ services:
 
   # ── Keycloak ────────────────────────────────────────────────
   keycloak:
-    image: quay.io/keycloak/keycloak:26.3
+    # Imagen propia: la base mas el tema de login (infra/keycloak/Dockerfile).
+    #
+    # Via ECR y no `build:`, como el resto de lo nuestro. Este compose se
+    # ejecuta desde /opt/nutrismart, que no es donde esta el repo en el
+    # servidor (ver deploy.sh), asi que un contexto relativo apuntaria a
+    # otro sitio. La construye y la sube `build-and-push.sh`.
+    #
+    # OJO: al cambiar esto, la primera vez hay que haber publicado la
+    # imagen o el contenedor no podra recrearse.
+    image: ${ECR_REGISTRY}/nutrismart-keycloak:${IMAGE_TAG}
     container_name: nutrismart-keycloak-prod
     restart: unless-stopped
     command: start
