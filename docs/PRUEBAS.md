@@ -5857,122 +5857,120 @@ Evaluarlo convertiría una nota suelta en un criterio clínico —el mismo valor
 
 ---
 
-# R52 — Ingesta diaria por porciones
+# R53 — Personalización de la app del paciente y multi-clínica
 
-Rama `r52-ingesta-diaria`. Migraciones **056**, **057** y **058**.
+Rama `r53-personalizacion`, desde `main`. Migraciones **059** y **060**.
 
-La pantalla «Qué comí → Detallado» se rehace: seis franjas siempre a la vista, barras de macro contra la prescripción, buscador en panel deslizante y ficha de alimento con donut. La cantidad se dice en **porciones** («1.5 tazas»), no en gramos.
+El paciente elige el color de su app y se construye un avatar ilustrado; el logo de la clínica llega a su pantalla; y un profesional puede pertenecer a más de una clínica.
 
-## Lo que NO se construyó, y por qué
+## Pre-vuelo 022 — ejecutado
 
-El encargo proponía cuatro tablas nuevas: `alimento`, `alimento_unidad`, `ingesta_diaria` y `plan_nutricional`. **Tres ya existían con otro nombre.** Construirlas habría dado dos contabilidades de la misma comida.
+El checksum guardado en dev era el de CRLF (`f6f75020…`). Se hicieron **las dos mitades**, porque solo una rompe el runner:
 
-| El encargo pedía | Ya existía | Desde |
+1. `022_recordatorios_cita.sql` se normalizó a LF en disco (el blob del repo ya era LF; `.gitattributes` dice `*.sql text eol=lf`, así que `git diff` queda vacío y no hay nada que commitear).
+2. La fila de `schema_migrations` pasó al hash de LF (`40240bc03d9eadce…`).
+
+Hacer solo (2) —que es lo que pedía el prompt— habría dejado el archivo en CRLF y el runner habría abortado en la 022 **en esta máquina**. Comprobado: entre el paso 1 y el 2, `npm run migrate` falló con «ya fue aplicada pero su contenido cambió». Después, limpio.
+
+## Lo que NO se construyó, porque ya existía
+
+| El encargo pedía | Ya existía | Dónde |
 |---|---|---|
-| `alimento` | `alimento_catalogo` — 46 alimentos, sinónimos regionales, búsqueda sin acentos, multi-tenant | `026_alimentos.sql` |
-| `ingesta_diaria` | `registro_comida` + `registro_comida_item` | `023`, `026` |
-| `plan_nutricional` | La prescripción dietética de `conclusion_valoracion`: `kcal_prescritas`, `pct_proteina`, `pct_cho`, `pct_grasa` y los gramos derivados | `018_eval_conclusion.sql` |
-| `alimento_unidad` | **Nada.** Esto sí faltaba | — |
+| `clinica.logo_url` + `GET /api/paciente/clinica-config` | **`brand_config`** (`clinica_id`, `nombre_app`, `logo_ruta`, `logo_mime`, `color_primario`) con `GET /api/brand`, `GET /api/brand/logo` (público), `PUT /api/brand`, `PUT /api/brand/logo` | `routes/brand.ts` |
+| Paso 5.4: subir logo desde web-professional | **`MarcaPage.tsx`**, con previo y selector de paleta de marca | `pages/ajustes/MarcaPage.tsx` |
+| Paso 6.3/6.4: CRUD de profesionales + sección «Equipo» | **`EquipoPage.tsx`** y `GET/POST/PATCH /api/admin/profesionales` | `routes/equipo.ts` |
+| `paciente.foto_url` | **`configuracion_paciente.foto_url`** | `026_alimentos.sql` |
+| Subida de archivos (`@fastify/static`, `/opt/nutrismart/uploads`) | Una capa de almacenamiento propia: `almacen`, tabla `archivo` (`ruta_relativa`, `sha256`, `mime`) y `POST /api/archivos` con `@fastify/multipart` **ya instalado** | `src/almacen/`, `routes/archivos.ts` |
 
-Lo decisivo es el trigger `recalcular_totales_comida()` (`026:137`): deriva los totales de `registro_comida` a partir de sus ítems, y de esa fila leen **la ficha del profesional (R22) y la media de calorías del progreso (R23)**. Escribir la ingesta en una tabla paralela la habría hecho **invisible para el nutricionista**.
+Lo único que faltaba del Paso 5 era **enseñar** el logo en la app del paciente. `GET /api/paciente/yo` ya devolvía `clinica.tieneLogo` pero no la dirección; ahora devuelve `logoUrl` montada, y la cabecera de Inicio la pinta junto al nombre de la clínica — junto, no en su lugar: un logo que no carga dejaría al paciente sin saber de quién es la app.
 
-Además, ninguna de las cuatro tablas propuestas llevaba `clinica_id`, y `ingesta_diaria` no tenía `activo` —borrado físico—. Las dos cosas van contra reglas no negociables de CLAUDE.md.
+## Migración 059
 
-**El Paso 5 del encargo (formulario de plan nutricional en web-professional) no se construyó porque ya está hecho**: es la sección «Prescripción dietética» de `FormConclusion.tsx`. La meta de agua tampoco se añadió: la hidratación vive en `hidratacion_litros` (`017_eval_clinico.sql:109`).
+**Tipos corregidos.** El encargo declaraba `clinica_profesional` con `SERIAL` e `INTEGER REFERENCES clinica(id)`. `clinica.id` y `profesional.id` son **uuid** desde la 001: la tabla tal como venía escrita no llega a crearse, falla con error de tipo en la clave ajena. Se usa `uuid`.
 
-## Las franjas son SEIS, no cuatro
+**Las preferencias van en `configuracion_paciente`, no en `paciente`.** Esa tabla tiene PK `(paciente_id, clinica_id)` a propósito —la misma persona puede ser paciente de dos clínicas y querer la app distinta en cada una— y ya alberga `modo_diario`, `fondo`, `foto_url` y `nombre_preferido`. Ponerlas en `paciente` habría perdido esa distinción y repartido las preferencias entre dos tablas.
 
-`tipo_comida` es un enum de Postgres desde `011_plan_alimentario.sql:18`:
+**Dos columnas que el encargo no tenía y el generador necesita:** `avatar_ojos` y `avatar_lentes`. Los 12 personajes de la galería se distinguen también por color de ojos, y dos de ellos llevan gafas; sin esas columnas, elegir el personaje 6 y guardarlo lo cambiaba por otro.
 
-```
-desayuno · media_manana · almuerzo · merienda · cena · extra
-```
+**El rol del backfill es el real, no `'admin'`.** El encargo hacía `SELECT clinica_id, id, 'admin' FROM profesional`, lo que habría convertido en administrador de clínica a **todos** los nutricionistas. Se copia `profesional.rol` —que ya es el enum `profesional_rol (admin_clinica, nutricionista)`— y `activo` sale de `estado <> 'inactivo'`. Comprobado: Dr. Luis Peralta queda `nutricionista`, las dos doctoras `admin_clinica`.
 
-El encargo pedía cuatro secciones (`desayuno, almuerzo, cena, merienda`) y un valor `otro` que no existe en el enum. Se respetan las seis: el plan alimentario las usa, y dejar dos fuera habría escondido lo que el paciente ya tiene apuntado en ellas.
+Por lo mismo, `clinica_profesional.rol` reusa ese enum en vez del `'admin'/'profesional'` del encargo: son los mismos dos papeles con otro nombre, y dos vocabularios para lo mismo obligan a traducir en cada consulta.
 
-## Migración 056 — unidades de medida
+`profesional.clinica_id` **no se elimina**, como pedía el encargo. Queda marcada como legada en un `comment on column`.
 
-- `alimento_unidad`: `alimento_id`, **`clinica_id`**, `nombre`, `gramos_equivalentes`, `es_defecto`, `activo`.
-  - Único parcial de **una sola unidad por defecto** por alimento.
-  - Único `(alimento_id, lower(nombre))` para que el seed se pueda reejecutar.
-- `alimento_catalogo`: `fibra_por_100g`, `codigo_barras`, `verificado`.
-- `registro_comida_item`: `unidad_id` (`on delete set null`) y `cantidad`.
-- Seed: la `porcion_tipica_g` de cada alimento pasa a ser su unidad por defecto, más una de 100 g/ml.
+## Migración 060 — el trigger que evita un 403 silencioso
 
-`cantidad_g` **sigue siendo la verdad del cálculo**. `unidad_id` + `cantidad` existen para poder volver a enseñar «1.5 tazas» en vez de «240 g». Si una clínica retira una medida, el ítem conserva sus gramos y sus kcal: pierde la etiqueta, no el dato clínico.
+Desde la 059, `resolverAlcance()` decide la pertenencia leyendo `clinica_profesional`. Un profesional dado de alta **sin** su fila ahí no puede entrar: la API responde 403 y el mensaje habla de permisos, no de una fila que falta.
 
-## Migración 057 — los alimentos que faltaban
+Hay **tres** sitios que insertan en `profesional` (dos en `equipo.ts`, uno en `superadmin.ts`) y nada impide un cuarto. En vez de añadir el INSERT en cada uno, un trigger `after insert or update of clinica_id, rol, estado` deriva la membresía. Probado en transacción con rollback:
 
-De los 32 del encargo, **28 ya estaban**. Cinco con otro nombre que los sinónimos ya resuelven (`Pan de molde blanco`→`Pan blanco`, `Carne molida res 90%`→`Carne molida de res`, `Tilapia al vapor`→`Tilapia`, `Huevo entero cocido`→`Huevo entero`, `Atún en agua (enlatado)`→`Atún en agua`).
+| Acción | Resultado |
+|---|---|
+| `insert into profesional` | membresía creada automáticamente |
+| `set estado = 'inactivo'` | `clinica_profesional.activo` → **false** |
+| `set rol = 'admin_clinica', estado = 'activo'` | rol → **admin_clinica**, activo → **true** |
 
-Entran **cuatro**: Arroz integral cocido, Yuca cocida, Plátano verde cocido y Agua de pipa. Son los primeros con `fibra_por_100g` y `verificado = true`; los 46 anteriores quedan en NULL/false, **a la espera de una pasada de curación que no es de esta rebanada**.
+No borra membresías: una segunda clínica añadida a mano vive solo en la tabla de unión y el trigger no la toca.
 
-Las categorías del encargo (Tubérculos, Panadería, Platos CR, Pescados, Huevos) no existen: `categoria` tiene un CHECK de nueve valores fijos. La yuca y el plátano verde van a `cereales`, donde la 026 ya puso la papa — por función en el plato, no por botánica.
+## El color del paciente contra la marca de la clínica
 
-Se añaden además unidades caseras donde cambian la forma de apuntar: `1 taza` para arroz, frijoles y pasta; `2 tortillas`; `2 rebanadas` de pan; `1 cucharada` de aceite; `1 puñado` de maní y almendras.
+`asegurarMarca()` ya pintaba `--primary` y `--nav` con `brand_config.color_primario`. La paleta del paciente escribe las mismas variables. Las dos llegan de peticiones distintas, así que sin una regla gana la que conteste más tarde — una carrera, visible como un parpadeo de color al abrir la app.
 
-## Migración 058 — las tildes
+**La regla: «verde» significa «sin elegir».** Es el valor por defecto de la columna y es además el verde de fábrica de NutriSmart. Con `verde`, manda la clínica y el white-label sigue intacto. Con cualquier otra paleta, manda el paciente, y `aplicarMarca()` se aparta (`hayPaletaElegida()`).
 
-La 056 se escribió en **ASCII puro** (los dos arreglos de encoding que necesitó la 055 vinieron de ahí). El efecto secundario: las etiquetas generadas salieron «1 porcion (150 g)», **sin tilde, y eso lo lee el paciente**.
+Volver a «Verde» no deja el color pegado: `restablecerPaleta()` quita las propiedades en línea de `<html>` —que ganan a cualquier hoja de estilos— y `reaplicarMarca()` devuelve el color de la clínica sin volver a pedirlo.
 
-No se corrigió editando la 056 —ya estaba aplicada y el runner guarda un checksum por fichero justo para impedirlo—, sino con una migración nueva que además arregla las instalaciones donde la 056 ya corrió. De paso, la expresión que compone la etiqueta —copiada en la 056 y en la 057, que es como se coló el fallo— se saca a la función `alimento_unidad_etiqueta(text, numeric)`.
+**El precio, asumido y anotado:** un paciente de una clínica morada no puede elegir exactamente este verde; le quedaría el morado de su clínica. A cambio sigue en pie el white-label, que es regla no negociable de CLAUDE.md. **Si se prefiere la otra lectura —que el paciente siempre gane— es un cambio de dos líneas en `usePerfil.publicar()`.**
 
-**Regla para el futuro:** un `.sql` con datos en español va en UTF-8 sin BOM, como la 026. ASCII solo cuando el fichero no lleve más que DDL y comentarios.
+## Avatar: `avatar.ts` + `CaraSVG.tsx`, no un solo archivo
+
+El prototipo de referencia construye el SVG concatenando cadenas. En React eso obliga a `dangerouslySetInnerHTML` con colores que vienen del servidor. Se partió en dos:
+
+- **`avatar.ts`** — los datos: opciones, los 12 personajes y la geometría del pelo (rutas constantes, elegidas por clave, nunca interpoladas). Más `configSegura()`, que normaliza lo que llegue del servidor contra las mismas listas cerradas que impone la base.
+- **`CaraSVG.tsx`** — el dibujo, en JSX. Así no hay ninguna cadena de marcado que inyectar.
+
+Se conservan las coordenadas del prototipo (lienzo 100×100, cabeza en (50, 59)) y el orden de pintado, que es lo que hace que funcione: fondo → pelo de detrás → cuello → cara → corona de pelo → orejas → ojos → cejas → nariz → boca → mejillas → gafas. El pelo va en dos capas porque la melena tiene que quedar **detrás** de la cara y el flequillo **delante**.
+
+**El fondo sale de la paleta activa, no del personaje.** En la referencia cada personaje traía su degradado; aquí la galería enseña ya lo que va a quedar guardado, y cambiar de paleta recolorea también el avatar. Los doce se siguen distinguiendo por piel, pelo, ojos y expresión.
+
+`PerfilScreen.tsx` no se creó: la pantalla de perfil **ya existe** (`pages/Perfil.tsx`, con nombre preferido, foto y fondo). Se le añadieron dos tarjetas, `ConstructorAvatar` y `SelectorPaleta`. La sección del avatar va **después** de la de la foto a propósito: la foto, si la hay, tapa al avatar, y verlo en ese orden explica por qué el avatar dejó de salir.
 
 ## API
 
-Se extendieron los endpoints existentes en vez de crear `/api/pacientes/:id/*`. Toda la API del paciente va por `/api/paciente/*` y **resuelve la identidad del token, nunca de la URL**: meter el id del paciente en la ruta reintroduciría una superficie de IDOR que el diseño actual elimina por construcción.
-
-| Endpoint | Cambio |
+| Endpoint | Qué hace |
 |---|---|
-| `GET /api/paciente/alimentos` | Ahora devuelve `unidades[]`, `fibraPor100g`, `verificado`. Acepta `fuente=biblioteca` o `mis-alimentos`, y `limite` |
-| `GET /api/paciente/alimentos/:id` | **Nuevo.** Una ficha concreta, para abrir un alimento apuntado hace días |
-| `POST /api/paciente/diario/items` | Acepta `{unidadId, cantidad}` además de `{cantidadG}` |
-| `GET /api/paciente/diario/:id/items` | Devuelve `cantidad`, `unidadId`, `unidadNombre` |
-| `GET /api/paciente/diario` | Cada comida trae sus `items[]`. Antes la pantalla pedía los ítems franja por franja: con seis franjas eran **siete peticiones** para abrir un día |
+| `PATCH /api/paciente/perfil/paleta` | Valida contra las diez y hace upsert en `configuracion_paciente` |
+| `PATCH /api/paciente/perfil/avatar` | Los siete campos **de una vez**: el paciente pulsa guardar una sola vez, y un PATCH por campo dejaría estados a medias si se cae la red entre dos |
+| `GET /api/paciente/configuracion` | Añade `paleta`, `avatar` y `tieneAvatar` |
+| `GET /api/paciente/yo` | Añade `clinica.logoUrl` |
 
-Dos decisiones de seguridad en el POST:
+Todo se valida en el servidor contra las mismas listas cerradas del CHECK: un CHECK que salta llega al cliente como 500, y lo que tiene que ver es por qué su elección no vale.
 
-1. **Los gramos los calcula el servidor** desde la unidad del catálogo; no se aceptan del cliente junto con la unidad. Si no, los gramos y la etiqueta podrían decir cosas distintas y ninguna pantalla sabría cuál vale.
-2. La unidad se valida **contra el alimento** (`u.alimento_id = a.id` dentro del LEFT JOIN). Sin esa comparación se podría apuntar pechuga de pollo medida en «1 taza de arroz».
+`resolverAlcance()` pasa a `clinica_profesional`. Comprobado contra la base que los tres profesionales existentes resuelven **idéntico** antes y después.
 
-«Mis alimentos» son los de la **clínica** del paciente: no hay alimentos por paciente en el modelo, el catálogo es global o de la clínica.
+## Comprobación — 12 de 12 en navegador real
 
-## Diseño
-
-Tres colores nuevos en `tokens.css`, **fijos como los estados clínicos**: `--macro-cho #F59E0B`, `--macro-prot #3B82F6`, `--macro-grasa #EC4899`, con sus clases `macro-cho/prot/grasa` en el preset. Un macro tiene que ser del mismo color en las dos apps y en todas las marcas; si el ámbar cambiase con la clínica, una barra dejaría de significar lo mismo.
-
-El bottom nav **no se tocó**: sigue en seis ítems, que es su tope documentado.
-
-El toggle **Rápido / Detallado se conserva** y sube por encima de la rama. Era una decisión de producto explícita (`026_alimentos.sql:9`: «hay pacientes que no van a hacer otra cosa»), y el encargo la habría eliminado.
-
-`BuscadorAlimento.tsx` queda en el repo sin usar, como pedía el encargo. `PanelItems`, que vivía dentro de `Registros.tsx`, sí se quitó: lo sustituye `ApuntarTab` por completo y `noUnusedLocals` no admite dejarlo huérfano.
-
-## Comprobación — 29 de 29 en navegador real
-
-Puppeteer a 390×844, login de Keycloak incluido, contra API y base de datos reales.
+Puppeteer a 390×844, login de Keycloak incluido.
 
 | Paso | Resultado |
 |---|---|
-| Modo Detallado | Las **seis** franjas visibles; 3 barras de macro con color de token |
-| Buscar «arroz» | Encuentra `Arroz blanco cocido` y `Gallo pinto` (por el sinónimo «arroz con frijoles») |
-| Dos pestañas | Biblioteca / Mis alimentos |
-| Ficha | Donut con **3 arcos**, tiles Carbohidratos/Proteína/Grasa/Calorías, chips de unidad |
-| 1 porción (150 g) | 195 kcal · C 42.3 · P 4.1 · G 0.5 |
-| **1.5 × 1 taza (160 g)** | = 240 g → **312 kcal**, recalculado en el cliente |
-| Guardar | El ítem aparece con su medida y **312 kcal**: lo prometido y lo guardado coinciden |
-| Panel | Se cierra al guardar |
-| Volver a Rápido | Conserva su pantalla **y ve lo apuntado en Detallado** |
+| Pantalla de perfil | Secciones «Tu avatar» y «El color de tu aplicación» |
+| Galería | **15 caras SVG** (12 de galería + previo + cabecera); la cara tiene **443 elementos** |
+| Personalizar | Piel oscura + Rizado + Amplia + Gafas → las gafas se dibujan |
+| Guardar avatar | El botón confirma |
+| Paleta → Violeta | `--primary` pasa de `#0e7c66` a `#7C3AED` |
+| Recargar | **Sigue violeta** (caché de localStorage + perfil) |
+| Ir a Inicio | El avatar está en la cabecera y **la paleta gana a `aplicarMarca()`** |
+| Volver a Verde | `--primary` vuelve a `#0e7c66`, el color de la clínica |
 
-Dos fallos que encontró la prueba y se corrigieron:
+Un fallo durante la prueba fue del script, no del producto: esperaba un tiempo fijo tras el login y el SPA monta después de dos redirecciones de Keycloak. Se cambió por esperar al selector.
 
-- Los tiles decían «Carbos» en vez de «Carbohidratos». `MACROS` pasa a tener tres nombres por macro —60 px en las barras, sitio en los tiles, una letra en los chips— porque uno solo no sirve para los tres.
-- **Al volver de Detallado, el modo Rápido enseñaba el día sin lo recién apuntado.** Son dos estados distintos y el de Rápido no se releía; el trigger de la base ya había reescrito la descripción de la comida. `cambiarModo` ahora recarga al volver.
+## Lo que queda pendiente, y por qué
 
-Un tercer «fallo» era del test, no del producto: `innerText` aplica el `uppercase` del CSS, así que `¿Cuánto comiste?` llegaba en mayúsculas. Las comparaciones del script se normalizan.
+**1. Subida de foto por multipart (Paso 2).** Hoy la foto del paciente se da **por URL https**, que ya funciona. Convertirla en subida de archivo es viable reusando `almacen` —`@fastify/multipart` está instalado y `POST /api/archivos` ya sube ficheros—, pero ese endpoint es `requireAuth` (profesional) y guarda **documentación clínica**. Meter ahí fotos de perfil de pacientes mezcla dos cosas con reglas de retención distintas, y decidirlo es de producto. **No se hizo; la URL sigue siendo el camino.**
 
-## Datos de dev
+El `/opt/nutrismart/uploads` + `@fastify/static` del encargo no se montó: `@fastify/static` **no está instalado** y serviría archivos por una ruta pública, al revés de lo que hace hoy `GET /api/archivos/:id`, que es autenticado.
 
-Paciente de prueba: `paciente-prueba` / `nutrismart-dev` (María Fernández, Clínica Nutrición Vida). La contraseña se fijó para esta comprobación.
+**2. Que un profesional trabaje de verdad en dos clínicas.** El esquema ya lo soporta y `resolverAlcance()` también. Lo que falta no es SQL: **`tenantId` sale del claim `tenant_id` del token de Keycloak** (`auth.ts`), así que la clínica en la que un profesional está actuando la decide el token. Para alternar hacen falta (a) que el token pueda llevar más de una clínica o reemitirse, y (b) un selector de clínica en web-professional. Las dos son decisiones de arquitectura que el encargo no aborda. Hoy: un profesional en dos clínicas entra en la que diga su token, y en esa funciona todo.
 
-El `.env` de las dos apps web vive en **la raíz del repo** (`envDir` en `vite.config.ts`), y en dev `VITE_API_URL` y `VITE_KEYCLOAK_URL` van **vacías a propósito**: todo pasa por el proxy de Vite (`/api`, `/realms`) para que la app funcione igual desde un móvil de la red local. Un `.env` dentro de `apps/web-patient/` no se lee.
+**3. `profesional.clinica_id`.** Sigue viva y la usan ~50 sitios para acotar por tenant. Deprecarla es su propia rebanada; el trigger de la 060 mantiene las dos fuentes coherentes mientras tanto.

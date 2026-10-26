@@ -51,6 +51,32 @@
   --shadow-md: 0 4px 14px rgba(16,40,34,.07);
   --shadow-lg: 0 12px 34px rgba(16,40,34,.10);
 
+  /* ---- Paletas del paciente (R53) ----
+     NO son variables: el paciente elige una de estas diez en su app y
+     `apps/web-patient/src/lib/palette.ts` escribe --primary,
+     --primary-hover, --primary-tint, --nav y --ring en <html>. Se
+     listan aquí porque esto es la fuente de verdad del color y un
+     valor que no esté anotado en este archivo acaba divergiendo.
+
+     Y son DIEZ CERRADAS, no un selector libre: todo el texto sobre
+     --primary es blanco, y con un color arbitrario el paciente puede
+     dejarse la app ilegible. Estas diez están contrastadas.
+
+       verde        #0E7C66 / #0A5C4C / #E7F1EE   <- el de fábrica
+       azul-oceano  #2563EB / #1D4ED8 / #EFF6FF
+       azul-cielo   #0284C7 / #0369A1 / #E0F2FE
+       turquesa     #0891B2 / #0E7490 / #ECFEFF
+       indigo       #4F46E5 / #4338CA / #EEF2FF
+       violeta      #7C3AED / #6D28D9 / #F5F3FF
+       rosa         #DB2777 / #BE185D / #FDF2F8
+       naranja      #EA580C / #C2410C / #FFF7ED
+       rojo         #DC2626 / #B91C1C / #FEF2F2
+       gris         #475569 / #334155 / #F8FAFC
+
+     «verde» significa «sin elegir»: con ese valor manda el color de la
+     clínica (brand_config.color_primario) y el white-label sigue en
+     pie. Ver el comentario de lib/palette.ts. */
+
   /* ---- Gráficas (paleta validada, independiente de la marca) ---- */
   --chart-1: #2a78d6; --chart-2: #eb6834; --chart-3: #1baf7a; --chart-4: #eda100;
   --chart-grid: #E6ECEA; --chart-axis: #C3C2B7;

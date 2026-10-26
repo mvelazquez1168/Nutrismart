@@ -1,0 +1,531 @@
+<title>Propuestas de Avatar</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+
+<style>
+:root {
+  --primary: #0E7C66;
+  --primary-tint: #E7F1EE;
+  --bg: #F7FAF9;
+  --surface: #FFFFFF;
+  --surface-2: #F0F5F3;
+  --border: #E1EBE8;
+  --ink: #141A17;
+  --muted: #6B7280;
+  --radius: 20px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0D1512; --surface: #172119; --surface-2: #1C2B26;
+    --border: #263830; --ink: #EEF4F1; --muted: #8A9E97;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0D1512; --surface: #172119; --surface-2: #1C2B26;
+  --border: #263830; --ink: #EEF4F1; --muted: #8A9E97;
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px;
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+/* Typography */
+h1 { font-size: 24px; font-weight: 800; letter-spacing: -0.5px; text-wrap: balance; }
+h2 { font-size: 17px; font-weight: 700; letter-spacing: -0.2px; }
+.subtitle { color: var(--muted); font-size: 14px; margin-top: 4px; }
+
+/* Badges */
+.badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 11px; border-radius: 100px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.3px;
+  background: var(--primary); color: #fff;
+}
+.badge.star { background: linear-gradient(135deg, #F59E0B, #D97706); }
+
+/* Cards */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px;
+  margin-top: 20px;
+}
+.card-header {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin-bottom: 14px;
+}
+.desc {
+  font-size: 13px; color: var(--muted); line-height: 1.6;
+  background: var(--surface-2); border-radius: 12px;
+  padding: 12px 14px; margin-bottom: 18px;
+}
+
+/* Pros/Cons */
+.pros-cons { display: flex; gap: 10px; margin-bottom: 18px; }
+.pro, .con {
+  flex: 1; font-size: 12px; line-height: 1.6;
+  padding: 10px 12px; border-radius: 12px;
+}
+.pro { background: #D1FAE5; color: #065F46; }
+.con { background: #FEE2E2; color: #991B1B; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .pro { background: #064E3B40; color: #6EE7B7; }
+  :root:not([data-theme="light"]) .con { background: #7F1D1D40; color: #FCA5A5; }
+}
+:root[data-theme="dark"] .pro { background: #064E3B40; color: #6EE7B7; }
+:root[data-theme="dark"] .con { background: #7F1D1D40; color: #FCA5A5; }
+
+/* Section label */
+.attr-label {
+  font-size: 11px; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.6px;
+  margin-bottom: 10px;
+}
+
+/* Gallery grid */
+.avatar-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.av-wrap {
+  aspect-ratio: 1; border-radius: 50%; overflow: visible;
+  cursor: pointer; position: relative;
+  transition: transform 0.15s;
+}
+.av-wrap svg { width: 100%; height: 100%; border-radius: 50%; display: block; }
+.av-wrap .ring {
+  position: absolute; inset: -3px; border-radius: 50%;
+  border: 3px solid transparent; transition: border-color 0.15s;
+  pointer-events: none;
+}
+.av-wrap.selected { transform: scale(1.07); }
+.av-wrap.selected .ring { border-color: var(--primary); }
+.av-wrap .check {
+  display: none; position: absolute; bottom: -1px; right: -1px;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--primary); color: #fff;
+  font-size: 12px; font-weight: 800;
+  align-items: center; justify-content: center;
+  border: 2px solid var(--surface);
+}
+.av-wrap.selected .check { display: flex; }
+
+/* Builder */
+.builder-preview-wrap {
+  display: flex; justify-content: center; margin-bottom: 22px;
+}
+.builder-preview {
+  width: 108px; height: 108px; border-radius: 50%; overflow: hidden;
+  border: 3px solid var(--primary);
+  box-shadow: 0 0 0 6px var(--primary-tint);
+}
+.builder-preview svg { width: 100%; height: 100%; display: block; }
+
+.attr-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+.skin-dot {
+  width: 34px; height: 34px; border-radius: 50%; cursor: pointer;
+  border: 3px solid transparent;
+  transition: border-color 0.15s, transform 0.12s, box-shadow 0.12s;
+}
+.skin-dot.selected {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-tint);
+  transform: scale(1.12);
+}
+.pill-btn {
+  padding: 7px 14px; border-radius: 100px;
+  border: 1.5px solid var(--border);
+  background: transparent; color: var(--ink);
+  font-size: 13px; font-weight: 500; cursor: pointer;
+  transition: all 0.12s;
+}
+.pill-btn.selected {
+  background: var(--primary-tint);
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 600;
+}
+.color-dot {
+  width: 26px; height: 26px; border-radius: 50%; cursor: pointer;
+  border: 2.5px solid transparent;
+  transition: border-color 0.15s, transform 0.12s;
+}
+.color-dot.selected { border-color: var(--primary); transform: scale(1.18); }
+
+/* Photo proposal */
+.upload-zone {
+  border: 2px dashed var(--border); border-radius: 16px;
+  padding: 36px 20px; text-align: center; cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.upload-zone:hover { border-color: var(--primary); background: var(--primary-tint); }
+.upload-icon { font-size: 40px; margin-bottom: 10px; }
+
+.frame-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
+  margin-top: 4px;
+}
+.frame-opt {
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  cursor: pointer;
+}
+.frame-circle {
+  width: 68px; height: 68px; border-radius: 50%;
+  overflow: hidden; transition: transform 0.12s;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 26px; font-weight: 600;
+}
+.frame-opt.selected .frame-circle { transform: scale(1.08); }
+.frame-name { font-size: 11px; color: var(--muted); font-weight: 500; }
+
+/* CTA */
+.btn-primary {
+  display: block; width: 100%; padding: 15px;
+  background: var(--primary); color: #fff; border: none;
+  border-radius: 14px; font-size: 15px; font-weight: 700;
+  cursor: pointer; margin-top: 22px; letter-spacing: -0.1px;
+  transition: opacity 0.12s;
+}
+.btn-primary:hover { opacity: 0.9; }
+
+/* Page top */
+.page-top { margin-bottom: 26px; }
+.page-top h1 { color: var(--ink); }
+</style>
+
+<!-- PAGE HEADER -->
+<div class="page-top">
+  <h1>Propuestas de Avatar</h1>
+  <p class="subtitle">NutriSmart · App del Paciente — elige una dirección</p>
+</div>
+
+<!-- ===== PROPUESTA A ===== -->
+<div class="card" id="card-a">
+  <div class="card-header">
+    <div class="badge">A</div>
+    <h2>Galería de personajes ilustrados</h2>
+    <div class="badge star">★ Recomendada</div>
+  </div>
+  <div class="desc">
+    El paciente elige un personaje de una galería de avatares ilustrados, diversos e inclusivos. Se almacena solo un ID — sin subida de archivos, funciona offline.
+  </div>
+  <div class="pros-cons">
+    <div class="pro">✓ Cero fricción<br>✓ Sin archivos en servidor<br>✓ Representación diversa e inclusiva</div>
+    <div class="con">✗ No es la foto real<br>✗ Set fijo de personajes</div>
+  </div>
+  <div class="avatar-grid" id="gallery-grid"></div>
+  <button class="btn-primary">Guardar avatar seleccionado</button>
+</div>
+
+<!-- ===== PROPUESTA B ===== -->
+<div class="card" id="card-b">
+  <div class="card-header">
+    <div class="badge">B</div>
+    <h2>Constructor de avatar propio</h2>
+  </div>
+  <div class="desc">
+    El paciente arma su propio personaje combinando tono de piel, estilo de cabello, color y expresión. Genera un avatar único representativo.
+  </div>
+  <div class="pros-cons">
+    <div class="pro">✓ Identidad única<br>✓ Sin subida de fotos</div>
+    <div class="con">✗ Más pasos para configurar<br>✗ Mayor esfuerzo de dev</div>
+  </div>
+
+  <div class="builder-preview-wrap">
+    <div class="builder-preview" id="builder-preview"></div>
+  </div>
+
+  <div class="attr-label">Tono de piel</div>
+  <div class="attr-row" id="skin-row"></div>
+
+  <div class="attr-label">Estilo de cabello</div>
+  <div class="attr-row" id="hair-style-row"></div>
+
+  <div class="attr-label">Color de cabello</div>
+  <div class="attr-row" id="hair-color-row"></div>
+
+  <div class="attr-label">Expresión</div>
+  <div class="attr-row" id="expr-row"></div>
+
+  <button class="btn-primary">Guardar mi avatar</button>
+</div>
+
+<!-- ===== PROPUESTA C ===== -->
+<div class="card" id="card-c">
+  <div class="card-header">
+    <div class="badge">C</div>
+    <h2>Foto con marco artístico</h2>
+  </div>
+  <div class="desc">
+    El paciente sube su foto real y elige un marco decorativo. Si no sube foto, cae al avatar de la Propuesta A. Las dos pueden coexistir: foto en perfil, personaje en app.
+  </div>
+  <div class="pros-cons">
+    <div class="pro">✓ Foto real del paciente<br>✓ Muy personal y reconocible</div>
+    <div class="con">✗ Requiere almacenamiento en servidor<br>✗ Privacidad / moderación de imágenes</div>
+  </div>
+
+  <div class="upload-zone" id="upload-zone">
+    <div class="upload-icon">📸</div>
+    <p style="font-weight:700;color:var(--ink);margin-bottom:4px">Subir foto de perfil</p>
+    <p style="font-size:13px;color:var(--muted)">JPG, PNG o WebP · máx 5 MB</p>
+  </div>
+
+  <div style="margin-top:20px">
+    <div class="attr-label">Marco decorativo</div>
+    <div class="frame-grid" id="frame-grid"></div>
+  </div>
+
+  <button class="btn-primary">Guardar foto</button>
+</div>
+
+<script>
+/* ───────────────────────────────────────────────
+   SVG FACE GENERATOR
+   ─────────────────────────────────────────────── */
+let _uid = 0;
+function uid() { return 'f' + (++_uid); }
+
+/* Hair: split into "back" (behind face) and "crown" (on top of face) */
+const HAIR_BACK = {
+  'Largo':    c => `<path d="M25 50 Q21 68 23 86 Q22 96 26 104" stroke="${c}" stroke-width="13" fill="none" stroke-linecap="round"/>
+                    <path d="M75 50 Q79 68 77 86 Q78 96 74 104" stroke="${c}" stroke-width="13" fill="none" stroke-linecap="round"/>`,
+  'Ondulado': c => `<path d="M26 50 Q18 63 26 76 Q18 87 26 100" stroke="${c}" stroke-width="13" fill="none" stroke-linecap="round"/>
+                    <path d="M74 50 Q82 63 74 76 Q82 87 74 100" stroke="${c}" stroke-width="13" fill="none" stroke-linecap="round"/>`,
+  'Rizado':   c => `<circle cx="26" cy="48" r="13" fill="${c}"/><circle cx="74" cy="48" r="13" fill="${c}"/>`,
+  default: () => '',
+};
+
+const HAIR_CROWN = {
+  'Corto':    c => `<path d="M29 53 Q29 23 50 21 Q71 23 71 53 Q71 38 65 27 Q57 14 50 13 Q43 14 35 27 Q29 38 29 53Z" fill="${c}"/>`,
+  'Largo':    c => `<path d="M29 53 Q29 23 50 21 Q71 23 71 53 Q71 38 65 27 Q57 14 50 13 Q43 14 35 27 Q29 38 29 53Z" fill="${c}"/>`,
+  'Rizado':   c => `<circle cx="50" cy="26" r="19" fill="${c}"/>
+                    <circle cx="36" cy="33" r="12" fill="${c}"/>
+                    <circle cx="64" cy="33" r="12" fill="${c}"/>`,
+  'Ondulado': c => `<path d="M29 53 Q29 23 50 21 Q71 23 71 53 Q71 38 65 27 Q57 14 50 13 Q43 14 35 27 Q29 38 29 53Z" fill="${c}"/>`,
+  'Moño':     c => `<path d="M31 54 Q31 27 50 25 Q69 27 69 54 Q69 40 64 30 Q56 18 50 17 Q44 18 36 30 Q31 40 31 54Z" fill="${c}"/>
+                    <circle cx="50" cy="17" r="10" fill="${c}"/>`,
+  'Corto M':  c => `<path d="M30 54 Q28 25 50 22 Q72 25 70 54 Q71 40 65 29 Q58 16 50 15 Q42 16 35 29 Q29 40 30 54Z" fill="${c}"/>`,
+  'Calvo':    () => '',
+};
+
+const MOUTHS = {
+  'Sonrisa': `<path d="M42 69 Q50 77 58 69" stroke="#C45A6A" stroke-width="2.2" fill="none" stroke-linecap="round"/>`,
+  'Neutral': `<line x1="43" y1="68" x2="57" y2="68" stroke="#A07080" stroke-width="1.8" stroke-linecap="round"/>`,
+  'Amplia':  `<path d="M40 67 Q50 79 60 67" stroke="#C45A6A" stroke-width="2.5" fill="#FFAAAA" stroke-linecap="round"/>`,
+};
+
+function makeSVG({ bg1, bg2, skin, hair, hairStyle = 'Largo', eyeColor = '#3D2B1A', expression = 'Sonrisa', glasses = false }) {
+  const id = uid();
+  const backFn = HAIR_BACK[hairStyle] || HAIR_BACK.default;
+  const crownFn = HAIR_CROWN[hairStyle] || HAIR_CROWN['Corto'];
+  const mouth = MOUTHS[expression] || MOUTHS['Sonrisa'];
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="bg${id}" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="${bg1}"/>
+      <stop offset="100%" stop-color="${bg2}"/>
+    </linearGradient>
+    <clipPath id="cl${id}"><circle cx="50" cy="50" r="50"/></clipPath>
+  </defs>
+  <circle cx="50" cy="50" r="50" fill="url(#bg${id})"/>
+  <g clip-path="url(#cl${id})">
+    ${backFn(hair)}
+    <ellipse cx="50" cy="102" rx="32" ry="18" fill="${skin}"/>
+    <rect x="44" y="80" width="12" height="16" fill="${skin}"/>
+    <ellipse cx="50" cy="59" rx="22" ry="26" fill="${skin}"/>
+    ${crownFn(hair)}
+    <ellipse cx="27.5" cy="60" rx="4" ry="5" fill="${skin}"/>
+    <ellipse cx="72.5" cy="60" rx="4" ry="5" fill="${skin}"/>
+    <ellipse cx="43" cy="56" rx="6" ry="5" fill="white"/>
+    <ellipse cx="57" cy="56" rx="6" ry="5" fill="white"/>
+    <circle cx="43" cy="56" r="3.5" fill="${eyeColor}"/>
+    <circle cx="57" cy="56" r="3.5" fill="${eyeColor}"/>
+    <circle cx="43.5" cy="56" r="1.8" fill="#0D0D0D"/>
+    <circle cx="57.5" cy="56" r="1.8" fill="#0D0D0D"/>
+    <circle cx="45" cy="54.2" r="1.2" fill="white"/>
+    <circle cx="59" cy="54.2" r="1.2" fill="white"/>
+    <path d="M37 49.5 Q43 47.5 49 49.5" stroke="${hair}" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+    <path d="M51 49.5 Q57 47.5 63 49.5" stroke="${hair}" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+    <path d="M48 62 Q46 66.5 50 67.5 Q54 66.5 52 62" stroke="#B07C6A" stroke-width="1.3" fill="none"/>
+    ${mouth}
+    <circle cx="36.5" cy="65" r="5.5" fill="rgba(255,148,148,0.32)"/>
+    <circle cx="63.5" cy="65" r="5.5" fill="rgba(255,148,148,0.32)"/>
+    ${glasses ? `<path d="M34 54 h-7 m7,0 a9,6 0 0,1 18,0 m0,0 h4 m0,0 a9,6 0 0,1 18,0 m0,0 h7" stroke="rgba(60,60,80,0.75)" stroke-width="2" fill="none" stroke-linecap="round"/>` : ''}
+  </g>
+</svg>`;
+}
+
+/* ───────────────────────────────────────────────
+   GALLERY — 12 diverse avatars
+   ─────────────────────────────────────────────── */
+const GALLERY = [
+  { bg1:'#0E7C66', bg2:'#0A5C4C', skin:'#FDDCB5', hair:'#2C1B18', hairStyle:'Largo',   eyeColor:'#5C4033', expression:'Sonrisa', glasses:false },
+  { bg1:'#2563EB', bg2:'#1D4ED8', skin:'#A57248', hair:'#1A1A1A', hairStyle:'Corto M', eyeColor:'#1A1A1A', expression:'Amplia',  glasses:false },
+  { bg1:'#7C3AED', bg2:'#6D28D9', skin:'#EDB98A', hair:'#D4A017', hairStyle:'Ondulado',eyeColor:'#5C7A2A', expression:'Amplia',  glasses:false },
+  { bg1:'#DB2777', bg2:'#BE185D', skin:'#F5C5A3', hair:'#A0522D', hairStyle:'Rizado',  eyeColor:'#7C5C3A', expression:'Sonrisa', glasses:false },
+  { bg1:'#0891B2', bg2:'#0E7490', skin:'#3D1F0A', hair:'#2C1B18', hairStyle:'Moño',    eyeColor:'#3D2B1A', expression:'Sonrisa', glasses:false },
+  { bg1:'#EA580C', bg2:'#C2410C', skin:'#D08B5B', hair:'#1A1A1A', hairStyle:'Corto M', eyeColor:'#1A1A1A', expression:'Neutral', glasses:true  },
+  { bg1:'#4F46E5', bg2:'#4338CA', skin:'#FDDCB5', hair:'#8B0000', hairStyle:'Largo',   eyeColor:'#1A4D7C', expression:'Amplia',  glasses:false },
+  { bg1:'#475569', bg2:'#334155', skin:'#C68642', hair:'#1A1A1A', hairStyle:'Rizado',  eyeColor:'#1A1A1A', expression:'Sonrisa', glasses:false },
+  { bg1:'#0E7C66', bg2:'#2563EB', skin:'#FDDCB5', hair:'#A9A9A9', hairStyle:'Corto',   eyeColor:'#2C5F8A', expression:'Neutral', glasses:true  },
+  { bg1:'#7C3AED', bg2:'#DB2777', skin:'#F0C8A0', hair:'#C8A068', hairStyle:'Moño',    eyeColor:'#6B4F3A', expression:'Amplia',  glasses:false },
+  { bg1:'#0891B2', bg2:'#0E7C66', skin:'#3D1F0A', hair:'#1A1A1A', hairStyle:'Corto M', eyeColor:'#5C3A1A', expression:'Sonrisa', glasses:false },
+  { bg1:'#EA580C', bg2:'#DB2777', skin:'#EDB98A', hair:'#1A1A1A', hairStyle:'Calvo',   eyeColor:'#2C1B18', expression:'Amplia',  glasses:false },
+];
+
+const grid = document.getElementById('gallery-grid');
+let selGallery = 0;
+
+GALLERY.forEach((av, i) => {
+  const wrap = document.createElement('div');
+  wrap.className = 'av-wrap' + (i === 0 ? ' selected' : '');
+  wrap.innerHTML = makeSVG(av)
+    + '<div class="ring"></div>'
+    + '<div class="check">✓</div>';
+  wrap.onclick = () => {
+    document.querySelectorAll('#gallery-grid .av-wrap').forEach(el => el.classList.remove('selected'));
+    wrap.classList.add('selected');
+    selGallery = i;
+  };
+  grid.appendChild(wrap);
+});
+
+/* ───────────────────────────────────────────────
+   BUILDER
+   ─────────────────────────────────────────────── */
+const bState = {
+  bg1:'#0E7C66', bg2:'#0A5C4C',
+  skin:'#FDDCB5', hair:'#2C1B18', hairStyle:'Largo',
+  eyeColor:'#3D2B1A', expression:'Sonrisa', glasses:false,
+};
+
+function refreshBuilder() {
+  document.getElementById('builder-preview').innerHTML = makeSVG(bState);
+}
+
+/* Skin */
+const SKINS = [
+  { hex:'#FDDCB5', label:'Clara' },
+  { hex:'#EDB98A', label:'Beige' },
+  { hex:'#D08B5B', label:'Media' },
+  { hex:'#A57248', label:'Morena' },
+  { hex:'#3D1F0A', label:'Oscura' },
+];
+const skinRow = document.getElementById('skin-row');
+SKINS.forEach(({ hex }) => {
+  const el = document.createElement('div');
+  el.className = 'skin-dot' + (hex === bState.skin ? ' selected' : '');
+  el.style.background = hex;
+  el.title = hex;
+  el.onclick = () => {
+    skinRow.querySelectorAll('.skin-dot').forEach(e => e.classList.remove('selected'));
+    el.classList.add('selected');
+    bState.skin = hex;
+    refreshBuilder();
+  };
+  skinRow.appendChild(el);
+});
+
+/* Hair Style */
+const HSTYLES = ['Corto','Largo','Rizado','Ondulado','Moño','Corto M','Calvo'];
+const HSTYLE_LABELS = { 'Corto':'Corto','Largo':'Largo','Rizado':'Rizado','Ondulado':'Ondulado','Moño':'Moño','Corto M':'Masculino','Calvo':'Calvo' };
+const hsRow = document.getElementById('hair-style-row');
+HSTYLES.forEach(hs => {
+  const btn = document.createElement('button');
+  btn.className = 'pill-btn' + (hs === bState.hairStyle ? ' selected' : '');
+  btn.textContent = HSTYLE_LABELS[hs];
+  btn.onclick = () => {
+    hsRow.querySelectorAll('.pill-btn').forEach(e => e.classList.remove('selected'));
+    btn.classList.add('selected');
+    bState.hairStyle = hs;
+    refreshBuilder();
+  };
+  hsRow.appendChild(btn);
+});
+
+/* Hair Color */
+const HCOLORS = ['#0D0D0D','#3B1F0A','#6B3A2A','#A0522D','#D4A017','#A9A9A9','#8B0000'];
+const hcRow = document.getElementById('hair-color-row');
+HCOLORS.forEach(hc => {
+  const el = document.createElement('div');
+  el.className = 'color-dot' + (hc === bState.hair ? ' selected' : '');
+  el.style.background = hc;
+  el.onclick = () => {
+    hcRow.querySelectorAll('.color-dot').forEach(e => e.classList.remove('selected'));
+    el.classList.add('selected');
+    bState.hair = hc;
+    refreshBuilder();
+  };
+  hcRow.appendChild(el);
+});
+
+/* Expression */
+const EXPRS = [
+  { key:'Sonrisa', label:'🙂 Sonrisa' },
+  { key:'Neutral', label:'😐 Neutral' },
+  { key:'Amplia',  label:'😁 Amplia' },
+];
+const exprRow = document.getElementById('expr-row');
+EXPRS.forEach(({ key, label }) => {
+  const btn = document.createElement('button');
+  btn.className = 'pill-btn' + (key === bState.expression ? ' selected' : '');
+  btn.textContent = label;
+  btn.onclick = () => {
+    exprRow.querySelectorAll('.pill-btn').forEach(e => e.classList.remove('selected'));
+    btn.classList.add('selected');
+    bState.expression = key;
+    refreshBuilder();
+  };
+  exprRow.appendChild(btn);
+});
+
+refreshBuilder();
+
+/* ───────────────────────────────────────────────
+   PHOTO FRAMES
+   ─────────────────────────────────────────────── */
+const FRAMES = [
+  { name:'Clásico',  style:'border: 3px solid #0E7C66; background: linear-gradient(135deg,#E7F1EE,#C0DDD7)' },
+  { name:'Degradado',style:'border: 3px solid transparent; background: linear-gradient(135deg,#0E7C66,#2563EB); box-shadow: 0 0 0 3px #E7F1EE' },
+  { name:'Dorado',   style:'border: 3px solid #D4A017; background: linear-gradient(135deg,#FEF9EC,#F5D76E)' },
+  { name:'Rosa',     style:'border: 3px solid #DB2777; background: linear-gradient(135deg,#FDF2F8,#FBCFE8)' },
+  { name:'Sin marco',style:'border: 2px solid var(--border); background: var(--surface-2)' },
+  { name:'Neón',     style:'border: 3px solid #4F46E5; background: linear-gradient(135deg,#EEF2FF,#C7D2FE); box-shadow: 0 0 10px #4F46E580' },
+];
+const fGrid = document.getElementById('frame-grid');
+let selFrame = 0;
+FRAMES.forEach((f, i) => {
+  const opt = document.createElement('div');
+  opt.className = 'frame-opt' + (i === 0 ? ' selected' : '');
+  const circle = document.createElement('div');
+  circle.className = 'frame-circle';
+  circle.setAttribute('style', f.style);
+  circle.textContent = '👤';
+  const label = document.createElement('span');
+  label.className = 'frame-name';
+  label.textContent = f.name;
+  opt.append(circle, label);
+  opt.onclick = () => {
+    fGrid.querySelectorAll('.frame-opt').forEach(e => e.classList.remove('selected'));
+    opt.classList.add('selected');
+    selFrame = i;
+  };
+  fGrid.appendChild(opt);
+});
+</script>

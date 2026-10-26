@@ -18,6 +18,7 @@
  * ese será el momento.
  */
 import { getYo } from './api'
+import { hayPaletaElegida } from './palette'
 
 function luminancia(hex: string): number {
   const canal = (v: number) => {
@@ -77,12 +78,30 @@ export function fondoNav(colorPrimario: string): string {
 
 const HEX = /^#[0-9a-fA-F]{6}$/
 
-/** Escribe las variables en `<html>`. Sin color válido, no toca nada. */
+/**
+ * Escribe las variables en `<html>`. Sin color válido, no toca nada.
+ *
+ * Y si el paciente eligió su propia paleta (R53), tampoco: su elección
+ * manda sobre la marca de la clínica, pero solo en SU aplicación. La
+ * del profesional sigue siendo la de la clínica sin excepción.
+ */
 export function aplicarMarca(colorPrimario: string | null | undefined): void {
   if (!colorPrimario || !HEX.test(colorPrimario)) return
+  // Se recuerda aunque no se aplique: si el paciente vuelve a «Verde»
+  // —es decir, deja de elegir— hay que poder devolver este color sin
+  // volver a pedirlo al servidor.
+  ultimoColor = colorPrimario
+  if (hayPaletaElegida()) return
   const root = document.documentElement
   root.style.setProperty('--primary', colorPrimario)
   root.style.setProperty('--nav', fondoNav(colorPrimario))
+}
+
+let ultimoColor: string | null = null
+
+/** Vuelve a pintar la marca de la clínica tras `restablecerPaleta()`. */
+export function reaplicarMarca(): void {
+  aplicarMarca(ultimoColor)
 }
 
 /**

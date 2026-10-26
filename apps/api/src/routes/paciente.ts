@@ -104,6 +104,15 @@ export async function registerPacienteRoutes(app: FastifyInstance): Promise<void
         nombre: yo.nombre_app ?? yo.clinica,
         colorPrimario: yo.color_primario,
         tieneLogo: yo.logo_ruta !== null,
+        // R53: la dirección ya montada, en vez del id suelto.
+        //
+        // `GET /api/brand/logo` es público y se acota con `?clinica=`, y
+        // el paciente ya pertenece a esa clínica: no se le está
+        // enseñando nada que no supiera. Se manda la URL hecha para que
+        // la app no tenga que conocer la forma del endpoint — y para que
+        // sea `null` cuando no hay logo, que es la única comprobación
+        // que necesita la pantalla.
+        logoUrl: yo.logo_ruta !== null ? `/api/brand/logo?clinica=${yo.clinica_id}` : null,
       },
     })
   })
