@@ -1,41 +1,38 @@
 /**
- * Correo de recordatorio de cita — AGE-03.
+ * Correo de recordatorio de cita — AGE-03, con la marca de la clínica
+ * desde R54.
  *
  * Mismo planteamiento que la invitación de la Rebanada 17: sin clave, el
  * aviso sale por consola y el proceso sigue. Un fallo de correo no debe
  * detener nada — y aquí menos: el temporizador corre cada quince minutos
  * y una excepción sin capturar se lo lleva por delante.
+ *
+ * ── Qué cambió en R54 ───────────────────────────────────────────────
+ *
+ * El HTML lo arma `email/layout.ts` con el color y el logo de la
+ * clínica; antes llevaba el verde `#0E7C66` escrito a mano. El envío y
+ * el escape de texto salen de `email/`, así que aquí ya no hay cliente
+ * de Resend propio ni copia de `esc()`.
+ *
+ * La hora se formatea en la zona horaria de la CLÍNICA, que ahora viene
+ * con la marca. Antes estaba fijada a `America/Costa_Rica`: correcto
+ * para la clínica piloto y equivocado en cuanto haya una segunda.
  */
-import { Resend } from 'resend'
 import { config } from '../config.js'
+import { enviarCorreo } from '../email/enviar.js'
+import { boton, caja, envoltorio, esc, nota, parrafo, titulo } from '../email/layout.js'
+import { obtenerMarca } from '../email/marca.js'
+import { momento, tipoEnPalabras } from '../email/notificaciones.js'
 
 export interface ResultadoEnvio {
   ok: boolean
   error?: string
 }
 
-/** El nombre del paciente y el de la clínica los escribe una persona. */
-function esc(t: string): string {
-  return t
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
-
-const cliente = config.resend ? new Resend(config.resend.apiKey) : null
-
-const TIPO: Record<string, string> = {
-  primera_vez: 'primera consulta',
-  seguimiento: 'seguimiento',
-  control: 'control',
-  urgencia: 'urgencia',
-}
-
 export interface DatosRecordatorio {
+  clinicaId: string
   correoPaciente: string
   nombrePaciente: string
-  nombreClinica: string
   /** Instante ISO de la cita. */
   inicio: string
   tipoCita: string
@@ -43,68 +40,49 @@ export interface DatosRecordatorio {
 }
 
 export async function enviarRecordatorioCita(datos: DatosRecordatorio): Promise<ResultadoEnvio> {
-  const cuando = new Date(datos.inicio)
-
-  // El huso se fija a America/Costa_Rica, que es donde está la clínica
-  // piloto. Formatear en el huso del SERVIDOR daría una hora distinta
-  // según dónde corra el contenedor, y una hora equivocada en un
-  // recordatorio es peor que no mandarlo.
-  const opciones: Intl.DateTimeFormatOptions = { timeZone: 'America/Costa_Rica' }
-  const fecha = cuando.toLocaleDateString('es-CR', {
-    ...opciones,
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-  })
-  const hora = cuando.toLocaleTimeString('es-CR', {
-    ...opciones,
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-
+  const marca = await obtenerMarca(datos.clinicaId)
+  const m = momento(datos.inicio, marca.zonaHoraria)
+  const tipo = tipoEnPalabras(datos.tipoCita)
   const enlace = `${config.pacAppUrl}/citas`
-  const tipo = TIPO[datos.tipoCita] ?? datos.tipoCita
-  const asunto =
-    datos.antelacion === '24h'
-      ? `Recordatorio: tu cita es mañana — ${datos.nombreClinica}`
-      : `Tu cita es en una hora — ${datos.nombreClinica}`
 
-  if (!cliente) {
-    console.log('─'.repeat(60))
-    console.log('[AGE] RESEND_API_KEY no configurada — modo consola')
-    console.log(`[AGE] Recordatorio (${datos.antelacion}) para ${datos.correoPaciente}`)
-    console.log(`[AGE] Cita de ${tipo}: ${fecha} a las ${hora}`)
-    console.log('─'.repeat(60))
-    return { ok: false, error: 'sin_configurar' }
-  }
+  const esManana = datos.antelacion === '24h'
+  const asunto = esManana
+    ? `Recordatorio: tu cita es mañana — ${marca.nombreClinica}`
+    : `Tu cita es en una hora — ${marca.nombreClinica}`
 
-  const { error } = await cliente.emails.send({
-    from: config.resend!.from,
-    to: datos.correoPaciente,
-    subject: asunto,
-    text:
+  const cuerpo = [
+    titulo(esManana ? 'Tu cita es mañana' : 'Tu cita es en una hora'),
+    parrafo(
+      `Hola <strong>${esc(datos.nombrePaciente)}</strong>, te recordamos tu cita de ` +
+        `<strong>${esc(tipo)}</strong> en <strong>${esc(marca.nombreClinica)}</strong>:`,
+    ),
+    caja(
+      [
+        { etiqueta: 'Fecha', valor: m.fecha, destacado: true },
+        { etiqueta: 'Hora', valor: m.hora, destacado: true },
+      ],
+      marca,
+    ),
+    boton(enlace, 'Ver mi cita', marca.colorPrimario),
+    nota('Si no puedes asistir, avisa a tu nutricionista con antelación.'),
+  ].join('\n')
+
+  const r = await enviarCorreo({
+    para: datos.correoPaciente,
+    asunto,
+    html: envoltorio(marca, cuerpo),
+    texto:
       `Hola ${datos.nombrePaciente},\n\n` +
-      `Te recordamos tu cita de ${tipo} en ${datos.nombreClinica}:\n` +
-      `${fecha} a las ${hora}.\n\n` +
+      `Te recordamos tu cita de ${tipo} en ${marca.nombreClinica}:\n` +
+      `${m.completo}.\n\n` +
       `Puedes verla y confirmar tu asistencia en: ${enlace}\n\n` +
       `Si no puedes asistir, avisa a tu nutricionista con antelación.`,
-    html: `
-      <p>Hola <strong>${esc(datos.nombrePaciente)}</strong>,</p>
-      <p>Te recordamos tu cita de <strong>${esc(tipo)}</strong> en <strong>${esc(datos.nombreClinica)}</strong>:</p>
-      <p style="font-size:20px;font-weight:600;color:#0E7C66;">${esc(fecha)} — ${esc(hora)}</p>
-      <p>
-        <a href="${enlace}" style="background:#0E7C66;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;display:inline-block;margin:16px 0;">
-          Ver mi cita
-        </a>
-      </p>
-      <p style="color:#6B7280;font-size:14px;">Si no puedes asistir, avisa a tu nutricionista con antelación.</p>
-    `,
+    tipo: `recordatorio-${datos.antelacion}`,
   })
 
-  if (error) {
-    console.error('[AGE] Resend rechazó el recordatorio:', error.name, error.message)
-    return { ok: false, error: `${error.name}: ${error.message}`.slice(0, 500) }
-  }
-
-  return { ok: true }
+  // Se conserva la forma del resultado —{ ok, error }— porque
+  // `recordatorios.ts` la anota en `recordatorio_cita.error`, y ahí
+  // «sin_configurar» ya significaba algo.
+  if (r === 'enviado') return { ok: true }
+  return { ok: false, error: r === 'sin_configurar' ? 'sin_configurar' : 'fallo' }
 }

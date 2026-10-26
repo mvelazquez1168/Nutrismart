@@ -5976,3 +5976,154 @@ Un tercer «fallo» era del test, no del producto: `innerText` aplica el `upperc
 Paciente de prueba: `paciente-prueba` / `nutrismart-dev` (María Fernández, Clínica Nutrición Vida). La contraseña se fijó para esta comprobación.
 
 El `.env` de las dos apps web vive en **la raíz del repo** (`envDir` en `vite.config.ts`), y en dev `VITE_API_URL` y `VITE_KEYCLOAK_URL` van **vacías a propósito**: todo pasa por el proxy de Vite (`/api`, `/realms`) para que la app funcione igual desde un móvil de la red local. Un `.env` dentro de `apps/web-patient/` no se lee.
+
+---
+
+# R54 — Correos con marca y login integrado
+
+Rama `r54-emails-login`, desde `main`. Migración **061**.
+
+Dos cosas: los correos pasan a llevar el color y el logo de la clínica, y se añaden los avisos de agenda y cumpleaños que faltaban. Y la pantalla de Keycloak deja de ser genérica.
+
+## El sistema de correo ya existía
+
+El encargo proponía crear `email.service.ts`, instalar `resend` y `node-cron`. Las tres cosas estaban:
+
+| El encargo pedía | Ya estaba |
+|---|---|
+| `npm install resend` | `resend@^6.20.0` en `apps/api/package.json` |
+| `npm install node-cron` | `node-cron@^4.6.0`, con un `cron.schedule('*/15 * * * *')` en `server.ts` |
+| `email.service.ts` | **Cuatro** módulos: `pac/email.ts`, `equipo/email.ts`, `agenda/email-recordatorio.ts`, `rpm/email-alerta.ts` |
+| `RESEND_API_KEY`, remitente | `config.resend`, `.env.example` líneas 145-156 |
+
+Lo que **no** había era marca: cada uno de los cuatro construía su propio cliente de Resend, tenía su propia copia de `esc()` y pintaba el verde `#0E7C66` escrito a mano. Un correo de una clínica morada salía verde.
+
+Así que R54 no añade un sistema de correo: **unifica el que hay y le pone la marca encima**.
+
+## Lo que se construyó
+
+`apps/api/src/email/`:
+
+| Archivo | Qué hace |
+|---|---|
+| `marca.ts` | Lee `brand_config` + `clinica` → nombre, color, logo y **zona horaria** |
+| `layout.ts` | El cascarón: tablas, estilos en línea, y `esc()`/`escUrl()` **en un solo sitio** |
+| `enviar.ts` | El único cliente de Resend. Conserva el modo consola sin `RESEND_API_KEY` |
+| `notificaciones.ts` | Los seis avisos de agenda y el de cumpleaños, HTML y texto juntos |
+| `agenda-avisos.ts` | El puente: parte del id de la cita y lee lo que necesita |
+| `cumpleanos.ts` | La pasada horaria |
+| `verificar.ts` | `npm run verificar:correos` |
+
+Migrados al layout con marca: `pac/email.ts` (invitación del paciente) y `agenda/email-recordatorio.ts` (recordatorio de cita). Los dos que ve el paciente.
+
+### Por qué tablas y estilos en línea
+
+Porque Outlook de escritorio sigue dibujando el HTML con el motor de Word: ahí no hay flexbox, ni grid, ni `<style>` en el `<head>` que sobreviva. `verificar:correos` lo comprueba: sin `<style>`, sin `display:flex|grid`, maquetado en `role="presentation"`.
+
+### El `alt` del logo va en blanco
+
+Gmail bloquea las imágenes hasta que el lector las acepta, y entonces lo que se ve en la cabecera es el texto alternativo. Sin `color:#ffffff` en el `<img>` sale en negro sobre el color de la clínica y, en un morado, no se lee. Se descubrió mirando una captura con el logo roto.
+
+## Dónde se enganchan los avisos
+
+`apps/api/src/routes/agenda.ts`, tres sitios:
+
+| Endpoint | Aviso |
+|---|---|
+| `POST /api/citas` | `agendada` → paciente y profesional |
+| `PUT /api/citas/:id` | `reagendada`, **solo si cambió la hora** |
+| `POST /api/citas/:id/estado` | `cancelada`, **solo** si el nuevo estado es `cancelada` |
+
+Dos decisiones que no estaban en el encargo:
+
+- **Reagendar se detecta comparando el `inicio` antes y después.** Editar el motivo o las notas de una cita no es moverla, y avisar al paciente de un cambio que no le afecta es como se consigue que deje de leer los correos.
+- **«Completada» y «no asistió» no avisan.** Son apuntes de lo que ya pasó: el paciente estaba delante, o no estaba.
+
+Y la regla de oro: `avisarCambioDeCita()` **no se espera**. Devuelve en cuanto lanza las promesas, y los fallos se registran. Una cita que queda guardada pero devuelve 500 porque Resend tardó es mucho peor que una cita sin aviso.
+
+## Migración 061 — por qué una tabla para felicitar
+
+El encargo proponía un cron diario a hora fija. Eso falla de tres maneras: si la API se reinicia después de esa hora, el día se pierde; si corre dos veces, el paciente recibe dos felicitaciones; y una hora fija en UTC no son las 8 de la mañana en todas partes —`clinica.zona_horaria` existe precisamente por eso—.
+
+`felicitacion_cumpleanos` con único `(paciente_id, anio)` permite correr **cada hora** sin miedo: se RESERVA y solo entonces se envía. Mismo patrón que `recordatorio_cita` (022).
+
+La consulta filtra en SQL y no en JavaScript porque la comparación depende de la zona de cada fila: `now() at time zone c.zona_horaria` da la hora local de esa clínica, y de ahí salen el día, el mes y la hora.
+
+## El schema que el encargo daba por hecho
+
+Todas las consultas del encargo habrían fallado:
+
+| El encargo | La realidad |
+|---|---|
+| `FROM clinicas`, `pacientes`, `profesionales` | Las tablas son **singulares**: `clinica`, `paciente`, `profesional` |
+| `p.email`, `p.apellido` | Es `p.correo`, y `nombre` es **un solo campo** |
+| `cita.fecha_hora_inicio` | Es `cita.inicio` |
+| `bc.color_secundario`, `bc.logo_url` | Son `color_acento` y `logo_ruta` + `logo_mime` |
+| `America/Mexico_City` | El proyecto usa `clinica.zona_horaria` (por defecto `America/Costa_Rica`) |
+| `ALTER TABLE pacientes ADD token_invitacion` | Ya existe `invitacion_paciente` con su propia tabla y token. **No se creó** |
+
+## Login: tema de Keycloak
+
+Se eligió la **opción A** del encargo, y por su motivo: las contraseñas las sigue viendo solo Keycloak. El formulario hace POST a `url.loginAction`, que es suyo; PKCE queda intacto.
+
+`apps/api/keycloak-theme/nutrismart/login/` — replica `Login.tsx`: panel de color al 60% a la izquierda, formulario a la derecha, y el panel desaparece por debajo de 768 px igual que en la app (`hidden md:block`), que importa porque esta pantalla la usan también los pacientes desde el móvil.
+
+### Tres correcciones al encargo
+
+1. **`theme.properties` va en `<tema>/login/`, no en la raíz.** Keycloak busca las propiedades dentro de la carpeta del tipo de tema. Un nivel más arriba se ignora en silencio: el tema aparece en el admin, se puede seleccionar, y el login sigue saliendo igual que siempre.
+2. **`type="text"` y no `type="email"` en el usuario.** Los profesionales entran con su correo, pero las cuentas de paciente no tienen por qué: en este realm hay usuarios como `paciente-prueba`. Con `type="email"` el navegador bloquea el envío con «incluye una @».
+3. **Faltaba el español.** Keycloak trae su paquete en español pero solo lo usa si el realm tiene la internacionalización activada. Sin eso la pantalla salía con «Sign In» y «Password» dentro de una aplicación que está entera en español. Se añadió `login/messages/messages_es.properties` y se activó `internationalizationEnabled` con `defaultLocale: es`.
+
+También hizo falta subir la especificidad de `.ns-lema` y `.ns-pie`: patternfly le pone color a los `<p>` del formulario y el lema salía de un rosa apagado sobre el verde.
+
+### «Olvidé mi contraseña» queda DESACTIVADO, a propósito
+
+`resetPasswordAllowed` estaba en `false`, y se dejó así. El motivo no es el toggle: **Keycloak no tiene SMTP configurado** (`smtpServer` vacío en el realm). Activarlo mostraría un enlace que lleva a un formulario que no puede enviar nada.
+
+El SMTP de Keycloak es **independiente** de la API: la API manda por la API de Resend, y Keycloak necesita su propio servidor saliente. Resend ofrece SMTP (`smtp.resend.com`), así que se puede conectar — pero es configuración con credenciales y esa decisión es tuya. El `login.ftl` ya lo contempla: `<#if realm.resetPasswordAllowed>` hace que el enlace aparezca solo cuando esté listo.
+
+## Comprobación
+
+### Plantillas — 19 de 19
+
+`npm run verificar:correos -w @nutrismart/api`. No manda ningún correo y no toca la base.
+
+| Grupo | Qué comprueba |
+|---|---|
+| Escape | Marcado, comillas y ampersand |
+| Enlaces | `javascript:` y `data:` se descartan; https pasa |
+| Marca | El color llega al HTML; otra marca pinta otro color; con logo sale la imagen, sin logo el nombre; el nombre también se escapa |
+| Caja | Una fila sin valor se descarta; una caja entera vacía no deja tabla |
+| Compatibilidad | Sin `<style>`, sin flexbox/grid, maquetado en tablas, con viewport |
+
+Escribe además `apps/api/tmp/correos/*.html` para abrirlos en el navegador.
+
+### Agenda — 6 de 6, contra la API y la base reales
+
+Crear, reagendar y cancelar una cita con un token de profesional real:
+
+```
+1 cita-agendada      1 agenda-agendada
+1 cita-reagendada    1 agenda-reagendada
+1 cita-cancelada     1 agenda-cancelada
+```
+
+**Resend rechazó los seis** — la clave de dev está en modo sandbox y solo entrega a la dirección verificada de la cuenta — y eso comprobó justo lo que había que comprobar: los tres endpoints devolvieron 201/200/200 y la cita quedó en estado `cancelada`. **Un fallo de correo no hizo fallar la operación.** Ningún paciente recibió nada.
+
+### Login — en navegador real
+
+| Comprobación | Escritorio (1280) | Móvil (390) |
+|---|---|---|
+| Panel de color | visible, **768 px** = 60% | oculto |
+| Cabecera de Keycloak | oculta | oculta |
+| Botón | `Entrar`, `rgb(14,124,102)` | igual |
+| Campo usuario | `type="text"` | igual |
+
+Y entrar funciona: `paciente-prueba` → formulario del tema → la app carga en `/perfil`.
+
+## Pendiente para producción
+
+1. **`RESEND_FROM`** sigue en el sandbox (`onboarding@resend.dev`), que solo entrega a la dirección verificada. En el servidor hay que ponerlo al dominio verificado: `NutriSmart <noreply@nutrismart.solutechit.com>`. Sin esto **ningún correo llega a un paciente real**.
+2. **`APP_PUBLIC_URL`** — si está vacía, los correos salen con el nombre de la clínica en texto en vez del logo. Todo lo demás funciona igual.
+3. **El tema de Keycloak** hay que copiarlo al servidor y activarlo en el realm. En local se copió a `C:\Google\ImagenesMed\infra\keycloak\themes\nutrismart` (el bind mount del contenedor compartido) y se activó por la API de administración. El contenedor corre en `start-dev`, así que **no hizo falta reiniciarlo**; un Keycloak de producción en modo `start` sí lo necesita.
+4. **SMTP de Keycloak**, si se quiere «olvidé mi contraseña».

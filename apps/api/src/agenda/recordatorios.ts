@@ -84,9 +84,11 @@ async function procesar(antelacion: Antelacion): Promise<number> {
     if (!reservaId) continue
 
     const resultado = await enviarRecordatorioCita({
+      // R54: el nombre de la clinica ya no se pasa suelto; sale de
+      // brand_config junto con el color, el logo y la zona horaria.
+      clinicaId: cita.clinica_id,
       correoPaciente: cita.correo,
       nombrePaciente: cita.paciente,
-      nombreClinica: cita.clinica,
       inicio: cita.inicio,
       tipoCita: cita.tipo,
       antelacion,

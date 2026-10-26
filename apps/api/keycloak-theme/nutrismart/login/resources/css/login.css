@@ -1,0 +1,240 @@
+/*
+ * Tema de login de NutriSmart — R54.
+ *
+ * Los colores están escritos a mano, y aquí sí toca. Esta hoja la sirve
+ * Keycloak, que no carga `packages/design-system/tokens.css` ni sabe
+ * nada de Tailwind; importarlo obligaría a publicar el design system en
+ * una URL pública y a mantener dos copias igualmente.
+ *
+ * Lo que NO puede llevar esta pantalla es la marca de la CLÍNICA. Sin
+ * sesión no hay `tenant_id`, así que no se sabe de qué clínica es quien
+ * mira. Es la misma razón que explica `Login.tsx` en la app, y por eso
+ * las dos pantallas enseñan la identidad de la plataforma.
+ *
+ * Valores copiados de tokens.css:
+ *   --primary #0E7C66   --primary-hover #0A5C4C
+ *   --background #F7FAF9 --surface #FFFFFF --border #E6ECEA
+ *   --ink #141A17       --muted #6B7280
+ */
+
+/* El tema base trae cabecera, caja y fondo propios. Se apagan: si no,
+   la pantalla sale con una tarjeta de Keycloak DENTRO de la nuestra. */
+#kc-header,
+#kc-header-wrapper,
+.login-pf-header,
+#kc-page-title {
+  display: none !important;
+}
+
+html,
+body,
+.login-pf,
+.login-pf-page,
+.login-pf body {
+  margin: 0;
+  padding: 0;
+  background: #ffffff;
+  height: auto;
+}
+
+.login-pf-page {
+  padding: 0 !important;
+  margin: 0 !important;
+  max-width: none !important;
+}
+
+#kc-content,
+#kc-content-wrapper,
+.card-pf {
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  max-width: none !important;
+  width: 100% !important;
+}
+
+body {
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Inter, sans-serif;
+  color: #141a17;
+}
+
+/* ---- Reparto de la pantalla ---- */
+
+.ns-split {
+  display: flex;
+  min-height: 100vh;
+  /* Para los iPhone con barra inferior: 100vh se mete por debajo. */
+  min-height: 100dvh;
+}
+
+/* 60/40, el mismo reparto que `md:w-3/5` en Login.tsx. */
+.ns-panel {
+  flex: 0 0 60%;
+  background: #0e7c66;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+}
+
+.ns-panel-contenido {
+  text-align: center;
+}
+
+.ns-marca-blanca {
+  display: block;
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: #ffffff;
+}
+
+/* La especificidad extra y el !important son necesarios: patternfly
+   —la hoja del tema base de Keycloak, que se carga antes pero gana por
+   especificidad en algunos selectores— le pone color a los <p> dentro
+   del formulario de login. Sin esto, el lema sale de un rosa apagado
+   sobre el verde. Mismo caso en .ns-pie. */
+.ns-panel .ns-lema {
+  margin: 8px 0 0;
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.85) !important;
+}
+
+.ns-formulario {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f7faf9;
+  padding: 48px 24px;
+}
+
+.ns-card {
+  width: 100%;
+  max-width: 360px;
+}
+
+/* ---- Identidad ---- */
+
+.ns-marca {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 32px;
+}
+
+.ns-marca-texto {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: #0e7c66;
+}
+
+.ns-marca-pie {
+  font-size: 14px;
+  color: #6b7280;
+}
+
+/* ---- Formulario ---- */
+
+.ns-campo {
+  margin-bottom: 16px;
+}
+
+.ns-etiqueta {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #6b7280;
+}
+
+.ns-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 11px 14px;
+  border: 1px solid #e6ecea;
+  border-radius: 12px;
+  background: #ffffff;
+  font-size: 15px;
+  color: #141a17;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.ns-input:focus {
+  border-color: #0e7c66;
+  box-shadow: 0 0 0 3px rgba(14, 124, 102, 0.18);
+}
+
+.ns-input[aria-invalid='true'] {
+  border-color: #d03b3b;
+}
+
+.ns-error {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(208, 59, 59, 0.08);
+  color: #d03b3b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ns-olvide {
+  margin-bottom: 20px;
+  text-align: right;
+}
+
+.ns-olvide a {
+  color: #0e7c66;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.ns-olvide a:hover {
+  text-decoration: underline;
+}
+
+.ns-boton {
+  width: 100%;
+  padding: 13px;
+  border: 0;
+  border-radius: 12px;
+  background: #0e7c66;
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  /* El tema base le mete un tamaño de fuente heredado del suyo. */
+  font-family: inherit;
+}
+
+.ns-boton:hover {
+  background: #0a5c4c;
+}
+
+.ns-card .ns-pie {
+  margin: 20px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: #6b7280 !important;
+}
+
+/* ---- Móvil ----
+   El panel de color desaparece, igual que en la app (`hidden md:block`).
+   En una pantalla de 390 px le quitaría sitio a lo único que importa,
+   que es el formulario. Y esta pantalla la usan también los pacientes,
+   que entran desde el teléfono. */
+@media (max-width: 767px) {
+  .ns-panel {
+    display: none;
+  }
+  .ns-formulario {
+    padding: 32px 20px;
+    background: #ffffff;
+  }
+}

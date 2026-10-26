@@ -1,5 +1,6 @@
 /**
- * Correo de invitación al paciente — PAC-01, vía Resend.
+ * Correo de invitación al paciente — PAC-01, con la marca de la clínica
+ * desde R54.
  *
  * Sin `RESEND_API_KEY` el enlace se imprime en la consola de la API y la
  * invitación se crea igual. En desarrollo eso es lo único que hace
@@ -10,78 +11,69 @@
  * correo configurado" y "el envío falló" piden cosas distintas al
  * profesional, y decirle lo primero cuando pasó lo segundo le hace
  * buscar el problema donde no está.
- */
-import { Resend } from 'resend'
-import { config } from '../config.js'
-
-export type ResultadoEnvio = 'enviado' | 'sin_configurar' | 'fallo'
-
-/**
- * Escapa el texto que entra en el HTML del correo.
  *
- * El nombre del paciente y el de la clínica los escribe una persona. Sin
- * escapar, un nombre con `<` rompe la maquetación del correo en el mejor
- * caso y mete marcado ajeno en el peor.
+ * ── Qué cambió en R54 ───────────────────────────────────────────────
+ *
+ * El HTML lo arma `email/layout.ts` con el color y el logo de la
+ * clínica, en vez del verde `#0E7C66` que había escrito a mano aquí. El
+ * envío lo hace `email/enviar.ts`: este módulo ya no construye su
+ * propio cliente de Resend ni tiene su propia copia de `esc()`.
+ *
+ * Hace falta `clinicaId` para leer la marca. Es lo único que cambió en
+ * la firma.
  */
-function esc(t: string): string {
-  return t
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
+import { config } from '../config.js'
+import { enviarCorreo, type ResultadoEnvio } from '../email/enviar.js'
+import { boton, envoltorio, esc, nota, parrafo, titulo } from '../email/layout.js'
+import { obtenerMarca } from '../email/marca.js'
 
-const cliente = config.resend ? new Resend(config.resend.apiKey) : null
+export type { ResultadoEnvio }
 
 export interface DatosInvitacion {
+  clinicaId: string
   correoPaciente: string
   nombrePaciente: string
-  nombreClinica: string
   token: string
 }
 
 export async function enviarInvitacion(datos: DatosInvitacion): Promise<ResultadoEnvio> {
   const enlace = `${config.pacAppUrl}/activar?token=${datos.token}`
+  const marca = await obtenerMarca(datos.clinicaId)
 
-  if (!cliente || !config.resend) {
-    console.log('─'.repeat(60))
-    console.log('[PAC] RESEND_API_KEY no configurada — modo consola')
-    console.log(`[PAC] Invitación para: ${datos.correoPaciente}`)
-    console.log(`[PAC] Enlace de activación: ${enlace}`)
-    console.log('─'.repeat(60))
-    return 'sin_configurar'
-  }
+  const cuerpo = [
+    titulo(`${marca.nombreClinica} te invita a NutriSmart`),
+    parrafo(
+      `Hola <strong>${esc(datos.nombrePaciente)}</strong>, tu nutricionista de ` +
+        `<strong>${esc(marca.nombreClinica)}</strong> te ha invitado a la aplicación de seguimiento.`,
+    ),
+    parrafo('Desde ahí vas a poder:'),
+    `<ul style="margin:0 0 16px;padding-left:20px;font-size:15px;line-height:1.7;color:#333333;">
+      <li>Ver tus citas y confirmarlas</li>
+      <li>Consultar tu plan y tus acuerdos</li>
+      <li>Apuntar lo que comes y tus medidas</li>
+    </ul>`,
+    boton(enlace, 'Activar mi cuenta', marca.colorPrimario),
+    nota('El enlace caduca en 7 días y es personal. Si no esperabas esta invitación, ignora este correo.'),
+  ].join('\n')
 
-  const { error } = await cliente.emails.send({
-    from: config.resend.from,
-    to: datos.correoPaciente,
-    subject: `Tu invitación a NutriSmart — ${datos.nombreClinica}`,
-    text:
+  const resultado = await enviarCorreo({
+    para: datos.correoPaciente,
+    asunto: `Tu invitación a NutriSmart — ${marca.nombreClinica}`,
+    html: envoltorio(marca, cuerpo),
+    texto:
       `Hola ${datos.nombrePaciente},\n\n` +
-      `Tu nutricionista de ${datos.nombreClinica} te invita a NutriSmart. Entra en:\n${enlace}\n\n` +
+      `Tu nutricionista de ${marca.nombreClinica} te invita a NutriSmart. Entra en:\n${enlace}\n\n` +
       `El enlace caduca en 7 días. Si no esperabas esta invitación, ignora este correo.`,
-    html: `
-      <p>Hola <strong>${esc(datos.nombrePaciente)}</strong>,</p>
-      <p>Tu nutricionista de <strong>${esc(datos.nombreClinica)}</strong> te ha invitado a NutriSmart.</p>
-      <p>
-        <a href="${enlace}" style="background:#0E7C66;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;display:inline-block;margin:16px 0;">
-          Activar mi cuenta
-        </a>
-      </p>
-      <p style="color:#6B7280;font-size:14px;">El enlace caduca en 7 días. Si no esperabas esta invitación, ignora este correo.</p>
-    `,
+    tipo: 'invitacion-paciente',
   })
 
-  if (error) {
-    // No se lanza: la invitación ya existe en la base y el profesional
-    // tiene el enlace en la respuesta. Convertir esto en una excepción
-    // haría que el botón pareciera haber fallado del todo cuando lo
-    // único que falló fue el reparto.
-    console.error('[PAC] Resend rechazó el envío:', error.name, error.message)
-    // El enlace también a consola: es el plan B inmediato.
+  // El enlace a consola también cuando el envío falla: la invitación ya
+  // existe en la base y el profesional puede entregarlo por otra vía.
+  // Es el plan B inmediato, y sin esto habría que ir a buscarlo a la
+  // base de datos.
+  if (resultado === 'fallo') {
     console.log(`[PAC] Enlace de activación: ${enlace}`)
-    return 'fallo'
   }
 
-  return 'enviado'
+  return resultado
 }

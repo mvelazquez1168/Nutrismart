@@ -52,6 +52,7 @@ import { evaluarAlertas } from './rpm/evaluar-alertas.js'
 import { enviarAlertasPendientes } from './rpm/email-alerta.js'
 import cron from 'node-cron'
 import { correoConfigurado, procesarRecordatorios } from './agenda/recordatorios.js'
+import { procesarCumpleanos } from './email/cumpleanos.js'
 import { cerrarNavegador } from './pdf/generar.js'
 
 /**
@@ -209,6 +210,19 @@ async function start(): Promise<void> {
       { correo: correoConfigurado() ? 'resend' : 'consola' },
       'recordatorios de cita: cada 15 minutos',
     )
+
+    // ---- Felicitaciones de cumpleanos (R54) ----
+    //
+    // Cada hora y no una vez al dia: «las 8 de la manana» es una hora
+    // distinta en cada `clinica.zona_horaria`, y un disparo diario en
+    // UTC acertaria solo con las clinicas de un huso. Correr 24 veces
+    // es seguro porque cada felicitacion se RESERVA en
+    // `felicitacion_cumpleanos` antes de enviarse, con un unico por
+    // (paciente, anio).
+    cron.schedule('5 * * * *', () => {
+      void procesarCumpleanos()
+    })
+    app.log.info('felicitaciones de cumpleanos: cada hora, a partir de las 8:00 locales')
 
     // Si la IA no esta configurada, TODOS sus botones responden 503 y hasta
     // ahora no habia donde verlo: `config.iaHabilitada` se calculaba y no se
