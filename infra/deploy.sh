@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────
 #  NutriSmart — Deploy de producción
 #  Uso: ./infra/deploy.sh   (desde la raíz del repo en EC2)
@@ -13,6 +13,14 @@ COMPOSE_FILE="$INFRA_DIR/docker-compose.prod.yml"
 export $(grep -E "^(ECR_REGISTRY|IMAGE_TAG|VITE_)" "$ENV_FILE" | xargs)
 
 AWS_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
+
+# Cada app apunta a SU propio dominio: Caddy enruta /api/* al mismo
+# contenedor en los dos, asi que cada una habla con su origen y no
+# hay CORS de por medio. $VITE_API_URL del .env.prod es el del
+# profesional; el del paciente es este, y se puede sobreescribir
+# poniendo VITE_API_URL_PAC en el .env.prod.
+VITE_API_URL_PAC="${VITE_API_URL_PAC:-https://pacientes-nutrismart.solutechit.com}"
+VITE_KEYCLOAK_CLIENT_ID_PACIENTE="${VITE_KEYCLOAK_CLIENT_ID_PACIENTE:-nutrismart-patient}"
 
 echo "╔══════════════════════════════════════╗"
 echo "║  NutriSmart · Deploy $(date '+%Y-%m-%d %H:%M')  ║"
@@ -38,15 +46,42 @@ docker build \
   -f "$REPO_DIR/apps/web-professional/Dockerfile.prod" \
   -t "$ECR_REGISTRY/nutrismart-web-professional:$IMAGE_TAG" "$REPO_DIR"
 
+echo -e "\n▶ Build web-patient..."
+# Faltaba. Sin esto la aplicacion del paciente NUNCA se actualizaba:
+# el compose declara su imagen pero este script no la construia ni la
+# recreaba, asi que en produccion seguia la del ultimo
+# build-and-push.sh que alguien recordara haber corrido.
+docker build \
+  --build-arg VITE_API_URL="$VITE_API_URL_PAC" \
+  --build-arg VITE_KEYCLOAK_URL="$VITE_KEYCLOAK_URL" \
+  --build-arg VITE_KEYCLOAK_REALM="$VITE_KEYCLOAK_REALM" \
+  --build-arg VITE_KEYCLOAK_CLIENT_ID_PACIENTE="$VITE_KEYCLOAK_CLIENT_ID_PACIENTE" \
+  -f "$REPO_DIR/apps/web-patient/Dockerfile.prod" \
+  -t "$ECR_REGISTRY/nutrismart-web-patient:$IMAGE_TAG" "$REPO_DIR"
+
+echo -e "\n▶ Build keycloak (tema)..."
+# Tambien faltaba, y desde que el tema vive dentro de la imagen el
+# compose EXIGE esta etiqueta: sin publicarla, recrear el contenedor
+# de Keycloak falla por imagen inexistente.
+docker build \
+  -f "$REPO_DIR/infra/keycloak/Dockerfile" \
+  -t "$ECR_REGISTRY/nutrismart-keycloak:$IMAGE_TAG" "$REPO_DIR"
+
 echo -e "\n▶ Push API..."
 docker push "$ECR_REGISTRY/nutrismart-api:$IMAGE_TAG"
 
 echo -e "\n▶ Push web-professional..."
 docker push "$ECR_REGISTRY/nutrismart-web-professional:$IMAGE_TAG"
 
+echo -e "\n▶ Push web-patient..."
+docker push "$ECR_REGISTRY/nutrismart-web-patient:$IMAGE_TAG"
+
+echo -e "\n▶ Push keycloak..."
+docker push "$ECR_REGISTRY/nutrismart-keycloak:$IMAGE_TAG"
+
 echo -e "\n▶ Recreando contenedores..."
 docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" \
-  up -d --no-deps --force-recreate api web-professional
+  up -d --no-deps --force-recreate api web-professional web-patient
 
 echo -e "\n▶ Verificando API (espera 8s)..."
 sleep 8
