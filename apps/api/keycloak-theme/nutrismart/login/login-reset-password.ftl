@@ -70,7 +70,7 @@
           </div>
         </#if>
 
-        <input tabindex="2" class="ns-boton" type="submit" value="${msg("doSubmit")}" />
+        <input tabindex="2" class="ns-boton" type="submit" value="${msg("nsEnviarInstrucciones")}" />
 
         <div class="ns-olvide">
           <a href="${url.loginUrl}" tabindex="3">${kcSanitize(msg("backToLogin"))?no_esc}</a>
