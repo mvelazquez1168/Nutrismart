@@ -18,8 +18,20 @@ import { resolverAlcance } from '../pacientes/acceso.js'
 export const SECCIONES = ['antrop', 'bioquim', 'clinico', 'dietetico', 'conclusion'] as const
 export type Seccion = (typeof SECCIONES)[number]
 
-/** Sin antropometría no hay valoración: es la sección que la sostiene. */
-const SECCIONES_EXIGIDAS: Seccion[] = ['antrop', 'conclusion']
+/**
+ * Lo único que no se puede dejar sin rellenar al cerrar.
+ *
+ * La antropometría SALIÓ de aquí: hay consultas legítimas en las que no
+ * se pesa ni se mide —un control telefónico, una visita para revisar
+ * resultados de laboratorio, un seguimiento a los pocos días— y
+ * obligarla hacía que el profesional inventase cifras o dejase la
+ * consulta abierta para siempre. La sección sigue existiendo y
+ * marcándose como completa; lo que ya no hace es bloquear.
+ *
+ * La prescripción se queda: una valoración finalizada sin ella no
+ * registra ninguna indicación, que es lo que el paciente se lleva.
+ */
+const SECCIONES_EXIGIDAS: Seccion[] = ['conclusion']
 
 function noEncontradoPaciente() {
   return { error: 'paciente_no_encontrado', message: 'No se encontró el paciente' }

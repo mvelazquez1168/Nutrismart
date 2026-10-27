@@ -16,8 +16,8 @@ import { useAgua } from './useAgua'
  * `height` sube— y las dos transicionan juntas.
  */
 
-/** Los tres botones. 250 es un vaso; 750, una botella pequeña. */
-const RAPIDOS = [250, 500, 750] as const
+/** Un vaso y un vaso grande. Para cantidades raras se repite el toque. */
+const RAPIDOS = [250, 500] as const
 
 /** Geometría del cuerpo de la botella, en coordenadas del viewBox. */
 const CUERPO = { x: 14, y: 26, ancho: 36, alto: 62, radio: 10 }

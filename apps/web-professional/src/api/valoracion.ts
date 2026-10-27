@@ -30,8 +30,14 @@ export const SECCIONES = [
 
 export type Seccion = (typeof SECCIONES)[number]['clave']
 
-/** Sin estas dos no se puede finalizar; el servidor lo repite. */
-export const SECCIONES_EXIGIDAS: Seccion[] = ['antrop', 'conclusion']
+/**
+ * Sin esto no se puede finalizar; el servidor lo repite.
+ *
+ * La antropometría ya no entra: hay consultas en las que no se pesa ni
+ * se mide. Ver la nota de `routes/consultas.ts`, que es donde manda —
+ * esta copia solo decide si el botón se ve apagado.
+ */
+export const SECCIONES_EXIGIDAS: Seccion[] = ['conclusion']
 
 export interface Consulta {
   id: string
