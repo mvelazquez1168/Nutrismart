@@ -23,6 +23,7 @@ import { aplicarMarca } from '../lib/marca'
 import { NavBar } from '../components/NavBar'
 import { Avatar } from '../components/Avatar'
 import { usePerfil } from '../hooks/usePerfil'
+import { BotellaAnimada } from '../gamification/agua/BotellaAnimada'
 
 function Tarjeta({
   titulo,
@@ -72,6 +73,11 @@ function saludoSegunHora(): string {
   return 'Buenas noches'
 }
 
+const IconAgua = () => (
+  <Svg>
+    <path d="M12 2.7s6 6.1 6 10.3a6 6 0 0 1-12 0c0-4.2 6-10.3 6-10.3z" />
+  </Svg>
+)
 const IconLibro = () => (
   <Svg>
     <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
@@ -300,6 +306,14 @@ export function Inicio() {
           >
             Ver todas mis citas →
           </button>
+        </Tarjeta>
+
+        {/* Va la segunda, y no mas abajo, porque es la unica tarjeta
+            con la que se INTERACTUA varias veces al dia: el resto se
+            lee una vez. La cita queda primera por ser lo unico con
+            hora. */}
+        <Tarjeta titulo="Tu agua" icono={<IconAgua />}>
+          <BotellaAnimada />
         </Tarjeta>
 
         <Tarjeta titulo="Tu peso" icono={<IconPeso />}>

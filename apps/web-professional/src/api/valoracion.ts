@@ -296,6 +296,8 @@ export interface Conclusion {
   suplementos: string | null
   /** Meta ponderal: lo que hace medible el progreso del paciente. */
   pesoObjetivo: number | null
+  /** Mililitros de agua al dia que indica el profesional. R55. */
+  metaAguaMl: number | null
   fechaObjetivoPeso: string | null
   acuerdos: Acuerdo[]
   /** Bloque persistido de la calculadora (R39); null si nunca se aplicó. */

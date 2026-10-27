@@ -67,6 +67,7 @@ export function FormConclusion({
   const [restricciones, setRestricciones] = useState<string[]>([])
   const [suplementos, setSuplementos] = useState('')
   const [pesoObjetivo, setPesoObjetivo] = useState('')
+  const [metaAgua, setMetaAgua] = useState('')
   const [fechaObjetivo, setFechaObjetivo] = useState('')
   const [acuerdos, setAcuerdos] = useState<Acuerdo[]>(ACUERDOS_INICIALES)
   const [fafHistorial, setFafHistorial] = useState<number | null>(null)
@@ -101,6 +102,7 @@ export function FormConclusion({
           setRestricciones(c.restricciones ?? [])
           setSuplementos(c.suplementos ?? '')
           setPesoObjetivo(c.pesoObjetivo?.toString() ?? '')
+          setMetaAgua(c.metaAguaMl?.toString() ?? '')
           setFechaObjetivo(c.fechaObjetivoPeso ?? '')
           // Solo se sustituyen los acuerdos si ya había alguno guardado:
           // si no, se dejan los tres de arranque.
@@ -164,6 +166,7 @@ export function FormConclusion({
       restricciones,
       suplementos,
       pesoObjetivo,
+      metaAgua,
       fechaObjetivo,
       acuerdos,
       datosCalculadora,
@@ -191,6 +194,7 @@ export function FormConclusion({
         restricciones,
         suplementos: suplementos || null,
         pesoObjetivo: pesoObjetivo.trim() === '' ? null : Number(pesoObjetivo),
+        metaAguaMl: metaAgua.trim() === '' ? null : Number(metaAgua),
         fechaObjetivoPeso: fechaObjetivo || null,
         acuerdos: acuerdos.filter((a) => a.texto.trim() !== ''),
         datosCalculadora,
@@ -450,6 +454,33 @@ export function FormConclusion({
                 value={fechaObjetivo}
                 disabled={pesoObjetivo.trim() === ''}
                 onChange={(e) => setFechaObjetivo(e.target.value)}
+                className={claseControl(false)}
+              />
+            </Campo>
+          </div>
+
+          {/* El agua va con las metas y no con los macros: es una
+              indicación en mililitros al día, no una fracción de las
+              kilocalorías. Y es la que alimenta la botella de la app del
+              paciente — sin ella, ahí no se enseña ninguna. */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Campo
+              id="meta-agua"
+              etiqueta="Agua recomendada (ml/día)"
+              ayuda="Opcional. El paciente la ve en su aplicación."
+            >
+              <input
+                id="meta-agua"
+                type="number"
+                step="50"
+                min={500}
+                max={5000}
+                placeholder="ej. 2000"
+                value={metaAgua}
+                onChange={(e) => {
+                  setMetaAgua(e.target.value)
+                  setOk(false)
+                }}
                 className={claseControl(false)}
               />
             </Campo>

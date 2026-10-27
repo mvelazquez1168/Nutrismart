@@ -366,6 +366,50 @@ export function guardarMetrica(datos: {
   })
 }
 
+/* ---- R55 · Agua del día ---- */
+
+export interface AguaHoy {
+  /** Fecha en la zona horaria de la clínica, no la del navegador. */
+  fecha: string
+  /** `null` si el profesional no fijó meta. No se inventa ninguna. */
+  metaMl: number | null
+  registradoHoyMl: number
+}
+
+/**
+ * El servidor responde en snake_case en estas dos rutas.
+ *
+ * Es la forma que fijó el encargo de R55 y se respeta, pero se traduce
+ * aquí: el resto de la app es camelCase, y dejar que la diferencia
+ * llegue a los componentes obliga a recordar en cuál de las dos está
+ * cada pantalla.
+ */
+interface AguaBruta {
+  fecha: string
+  meta_ml: number | null
+  registrado_hoy_ml: number
+}
+
+const aAgua = (b: AguaBruta): AguaHoy => ({
+  fecha: b.fecha,
+  metaMl: b.meta_ml === null || b.meta_ml === undefined ? null : Number(b.meta_ml),
+  registradoHoyMl: Number(b.registrado_hoy_ml ?? 0),
+})
+
+export async function getAguaHoy(): Promise<AguaHoy> {
+  return aAgua(await pedir<AguaBruta>('/api/gamificacion/agua/hoy', { conAuth: true }))
+}
+
+export async function registrarAgua(ml: number): Promise<AguaHoy> {
+  return aAgua(
+    await pedir<AguaBruta>('/api/gamificacion/agua/registro', {
+      method: 'POST',
+      conAuth: true,
+      body: JSON.stringify({ ml }),
+    }),
+  )
+}
+
 /* ---- Progreso y tareas ---- */
 
 export interface Progreso {

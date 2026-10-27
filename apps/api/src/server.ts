@@ -40,6 +40,7 @@ import { registerPacienteMensajeriaRoutes } from './routes/paciente-mensajeria.j
 import { registerPacienteRegistrosRoutes } from './routes/paciente-registros.js'
 import { registerPacienteProgresoRoutes } from './routes/paciente-progreso.js'
 import { registerAlimentosRoutes } from './routes/alimentos.js'
+import { registerAguaRoutes } from './routes/gamificacion/agua.js'
 import { registerRecursosRoutes } from './routes/recursos.js'
 import { registerBienestarRoutes } from './routes/bienestar.js'
 import { registerRpmRoutes } from './routes/rpm.js'
@@ -185,6 +186,7 @@ async function start(): Promise<void> {
     await registerPacienteRegistrosRoutes(app)
     await registerPacienteProgresoRoutes(app)
     await registerAlimentosRoutes(app)
+    await registerAguaRoutes(app)
     await registerRecursosRoutes(app)
     await registerBienestarRoutes(app)
     await registerRpmRoutes(app)

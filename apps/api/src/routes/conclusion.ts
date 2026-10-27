@@ -68,6 +68,7 @@ export const CAMPOS = `
   pct_proteina, pct_cho, pct_grasa, proteina_g, cho_g, grasa_g,
   restricciones, suplementos, acuerdos,
   peso_objetivo, to_char(fecha_objetivo_peso,'YYYY-MM-DD') as fecha_objetivo_peso,
+  meta_agua_ml,
   datos_calculadora,
   updated_at
 `
@@ -217,6 +218,7 @@ export function aConclusion(f: Record<string, unknown>) {
     // La meta ponderal: lo que hace computable el progreso del paciente
     // (ver la Rebanada 16, donde faltaba justo esto).
     pesoObjetivo: f['peso_objetivo'] === null ? null : Number(f['peso_objetivo']),
+    metaAguaMl: f['meta_agua_ml'] === null ? null : Number(f['meta_agua_ml']),
     fechaObjetivoPeso: (f['fecha_objetivo_peso'] as string | null) ?? null,
     acuerdos: (f['acuerdos'] ?? []) as { texto: string; cumplido: boolean }[],
     // Documento cerrado de la calculadora (R39); null si nunca se aplicó.
@@ -367,6 +369,23 @@ export async function registerConclusionRoutes(app: FastifyInstance): Promise<vo
         }
         pesoObjetivo = n
       }
+      // Meta de agua — R55. Mismo criterio que la de peso: opcional, y
+      // si viene tiene que ser sensata. Los limites son los del
+      // formulario (500-5000 ml); el CHECK de la base es mas ancho
+      // porque ahi solo se impide lo absurdo.
+      const aguaBruto = c['metaAguaMl']
+      let metaAguaMl: number | null = null
+      if (aguaBruto !== undefined && aguaBruto !== null && aguaBruto !== '') {
+        const n = Number(aguaBruto)
+        if (!Number.isInteger(n) || n < 500 || n > 5000) {
+          return reply.code(400).send({
+            error: 'validacion',
+            message: 'La meta de agua debe estar entre 500 y 5000 ml al dia',
+          })
+        }
+        metaAguaMl = n
+      }
+
       const fBruto = c['fechaObjetivoPeso']
       const fechaObjetivoPeso =
         pesoObjetivo !== null && typeof fBruto === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(fBruto)
@@ -432,10 +451,11 @@ export async function registerConclusionRoutes(app: FastifyInstance): Promise<vo
              observaciones_clinicas, objetivos, recomendaciones,
              kcal_prescritas, pct_proteina, pct_cho, pct_grasa,
              proteina_g, cho_g, grasa_g, restricciones, suplementos, acuerdos,
-             peso_objetivo, fecha_objetivo_peso, datos_calculadora, justificacion
+             peso_objetivo, fecha_objetivo_peso, datos_calculadora, justificacion,
+             meta_agua_ml
            ) values (
              $1,$2,$3,$4,$5,$6,$7,$8,$22,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18,$19::jsonb,
-             $20,$21::date,$23::jsonb,$24
+             $20,$21::date,$23::jsonb,$24,$25
            )
            on conflict (consulta_id) do update set
              profesional_id = excluded.profesional_id,
@@ -456,6 +476,7 @@ export async function registerConclusionRoutes(app: FastifyInstance): Promise<vo
              acuerdos = excluded.acuerdos,
              peso_objetivo = excluded.peso_objetivo,
              fecha_objetivo_peso = excluded.fecha_objetivo_peso,
+             meta_agua_ml = excluded.meta_agua_ml,
              datos_calculadora = excluded.datos_calculadora
            returning ${CAMPOS}`,
           [
@@ -470,6 +491,7 @@ export async function registerConclusionRoutes(app: FastifyInstance): Promise<vo
             texto('objetivos'),
             datosCalc === null ? null : JSON.stringify(datosCalc),
             texto('justificacion'),
+            metaAguaMl,
           ],
         )
 
