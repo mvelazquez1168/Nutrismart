@@ -34,7 +34,7 @@
   "verifyEmail": false,
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
-  "resetPasswordAllowed": false,
+  "resetPasswordAllowed": true,
   "editUsernameAllowed": false,
   "bruteForceProtected": false,
   "permanentLockout": false,
@@ -1753,7 +1753,18 @@
     "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self'; object-src 'none';",
     "strictTransportSecurity": "max-age=31536000; includeSubDomains"
   },
-  "smtpServer": {},
+  "smtpServer": {
+    "host": "smtp.resend.com",
+    "port": "465",
+    "ssl": "true",
+    "starttls": "false",
+    "auth": "true",
+    "user": "resend",
+    "password": "",
+    "from": "noreply@nutrismart.solutechit.com",
+    "fromDisplayName": "NutriSmart",
+    "replyTo": ""
+  },
   "eventsEnabled": false,
   "eventsListeners": [
     "jboss-logging"
@@ -1936,7 +1947,7 @@
       }
     ]
   },
-  "internationalizationEnabled": false,
+  "internationalizationEnabled": true,
   "authenticationFlows": [
     {
       "id": "81dea484-d273-4991-9217-c6db1d461202",
@@ -2750,5 +2761,10 @@
         ]
       }
     }
-  ]
+  ],
+  "loginTheme": "nutrismart",
+  "supportedLocales": [
+    "es"
+  ],
+  "defaultLocale": "es"
 }

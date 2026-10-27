@@ -6127,3 +6127,78 @@ Y entrar funciona: `paciente-prueba` → formulario del tema → la app carga en
 2. **`APP_PUBLIC_URL`** — si está vacía, los correos salen con el nombre de la clínica en texto en vez del logo. Todo lo demás funciona igual.
 3. **El tema de Keycloak** hay que copiarlo al servidor y activarlo en el realm. En local se copió a `C:\Google\ImagenesMed\infra\keycloak\themes\nutrismart` (el bind mount del contenedor compartido) y se activó por la API de administración. El contenedor corre en `start-dev`, así que **no hizo falta reiniciarlo**; un Keycloak de producción en modo `start` sí lo necesita.
 4. **SMTP de Keycloak**, si se quiere «olvidé mi contraseña».
+
+---
+
+# Correo saliente de Keycloak — Resend por SMTP
+
+Cierra el pendiente nº 4 de R54 («Olvidé mi contraseña» no enviaba nada).
+
+## Eran dos remitentes distintos, no uno
+
+Esto costó verlo y conviene dejarlo escrito: **NutriSmart manda correo por dos caminos que no se tocan**.
+
+| Quién | Cómo | Qué manda |
+|---|---|---|
+| La API | **API HTTP** de Resend (`resend` npm) | Invitaciones, recordatorios y avisos de agenda (R54) |
+| Keycloak | **SMTP** | Recuperar contraseña, verificar correo, acciones de cuenta |
+
+Configurar uno no configura el otro. Keycloak no sabe nada del `RESEND_API_KEY` de la API: necesita su propio servidor saliente, y por eso el enlace de recuperación llevaba a una pantalla que decía «revisa tu correo» mientras el log registraba una excepción en `ResetCredentialEmail`.
+
+## Lo que de verdad estaba roto
+
+El dominio `nutrismart.solutechit.com` **sí estaba verificado** en Resend desde el principio. Comprobado enviando con `from: noreply@nutrismart.solutechit.com`: aceptado.
+
+Lo que fallaba era el remitente:
+
+- **La API** no tenía `RESEND_FROM` en su `.env`, así que `config.ts` caía al valor de reserva `NutriSmart <onboarding@resend.dev>` — el sandbox de Resend, que **solo entrega a la dirección verificada de la cuenta**. De ahí el `validation_error` que rechazó los seis avisos de agenda de R54. No era un problema de código: era una variable sin poner.
+- **Keycloak** directamente no tenía `smtpServer`.
+
+## Lo que quedó configurado
+
+En el realm `nutrismart` → Realm Settings → Email:
+
+```
+Host              smtp.resend.com
+Port              465
+Encryption        SSL           (starttls = false)
+Authentication    sí
+Username          resend        ← literal, no es el correo de nadie
+Password          <RESEND_API_KEY>
+From              noreply@nutrismart.solutechit.com
+From display name NutriSmart
+```
+
+El usuario es la cadena literal `resend` para todo el mundo; la contraseña es el API key. Es como Resend expone SMTP.
+
+Puerto **465 con SSL**, no 587 con STARTTLS: los dos funcionan en Resend, y 465 evita la ventana en claro del `STARTTLS` antes de negociar.
+
+Y en el mismo realm, `resetPasswordAllowed = true`: sin eso el enlace del tema no se pinta (la guarda `<#if realm.resetPasswordAllowed>` de `login.ftl`).
+
+## Dónde vive esta configuración
+
+**En la base de datos de Keycloak**, no en el repo ni en un `.env`. Se perdería al recrear el realm desde cero.
+
+Por eso `infra/keycloak/realm-nutrismart.json` lleva ahora el bloque `smtpServer` con todo **menos la contraseña**, que va vacía a propósito: es el API key y no entra en el repositorio. También se añadieron al export `loginTheme: nutrismart`, `resetPasswordAllowed: true` y el español (`internationalizationEnabled`, `defaultLocale: es`), que estaban igual de sueltos.
+
+Restaurar el realm desde ese export deja todo puesto salvo la contraseña, que hay que rellenar a mano.
+
+## Comprobación
+
+De punta a punta, contra el Keycloak real:
+
+1. El correo de `ana@vida.cr` se apuntó temporalmente a un buzón real.
+2. Login → «¿Olvidaste tu contraseña?» → «Enviar instrucciones».
+3. **El log de Keycloak quedó limpio.** Antes, cada intento dejaba una excepción en `ResetCredentialEmail.authenticate`; ahora no hay ni un ERROR ni un WARN.
+4. El correo del usuario se restauró a `ana@vida.cr`.
+
+La pantalla dice «En breve deberías recibir un mensaje» tanto si el envío sale como si no — Keycloak lo hace a propósito, para no revelar si esa cuenta existe. **El log es el único sitio donde se ve la diferencia**, y por eso la comprobación mira ahí y no a la pantalla.
+
+## En producción
+
+1. **`.env` del servidor** — `RESEND_FROM=NutriSmart <noreply@nutrismart.solutechit.com>`. Sin esto, los correos de la API siguen saliendo por el sandbox y **no llegan a ningún paciente**.
+2. **Realm Settings → Email** en el Keycloak de producción, con los valores de arriba y el API key como contraseña.
+3. **Realm Settings → Login → Forgot password: ON.**
+4. Botón **«Test connection»** de esa misma pantalla: manda un correo de prueba y es la forma más rápida de saber si el puerto 465 sale de la red del servidor.
+
+Si 465 estuviera bloqueado, Resend también escucha en 587 (`starttls = true`, `ssl = false`) y en 2465 / 2587.
